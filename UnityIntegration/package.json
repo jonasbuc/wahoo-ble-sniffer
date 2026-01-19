@@ -1,0 +1,24 @@
+{
+  "name": "com.wahoo.vr-integration",
+  "version": "1.0.0",
+  "displayName": "Wahoo VR Cycling Integration",
+  "description": "Stream live data from Wahoo KICKR SNAP and TICKR devices to Unity for VR cycling simulations. Provides real-time power, cadence, speed, and heart rate data via WebSocket.",
+  "unity": "2021.3",
+  "keywords": [
+    "wahoo",
+    "kickr",
+    "tickr",
+    "cycling",
+    "vr",
+    "fitness",
+    "bluetooth",
+    "ble",
+    "websocket"
+  ],
+  "author": {
+    "name": "Jonas Buchner"
+  },
+  "dependencies": {
+    "com.endel.nativewebsocket": "https://github.com/endel/NativeWebSocket.git#upm"
+  }
+}
