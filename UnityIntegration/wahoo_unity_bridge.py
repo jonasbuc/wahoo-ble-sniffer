@@ -2,12 +2,14 @@
 """
 Wahoo BLE to Unity Bridge
 Streams live KICKR SNAP data to Unity via WebSocket
+Optimized for low latency with binary protocol
 """
 
 import asyncio
 import json
 import logging
 import time
+import struct
 from typing import Optional, Dict, Any, Set
 from dataclasses import dataclass, asdict
 
@@ -35,25 +37,56 @@ class CyclingData:
     heart_rate: int = 0  # BPM
     
     def to_json(self) -> str:
+        """JSON format for debugging"""
         return json.dumps(asdict(self))
+    
+    def to_binary(self) -> bytes:
+        """
+        Binary format for low-latency transmission
+        Format: 'dfffi' = double(8) + float(4) + float(4) + float(4) + int(4) = 24 bytes
+        Much faster than JSON parsing!
+        """
+        return struct.pack('dfffi', 
+            self.timestamp,
+            float(self.power),
+            self.cadence,
+            self.speed,
+            self.heart_rate
+        )
 
 
 class UnityBridge:
     """Bridges BLE data to Unity via WebSocket"""
     
-    def __init__(self, port: int = 8765):
+    def __init__(self, port: int = 8765, use_binary: bool = True):
         self.port = port
         self.clients: Set[WebSocketServerProtocol] = set()
         self.current_data = CyclingData(timestamp=time.time())
         self.running = False
+        self.use_binary = use_binary  # Binary mode for low latency
         
     async def register_client(self, websocket: WebSocketServerProtocol):
         """Register a new Unity client"""
+        # Enable TCP_NODELAY for low latency
+        try:
+            websocket.transport.get_extra_info('socket').setsockopt(
+                __import__('socket').IPPROTO_TCP,
+                __import__('socket').TCP_NODELAY,
+                1
+            )
+        except:
+            pass  # Not all transports support this
+        
         self.clients.add(websocket)
         logging.info(f"Unity client connected from {websocket.remote_address}")
         
-        # Send initial data
-        await websocket.send(self.current_data.to_json())
+        # Send initial handshake with protocol info
+        handshake = json.dumps({
+            "protocol": "binary" if self.use_binary else "json",
+            "version": "1.0",
+            "format": "dfffi (timestamp, power, cadence, speed, hr)"
+        })
+        await websocket.send(handshake)
         
         try:
             # Keep connection alive
@@ -69,7 +102,12 @@ class UnityBridge:
         self.current_data = data
         
         if self.clients:
-            message = data.to_json()
+            # Use binary format for speed, JSON only for debugging
+            if self.use_binary:
+                message = data.to_binary()
+            else:
+                message = data.to_json()
+            
             # Send to all connected clients
             websockets.broadcast(self.clients, message)
             logging.debug(f"Broadcast: {message}")
@@ -298,13 +336,18 @@ class WahooDeviceHandler:
                         )
                         asyncio.create_task(self.bridge.broadcast_data(updated))
                         
-                        # Log with all available data
-                        log_parts = [f"Power: {power} W"]
-                        if cadence > 0:
-                            log_parts.append(f"Cadence: {cadence:.1f} rpm")
-                        if speed > 0:
-                            log_parts.append(f"Speed: {speed:.1f} km/h")
-                        logging.info(" | ".join(log_parts))
+                        # Reduced logging for performance (only log every 10th update)
+                        if not hasattr(self, '_log_counter'):
+                            self._log_counter = 0
+                        self._log_counter += 1
+                        
+                        if self._log_counter % 10 == 0:
+                            log_parts = [f"Power: {power} W"]
+                            if cadence > 0:
+                                log_parts.append(f"Cadence: {cadence:.1f} rpm")
+                            if speed > 0:
+                                log_parts.append(f"Speed: {speed:.1f} km/h")
+                            logging.info(" | ".join(log_parts))
                 
                 # Get service and characteristic
                 service = None
