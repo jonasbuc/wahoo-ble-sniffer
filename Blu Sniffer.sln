@@ -1,0 +1,29 @@
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.5.2.0
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "WahooBleLoggerCSharp", "WahooBleLoggerCSharp", "{3DAA7125-B145-F08C-02E0-54D015983B6A}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "WahooBleLogger", "WahooBleLoggerCSharp\WahooBleLogger.csproj", "{D61B4D0A-91B0-11AE-4C7C-AE93B40763CC}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{D61B4D0A-91B0-11AE-4C7C-AE93B40763CC}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{D61B4D0A-91B0-11AE-4C7C-AE93B40763CC}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{D61B4D0A-91B0-11AE-4C7C-AE93B40763CC}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{D61B4D0A-91B0-11AE-4C7C-AE93B40763CC}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{D61B4D0A-91B0-11AE-4C7C-AE93B40763CC} = {3DAA7125-B145-F08C-02E0-54D015983B6A}
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {3637D501-78DB-483D-8CA1-0DD284FE70A5}
+	EndGlobalSection
+EndGlobal

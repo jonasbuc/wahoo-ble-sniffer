@@ -1,10 +1,14 @@
 using UnityEngine;
 using System;
 using System.Collections;
-using NativeWebSocket;
+using System.Net.WebSockets;
+using System.Text;
+using System.Threading;
+using System.Threading.Tasks;
 
 /// <summary>
 /// Receives live cycling data from Wahoo devices via WebSocket
+/// Uses Unity's built-in .NET WebSocket (no external dependencies!)
 /// Attach this to a GameObject in your Unity scene
 /// </summary>
 public class WahooDataReceiver : MonoBehaviour
@@ -29,7 +33,7 @@ public class WahooDataReceiver : MonoBehaviour
     public float Cadence => enableSmoothing ? smoothedCadence : currentCadence;
     public float Speed => enableSmoothing ? smoothedSpeed : currentSpeed;
     public int HeartRate => currentHeartRate;
-    public bool IsConnected => webSocket != null && webSocket.State == WebSocketState.Open;
+    public bool IsConnected => isConnected;
 
     // Events
     public event Action<CyclingData> OnDataReceived;
@@ -37,7 +41,9 @@ public class WahooDataReceiver : MonoBehaviour
     public event Action OnDisconnected;
 
     // Private fields
-    private WebSocket webSocket;
+    private ClientWebSocket webSocket;
+    private CancellationTokenSource cancellationTokenSource;
+    private bool isConnected = false;
     private bool isReconnecting = false;
     private float smoothedPower = 0f;
     private float smoothedCadence = 0f;
@@ -63,17 +69,19 @@ public class WahooDataReceiver : MonoBehaviour
 
     void Update()
     {
-        #if !UNITY_WEBGL || UNITY_EDITOR
-        if (webSocket != null)
+        // Apply smoothing in Update for smooth interpolation
+        if (enableSmoothing && isConnected)
         {
-            webSocket.DispatchMessageQueue();
+            float alpha = 1f - smoothingFactor;
+            smoothedPower = Mathf.Lerp(smoothedPower, currentPower, alpha * Time.deltaTime * 10f);
+            smoothedCadence = Mathf.Lerp(smoothedCadence, currentCadence, alpha * Time.deltaTime * 10f);
+            smoothedSpeed = Mathf.Lerp(smoothedSpeed, currentSpeed, alpha * Time.deltaTime * 10f);
         }
-        #endif
     }
 
     public async void Connect()
     {
-        if (webSocket != null && webSocket.State == WebSocketState.Open)
+        if (isConnected)
         {
             Debug.LogWarning("[WahooData] Already connected!");
             return;
@@ -83,43 +91,23 @@ public class WahooDataReceiver : MonoBehaviour
         {
             Debug.Log($"[WahooData] Connecting to {serverUrl}...");
 
-            webSocket = new WebSocket(serverUrl);
+            webSocket = new ClientWebSocket();
+            cancellationTokenSource = new CancellationTokenSource();
 
-            webSocket.OnOpen += () =>
-            {
-                Debug.Log("[WahooData] ✓ Connected to Wahoo bridge!");
-                isReconnecting = false;
-                OnConnected?.Invoke();
-            };
+            await webSocket.ConnectAsync(new Uri(serverUrl), cancellationTokenSource.Token);
 
-            webSocket.OnMessage += (bytes) =>
-            {
-                var message = System.Text.Encoding.UTF8.GetString(bytes);
-                ProcessMessage(message);
-            };
+            isConnected = true;
+            Debug.Log("[WahooData] ✓ Connected to Wahoo bridge!");
+            OnConnected?.Invoke();
 
-            webSocket.OnError += (e) =>
-            {
-                Debug.LogError($"[WahooData] WebSocket error: {e}");
-            };
-
-            webSocket.OnClose += (e) =>
-            {
-                Debug.LogWarning($"[WahooData] Connection closed: {e}");
-                OnDisconnected?.Invoke();
-
-                if (!isReconnecting && gameObject.activeInHierarchy)
-                {
-                    StartCoroutine(ReconnectAfterDelay());
-                }
-            };
-
-            await webSocket.Connect();
+            // Start receiving messages
+            _ = ReceiveLoop();
         }
         catch (Exception e)
         {
             Debug.LogError($"[WahooData] Connection failed: {e.Message}");
-            
+            isConnected = false;
+
             if (!isReconnecting && gameObject.activeInHierarchy)
             {
                 StartCoroutine(ReconnectAfterDelay());
@@ -132,24 +120,83 @@ public class WahooDataReceiver : MonoBehaviour
         isReconnecting = false;
         StopAllCoroutines();
 
-        if (webSocket != null)
+        if (webSocket != null && isConnected)
         {
-            await webSocket.Close();
-            webSocket = null;
+            try
+            {
+                cancellationTokenSource?.Cancel();
+                await webSocket.CloseAsync(WebSocketCloseStatus.NormalClosure, "Client closing", CancellationToken.None);
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning($"[WahooData] Error during disconnect: {e.Message}");
+            }
+            finally
+            {
+                webSocket?.Dispose();
+                webSocket = null;
+                isConnected = false;
+            }
         }
 
         Debug.Log("[WahooData] Disconnected");
+    }
+
+    private async Task ReceiveLoop()
+    {
+        var buffer = new byte[4096];
+
+        try
+        {
+            while (webSocket.State == WebSocketState.Open && !cancellationTokenSource.Token.IsCancellationRequested)
+            {
+                var result = await webSocket.ReceiveAsync(new ArraySegment<byte>(buffer), cancellationTokenSource.Token);
+
+                if (result.MessageType == WebSocketMessageType.Text)
+                {
+                    var message = Encoding.UTF8.GetString(buffer, 0, result.Count);
+                    ProcessMessage(message);
+                }
+                else if (result.MessageType == WebSocketMessageType.Close)
+                {
+                    Debug.LogWarning("[WahooData] Server closed connection");
+                    break;
+                }
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            Debug.Log("[WahooData] Receive loop cancelled");
+        }
+        catch (Exception e)
+        {
+            Debug.LogError($"[WahooData] Receive error: {e.Message}");
+        }
+        finally
+        {
+            if (isConnected)
+            {
+                isConnected = false;
+                OnDisconnected?.Invoke();
+
+                if (!isReconnecting && gameObject.activeInHierarchy)
+                {
+                    StartCoroutine(ReconnectAfterDelay());
+                }
+            }
+        }
     }
 
     private IEnumerator ReconnectAfterDelay()
     {
         isReconnecting = true;
         Debug.Log($"[WahooData] Reconnecting in {reconnectDelay} seconds...");
-        
+
         yield return new WaitForSeconds(reconnectDelay);
-        
+
         if (gameObject.activeInHierarchy)
         {
+            isReconnecting = false;
             Connect();
         }
     }
@@ -159,7 +206,7 @@ public class WahooDataReceiver : MonoBehaviour
         try
         {
             var data = JsonUtility.FromJson<CyclingData>(message);
-            
+
             if (data != null)
             {
                 // Update current values
@@ -168,15 +215,8 @@ public class WahooDataReceiver : MonoBehaviour
                 currentSpeed = data.speed;
                 currentHeartRate = data.heart_rate;
 
-                // Apply smoothing
-                if (enableSmoothing)
-                {
-                    float alpha = 1f - smoothingFactor;
-                    smoothedPower = Mathf.Lerp(smoothedPower, currentPower, alpha);
-                    smoothedCadence = Mathf.Lerp(smoothedCadence, currentCadence, alpha);
-                    smoothedSpeed = Mathf.Lerp(smoothedSpeed, currentSpeed, alpha);
-                }
-                else
+                // Initialize smoothed values on first data
+                if (smoothedPower == 0f && currentPower > 0f)
                 {
                     smoothedPower = currentPower;
                     smoothedCadence = currentCadence;
