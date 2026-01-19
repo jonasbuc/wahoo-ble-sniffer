@@ -1,6 +1,16 @@
 # Wahoo BLE Logger
 
-A production-quality Python application that logs live BLE data from Wahoo TICKR heart rate monitors and Wahoo KICKR trainers directly to SQLite, using standard Bluetooth GATT services (no FIT files, no Wahoo SDK required).
+Log live BLE data from Wahoo TICKR heart rate monitors and KICKR trainers directly to SQLite, using standard Bluetooth GATT services (no FIT files, no Wahoo SDK required).
+
+**Available in two implementations:**
+- **[Python version](.)** - Using Python 3.11+ and Bleak library (this directory)
+- **[C# version](WahooBleLoggerCSharp/)** - Using .NET 8 and InTheHand.BluetoothLE
+
+---
+
+## Python Implementation
+
+A production-quality Python application for logging live BLE data.
 
 ## Features
 
