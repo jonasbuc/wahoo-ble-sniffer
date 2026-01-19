@@ -92,13 +92,40 @@ class CyclingPowerParser:
             return {}
         
         try:
+            result = {}
             flags = int.from_bytes(data[0:2], byteorder='little')
             offset = 2
             
             # Instantaneous Power (sint16, always present)
             power = int.from_bytes(data[offset:offset+2], byteorder='little', signed=True)
+            result["power"] = power
+            offset += 2
             
-            return {"power": power}
+            # Pedal Power Balance (optional, bit 0)
+            if flags & 0x0001:
+                offset += 1
+            
+            # Accumulated Torque (optional, bit 2)
+            if flags & 0x0004:
+                offset += 2
+            
+            # Wheel Revolution Data (bit 4) - for speed calculation
+            if flags & 0x0010 and len(data) >= offset + 6:
+                cumulative_wheel_revs = int.from_bytes(data[offset:offset+4], byteorder='little')
+                last_wheel_event_time = int.from_bytes(data[offset+4:offset+6], byteorder='little')
+                result["wheel_revs"] = cumulative_wheel_revs
+                result["wheel_time"] = last_wheel_event_time
+                offset += 6
+            
+            # Crank Revolution Data (bit 5) - for cadence calculation
+            if flags & 0x0020 and len(data) >= offset + 4:
+                cumulative_crank_revs = int.from_bytes(data[offset:offset+2], byteorder='little')
+                last_crank_event_time = int.from_bytes(data[offset+2:offset+4], byteorder='little')
+                result["crank_revs"] = cumulative_crank_revs
+                result["crank_time"] = last_crank_event_time
+                offset += 4
+            
+            return result
         except Exception as e:
             logging.warning(f"Cycling Power parse error: {e}")
             return {}
@@ -132,6 +159,61 @@ class WahooDeviceHandler:
         self.is_hr = is_hr
         self.client: Optional[BleakClient] = None
         self.running = False
+        
+        # For cadence calculation
+        self.last_crank_revs: Optional[int] = None
+        self.last_crank_time: Optional[int] = None
+        
+        # For speed calculation  
+        self.last_wheel_revs: Optional[int] = None
+        self.last_wheel_time: Optional[int] = None
+        self.wheel_circumference_m = 2.105  # ~700x25c road bike tire
+    
+    def calculate_cadence(self, crank_revs: int, crank_time: int) -> Optional[float]:
+        """Calculate cadence from crank revolution data"""
+        if self.last_crank_revs is None or self.last_crank_time is None:
+            self.last_crank_revs = crank_revs
+            self.last_crank_time = crank_time
+            return None
+        
+        # Handle rollover (uint16)
+        rev_diff = (crank_revs - self.last_crank_revs) & 0xFFFF
+        time_diff = (crank_time - self.last_crank_time) & 0xFFFF
+        
+        if time_diff == 0 or rev_diff == 0:
+            return None
+        
+        # Time is in 1/1024 seconds
+        cadence = (rev_diff * 1024 * 60) / time_diff
+        
+        self.last_crank_revs = crank_revs
+        self.last_crank_time = crank_time
+        
+        return cadence if 0 < cadence < 255 else None
+    
+    def calculate_speed(self, wheel_revs: int, wheel_time: int) -> Optional[float]:
+        """Calculate speed from wheel revolution data"""
+        if self.last_wheel_revs is None or self.last_wheel_time is None:
+            self.last_wheel_revs = wheel_revs
+            self.last_wheel_time = wheel_time
+            return None
+        
+        # Handle rollover (uint32 for revs, uint16 for time)
+        rev_diff = (wheel_revs - self.last_wheel_revs) & 0xFFFFFFFF
+        time_diff = (wheel_time - self.last_wheel_time) & 0xFFFF
+        
+        if time_diff == 0 or rev_diff == 0:
+            return None
+        
+        # Time is in 1/1024 seconds
+        # Speed in m/s = (revs * circumference) / (time / 1024)
+        speed_ms = (rev_diff * self.wheel_circumference_m * 1024) / time_diff
+        speed_kmh = speed_ms * 3.6
+        
+        self.last_wheel_revs = wheel_revs
+        self.last_wheel_time = wheel_time
+        
+        return speed_kmh if 0 < speed_kmh < 100 else None
     
     async def connect_and_stream(self):
         """Connect and stream data to Unity"""
@@ -176,18 +258,53 @@ class WahooDeviceHandler:
                     
                     def callback(sender, data):
                         parsed = CyclingPowerParser.parse(data)
-                        if "power" in parsed:
-                            # Update bridge data
-                            current = self.bridge.current_data
-                            updated = CyclingData(
-                                timestamp=time.time(),
-                                power=parsed["power"],
-                                cadence=current.cadence,
-                                speed=current.speed,
-                                heart_rate=current.heart_rate
+                        
+                        # Get current values
+                        current = self.bridge.current_data
+                        power = parsed.get("power", current.power)
+                        cadence = current.cadence
+                        speed = current.speed
+                        
+                        # Calculate cadence if crank data present
+                        if "crank_revs" in parsed and "crank_time" in parsed:
+                            calc_cadence = self.calculate_cadence(
+                                parsed["crank_revs"], 
+                                parsed["crank_time"]
                             )
-                            asyncio.create_task(self.bridge.broadcast_data(updated))
-                            logging.info(f"Power: {parsed['power']} W")
+                            if calc_cadence is not None:
+                                cadence = calc_cadence
+                        elif power > 0 and speed > 0:
+                            # Estimate cadence from power and speed if no crank data
+                            # Typical relationship: cadence ≈ (power / 2.5) + (speed * 2)
+                            # This is a rough approximation
+                            cadence = min(max((power / 2.5) + (speed * 2), 0), 180)
+                        
+                        # Calculate speed if wheel data present
+                        if "wheel_revs" in parsed and "wheel_time" in parsed:
+                            calc_speed = self.calculate_speed(
+                                parsed["wheel_revs"],
+                                parsed["wheel_time"]
+                            )
+                            if calc_speed is not None:
+                                speed = calc_speed
+                        
+                        # Update bridge data
+                        updated = CyclingData(
+                            timestamp=time.time(),
+                            power=power,
+                            cadence=cadence,
+                            speed=speed,
+                            heart_rate=current.heart_rate
+                        )
+                        asyncio.create_task(self.bridge.broadcast_data(updated))
+                        
+                        # Log with all available data
+                        log_parts = [f"Power: {power} W"]
+                        if cadence > 0:
+                            log_parts.append(f"Cadence: {cadence:.1f} rpm")
+                        if speed > 0:
+                            log_parts.append(f"Speed: {speed:.1f} km/h")
+                        logging.info(" | ".join(log_parts))
                 
                 # Get service and characteristic
                 service = None
