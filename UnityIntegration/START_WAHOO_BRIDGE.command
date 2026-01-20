@@ -1,42 +1,42 @@
 #!/bin/bash
 # Wahoo Unity Bridge Starter (macOS)
-# Dobbeltklik på denne fil for at starte bridge'en!
+# Double-click this file to start the bridge!
 
 cd "$(dirname "$0")"
 
 echo "============================================================"
-echo "  🚴‍♂️ Wahoo BLE to Unity Bridge"
+echo "  Wahoo BLE to Unity Bridge"
 echo "============================================================"
 echo ""
 echo "Starting Python bridge..."
 echo ""
 
-# Find Python i virtual environment
+# Find Python in virtual environment
 PYTHON="../.venv/bin/python"
 
 if [ ! -f "$PYTHON" ]; then
-    echo "⚠️  Virtual environment ikke fundet!"
-    echo "Installer dependencies først:"
+    echo "WARNING: Virtual environment not found!"
+    echo "Install dependencies first:"
     echo "  cd 'Blu Sniffer'"
     echo "  pip install bleak websockets"
     echo ""
-    read -p "Tryk Enter for at lukke..."
+    read -p "Press Enter to close..."
     exit 1
 fi
 
-# Tjek om dependencies er installeret
+# Check if dependencies are installed
 if ! $PYTHON -c "import bleak, websockets" 2>/dev/null; then
-    echo "⚠️  Dependencies mangler!"
-    echo "Installerer bleak og websockets..."
+    echo "WARNING: Dependencies missing!"
+    echo "Installing bleak and websockets..."
     pip install bleak websockets
 fi
 
-echo "✓ Dependencies OK"
+echo "OK: Dependencies installed"
 echo ""
-echo "🔍 Scanner efter KICKR og TICKR..."
-echo "💡 Tips: Træd på pedalerne for at vække KICKR!"
+echo "Scanning for KICKR and TICKR..."
+echo "TIP: Pedal to wake up your KICKR!"
 echo ""
-echo "🌐 WebSocket server starter på ws://localhost:8765"
+echo "WebSocket server starting on ws://localhost:8765"
 echo ""
 echo "════════════════════════════════════════════════════════════"
 echo ""
@@ -45,5 +45,5 @@ echo ""
 $PYTHON wahoo_unity_bridge.py
 
 echo ""
-echo "Bridge stoppet."
-read -p "Tryk Enter for at lukke..."
+echo "Bridge stopped."
+read -p "Press Enter to close..."

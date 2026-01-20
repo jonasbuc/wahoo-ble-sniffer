@@ -1,43 +1,43 @@
 @echo off
 REM Wahoo Unity Bridge Starter (Windows)
-REM Dobbeltklik på denne fil for at starte bridge'en!
+REM Double-click this file to start the bridge!
 
 cd /d "%~dp0"
 
 echo ============================================================
-echo   🚴‍♂️ Wahoo BLE to Unity Bridge
+echo   Wahoo BLE to Unity Bridge
 echo ============================================================
 echo.
 echo Starting Python bridge...
 echo.
 
-REM Tjek om Python er installeret
+REM Check if Python is installed
 python --version >nul 2>&1
 if %errorlevel% neq 0 (
-    echo ⚠️  Python ikke fundet!
+    echo WARNING: Python not found!
     echo.
-    echo Download Python fra: https://www.python.org/downloads/
+    echo Download Python from: https://www.python.org/downloads/
     echo.
     pause
     exit /b 1
 )
 
-REM Tjek om dependencies er installeret
+REM Check if dependencies are installed
 python -c "import bleak, websockets" >nul 2>&1
 if %errorlevel% neq 0 (
-    echo ⚠️  Dependencies mangler!
-    echo Installerer bleak og websockets...
+    echo WARNING: Dependencies missing!
+    echo Installing bleak and websockets...
     echo.
     pip install bleak websockets
     echo.
 )
 
-echo ✓ Dependencies OK
+echo OK: Dependencies installed
 echo.
-echo 🔍 Scanner efter KICKR og TICKR...
-echo 💡 Tips: Træd på pedalerne for at vække KICKR!
+echo Scanning for KICKR and TICKR...
+echo TIP: Pedal to wake up your KICKR!
 echo.
-echo 🌐 WebSocket server starter på ws://localhost:8765
+echo WebSocket server starting on ws://localhost:8765
 echo.
 echo ════════════════════════════════════════════════════════════
 echo.
@@ -46,5 +46,5 @@ REM Start bridge
 python wahoo_unity_bridge.py
 
 echo.
-echo Bridge stoppet.
+echo Bridge stopped.
 pause
