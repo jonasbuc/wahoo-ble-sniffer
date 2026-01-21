@@ -206,6 +206,11 @@ class WahooDeviceHandler:
         self.last_wheel_revs: Optional[int] = None
         self.last_wheel_time: Optional[int] = None
         self.wheel_circumference_m = 2.105  # ~700x25c road bike tire
+        
+        # ZERO DETECTION: Track when we last got data
+        self.last_update_time = time.time()
+        self.zero_timeout = 1.2  # Send zeros if no update for 1.2 seconds
+        self.zero_check_task = None
     
     def calculate_cadence(self, crank_revs: int, crank_time: int) -> Optional[float]:
         """Calculate cadence from crank revolution data"""
@@ -253,6 +258,29 @@ class WahooDeviceHandler:
         
         return speed_kmh if 0 < speed_kmh < 100 else None
     
+    async def zero_detection_loop(self):
+        """Monitor for inactivity and send zero values when stopped"""
+        while self.running:
+            await asyncio.sleep(0.5)  # Check twice per second
+            
+            time_since_update = time.time() - self.last_update_time
+            
+            # If no updates for too long, cyclist has stopped
+            if time_since_update > self.zero_timeout:
+                current = self.bridge.current_data
+                
+                # Send zeros if we're not already at zero
+                if current.power > 0 or current.cadence > 0 or current.speed > 0:
+                    zero_data = CyclingData(
+                        timestamp=time.time(),
+                        power=0,
+                        cadence=0.0,
+                        speed=0.0,
+                        heart_rate=current.heart_rate  # Keep HR
+                    )
+                    await self.bridge.broadcast_data(zero_data)
+                    logging.info("⚠ No activity detected - sending zeros")
+    
     async def connect_and_stream(self):
         """Connect and stream data to Unity"""
         self.running = True
@@ -269,6 +297,11 @@ class WahooDeviceHandler:
                     continue
                 
                 logging.info(f"✓ Connected to {self.device.name}")
+                
+                # Start zero detection background task
+                if self.zero_check_task is None or self.zero_check_task.done():
+                    self.zero_check_task = asyncio.create_task(self.zero_detection_loop())
+                    logging.info("✓ Zero detection enabled")
                 
                 if self.is_hr:
                     # Heart Rate device
@@ -287,6 +320,7 @@ class WahooDeviceHandler:
                                 speed=current.speed,
                                 heart_rate=parsed["bpm"]
                             )
+                            # HR doesn't reset activity timer (only cycling data does)
                             asyncio.create_task(self.bridge.broadcast_data(updated))
                             logging.info(f"HR: {parsed['bpm']} bpm")
                 else:
@@ -334,6 +368,10 @@ class WahooDeviceHandler:
                             speed=speed,
                             heart_rate=current.heart_rate
                         )
+                        
+                        # Update activity timestamp for zero detection
+                        self.last_update_time = time.time()
+                        
                         asyncio.create_task(self.bridge.broadcast_data(updated))
                         
                         # Reduced logging for performance (only log every 10th update)

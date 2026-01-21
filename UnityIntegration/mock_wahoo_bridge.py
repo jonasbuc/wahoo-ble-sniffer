@@ -2,19 +2,21 @@
 """
 Mock Wahoo Bridge - Til test uden rigtige enheder
 Sender simulerede cycling data til Unity
+UPDATED: Binary protocol + stop/start simulation
 """
 
 import asyncio
 import json
 import time
 import math
+import struct
 from typing import Set
 import websockets
 from websockets.server import WebSocketServerProtocol
 
 
 class MockCyclingData:
-    """Simulerer cycling data"""
+    """Simulerer cycling data med stop/start cycles"""
     
     def __init__(self):
         self.time_offset = time.time()
@@ -22,43 +24,91 @@ class MockCyclingData:
         self.base_cadence = 80
         self.base_speed = 25.0
         self.base_hr = 140
+        self.cycle_duration = 20  # 20 second cycles
+        self.stop_duration = 5    # 5 second stops
     
-    def get_current_data(self):
-        """Generer realistisk cycling data"""
+    def get_current_data(self, use_binary=True):
+        """Generer realistisk cycling data med stop/start cycles"""
         elapsed = time.time() - self.time_offset
         
-        # Simuler variation med sine waves
-        power_variation = math.sin(elapsed * 0.3) * 30
-        cadence_variation = math.sin(elapsed * 0.5) * 10
-        speed_variation = math.sin(elapsed * 0.3) * 5
-        hr_variation = math.sin(elapsed * 0.2) * 10
+        # Cycle between riding and stopping
+        cycle_time = elapsed % (self.cycle_duration + self.stop_duration)
+        is_stopped = cycle_time > self.cycle_duration
         
-        # Add random micro-variations
-        import random
-        micro_noise = random.uniform(-5, 5)
+        if is_stopped:
+            # STOPPED - all zeros except HR
+            power = 0
+            cadence = 0.0
+            speed = 0.0
+            hr = self.base_hr - 20  # Lower HR when stopped
+        else:
+            # RIDING - normal variations
+            power_variation = math.sin(elapsed * 0.3) * 30
+            cadence_variation = math.sin(elapsed * 0.5) * 10
+            speed_variation = math.sin(elapsed * 0.3) * 5
+            hr_variation = math.sin(elapsed * 0.2) * 10
+            
+            # Add random micro-variations
+            import random
+            micro_noise = random.uniform(-5, 5)
+            
+            power = max(0, int(self.base_power + power_variation + micro_noise))
+            cadence = max(0, self.base_cadence + cadence_variation)
+            speed = max(0, self.base_speed + speed_variation)
+            hr = max(40, int(self.base_hr + hr_variation))
         
-        return {
-            "timestamp": time.time(),
-            "power": max(0, int(self.base_power + power_variation + micro_noise)),
-            "cadence": max(0, self.base_cadence + cadence_variation),
-            "speed": max(0, self.base_speed + speed_variation),
-            "heart_rate": max(40, int(self.base_hr + hr_variation))
-        }
+        if use_binary:
+            # Binary format: dfffi (24 bytes)
+            return struct.pack('dfffi',
+                time.time(),
+                float(power),
+                cadence,
+                speed,
+                hr
+            )
+        else:
+            # JSON format
+            return {
+                "timestamp": time.time(),
+                "power": power,
+                "cadence": cadence,
+                "speed": speed,
+                "heart_rate": hr
+            }
 
 
 class MockWahooBridge:
-    """WebSocket server der sender mock data"""
+    """WebSocket server der sender mock data med binary protocol"""
     
-    def __init__(self, port: int = 8765):
+    def __init__(self, port: int = 8765, use_binary: bool = True):
         self.port = port
         self.clients: Set[WebSocketServerProtocol] = set()
         self.mock_data = MockCyclingData()
         self.running = False
+        self.use_binary = use_binary
     
     async def register_client(self, websocket: WebSocketServerProtocol):
         """Register en Unity client"""
+        # Enable TCP_NODELAY
+        try:
+            websocket.transport.get_extra_info('socket').setsockopt(
+                __import__('socket').IPPROTO_TCP,
+                __import__('socket').TCP_NODELAY,
+                1
+            )
+        except:
+            pass
+        
         self.clients.add(websocket)
         print(f"✓ Unity client connected: {websocket.remote_address}")
+        
+        # Send handshake
+        handshake = json.dumps({
+            "protocol": "binary" if self.use_binary else "json",
+            "version": "1.0",
+            "format": "dfffi (timestamp, power, cadence, speed, hr)"
+        })
+        await websocket.send(handshake)
         
         try:
             async for message in websocket:
@@ -69,38 +119,63 @@ class MockWahooBridge:
             print(f"✗ Unity client disconnected")
     
     async def broadcast_loop(self):
-        """Send mock data kontinuerligt"""
-        print("✓ Broadcasting mock cycling data...")
+        """Send mock data kontinuerligt med stop/start cycles"""
+        print("✓ Broadcasting mock cycling data (20s ride / 5s stop)...")
         print()
+        
+        last_log_time = 0
         
         while self.running:
             if self.clients:
-                data = self.mock_data.get_current_data()
-                message = json.dumps(data)
+                message = self.mock_data.get_current_data(use_binary=self.use_binary)
                 
                 # Broadcast til alle clients
-                websockets.broadcast(self.clients, message)
+                if self.use_binary:
+                    # Binary broadcast
+                    for client in self.clients.copy():
+                        try:
+                            await client.send(message)
+                        except:
+                            self.clients.discard(client)
+                    
+                    # Parse for logging
+                    parsed = struct.unpack('dfffi', message)
+                    timestamp, power, cadence, speed, hr = parsed
+                else:
+                    # JSON broadcast
+                    websockets.broadcast(self.clients, json.dumps(message))
+                    power = message['power']
+                    cadence = message['cadence']
+                    speed = message['speed']
+                    hr = message['heart_rate']
                 
                 # Log every second
-                if int(time.time()) % 1 == 0:
-                    print(f"📡 Power: {data['power']}W | "
-                          f"Cadence: {data['cadence']:.0f}rpm | "
-                          f"Speed: {data['speed']:.1f}km/h | "
-                          f"HR: {data['heart_rate']}bpm")
+                current_time = int(time.time())
+                if current_time != last_log_time:
+                    last_log_time = current_time
+                    status = "🚴 RIDING" if power > 0 else "🛑 STOPPED"
+                    print(f"{status} | Power: {power:.0f}W | "
+                          f"Cadence: {cadence:.0f}rpm | "
+                          f"Speed: {speed:.1f}km/h | "
+                          f"HR: {hr}bpm")
             
-            await asyncio.sleep(0.1)  # 10Hz update rate
+            await asyncio.sleep(0.05)  # 20Hz update rate
+    
     
     async def start_server(self):
         """Start WebSocket server"""
         self.running = True
         
         print("=" * 60)
-        print("  Mock Wahoo Bridge - Test Server")
+        print("  Mock Wahoo Bridge - Test Server (BINARY PROTOCOL)")
         print("=" * 60)
         print()
         print("⚠️  Dette er MOCK DATA - ingen rigtige BLE enheder!")
         print()
         print(f"✓ WebSocket server: ws://localhost:{self.port}")
+        print(f"✓ Protocol: {'BINARY (24 bytes)' if self.use_binary else 'JSON'}")
+        print(f"✓ Update rate: 20 Hz")
+        print(f"✓ Simulation: 20s riding → 5s stopped (cycles)")
         print()
         print("Waiting for Unity to connect...")
         print("(Tryk Ctrl+C for at stoppe)")
@@ -111,7 +186,7 @@ class MockWahooBridge:
 
 
 async def main():
-    bridge = MockWahooBridge(port=8765)
+    bridge = MockWahooBridge(port=8765, use_binary=True)
     
     try:
         await bridge.start_server()
@@ -123,9 +198,12 @@ async def main():
 
 if __name__ == "__main__":
     print()
-    print("🚴 Mock Wahoo Bridge")
+    print("🚴 Mock Wahoo Bridge - ZERO DETECTION TEST")
     print()
     print("Brug dette til at teste Unity integration uden KICKR!")
+    print("Simulerer stop/start for at teste zero detection.")
     print()
+    
+    asyncio.run(main())
     
     asyncio.run(main())

@@ -27,7 +27,8 @@ public class WahooDataReceiver : MonoBehaviour
 
     [Header("Smoothing")]
     [SerializeField] private bool enableSmoothing = true;
-    [SerializeField] private float smoothingFactor = 0.3f;
+    [SerializeField] private float smoothingFactor = 0.15f;  // Faster response (was 0.3)
+    [SerializeField] private bool instantZeroDetection = true;  // Instant stop when zeros received
 
     // Public properties
     public float Power => enableSmoothing ? smoothedPower : currentPower;
@@ -50,6 +51,11 @@ public class WahooDataReceiver : MonoBehaviour
     private float smoothedCadence = 0f;
     private float smoothedSpeed = 0f;
     private bool protocolNegotiated = false;
+    
+    // Deceleration detection
+    private float lastNonZeroSpeed = 0f;
+    private float timeSinceLastUpdate = 0f;
+    private const float DECEL_TIMEOUT = 2f;  // Auto-stop after 2s no updates
 
     [Serializable]
     public class CyclingData
@@ -71,13 +77,39 @@ public class WahooDataReceiver : MonoBehaviour
 
     void Update()
     {
+        // Auto-stop detection: If no updates for too long, force zeros
+        if (isConnected)
+        {
+            timeSinceLastUpdate += Time.deltaTime;
+            
+            if (timeSinceLastUpdate > DECEL_TIMEOUT && 
+                (currentPower > 0 || currentCadence > 0 || currentSpeed > 0))
+            {
+                Debug.Log("[WahooData] ⚠ No updates for 2s - forcing stop");
+                currentPower = 0f;
+                currentCadence = 0f;
+                currentSpeed = 0f;
+            }
+        }
+        
         // Apply smoothing in Update for smooth interpolation
         if (enableSmoothing && isConnected)
         {
+            // INSTANT ZERO: If target is zero, snap immediately (no smoothing)
+            if (instantZeroDetection)
+            {
+                if (currentPower == 0f) smoothedPower = 0f;
+                if (currentCadence == 0f) smoothedCadence = 0f;
+                if (currentSpeed == 0f) smoothedSpeed = 0f;
+            }
+            
+            // Faster smoothing for better responsiveness
             float alpha = 1f - smoothingFactor;
-            smoothedPower = Mathf.Lerp(smoothedPower, currentPower, alpha * Time.deltaTime * 10f);
-            smoothedCadence = Mathf.Lerp(smoothedCadence, currentCadence, alpha * Time.deltaTime * 10f);
-            smoothedSpeed = Mathf.Lerp(smoothedSpeed, currentSpeed, alpha * Time.deltaTime * 10f);
+            float smoothSpeed = alpha * Time.deltaTime * 20f;  // 2x faster than before
+            
+            smoothedPower = Mathf.Lerp(smoothedPower, currentPower, smoothSpeed);
+            smoothedCadence = Mathf.Lerp(smoothedCadence, currentCadence, smoothSpeed);
+            smoothedSpeed = Mathf.Lerp(smoothedSpeed, currentSpeed, smoothSpeed);
         }
     }
 
@@ -203,6 +235,12 @@ public class WahooDataReceiver : MonoBehaviour
             currentCadence = cadence;
             currentSpeed = speed;
             currentHeartRate = heartRate;
+            
+            // Reset timeout timer - we got fresh data!
+            timeSinceLastUpdate = 0f;
+            
+            // Track last non-zero speed for deceleration
+            if (speed > 0f) lastNonZeroSpeed = speed;
 
             // Invoke event
             var data = new CyclingData
@@ -239,6 +277,12 @@ public class WahooDataReceiver : MonoBehaviour
             currentCadence = data.cadence;
             currentSpeed = data.speed;
             currentHeartRate = data.heart_rate;
+            
+            // Reset timeout timer - we got fresh data!
+            timeSinceLastUpdate = 0f;
+            
+            // Track last non-zero speed for deceleration
+            if (data.speed > 0f) lastNonZeroSpeed = data.speed;
 
             OnDataReceived?.Invoke(data);
         }
