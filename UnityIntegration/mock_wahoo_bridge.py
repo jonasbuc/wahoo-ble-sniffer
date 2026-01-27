@@ -159,7 +159,7 @@ class MockWahooBridge:
                           f"Speed: {speed:.1f}km/h | "
                           f"HR: {hr}bpm")
             
-            await asyncio.sleep(0.05)  # 20Hz update rate
+            await asyncio.sleep(0.05)  # 20Hz update rate = constant smooth data flow
     
     
     async def start_server(self):

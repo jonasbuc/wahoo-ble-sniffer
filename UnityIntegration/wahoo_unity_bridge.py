@@ -68,6 +68,8 @@ class UnityBridge:
         self.current_data = CyclingData(timestamp=time.time())
         self.running = False
         self.use_binary = use_binary  # Binary mode for low latency
+        self.last_broadcast_time = time.time()
+        self.broadcast_interval = 0.05  # Send every 50ms (20 Hz) for smooth data flow
         
     async def register_client(self, websocket: WebSocketServerProtocol):
         """Register a new Unity client"""
@@ -104,6 +106,7 @@ class UnityBridge:
     async def broadcast_data(self, data: CyclingData):
         """Broadcast data to all connected Unity clients"""
         self.current_data = data
+        self.last_broadcast_time = time.time()
         
         if self.clients:
             # Use binary format for speed, JSON only for debugging
@@ -116,11 +119,42 @@ class UnityBridge:
             websockets.broadcast(self.clients, message)
             logging.debug(f"Broadcast: {message}")
     
+    async def heartbeat_loop(self):
+        """
+        Constantly broadcast current data even when no new BLE updates
+        This ensures smooth, consistent data flow to Unity (20 Hz)
+        """
+        while self.running:
+            await asyncio.sleep(self.broadcast_interval)  # 50ms = 20 Hz
+            
+            # Only broadcast if we have clients and data hasn't been sent very recently
+            if self.clients and (time.time() - self.last_broadcast_time) >= self.broadcast_interval:
+                # Update timestamp but keep current values
+                updated_data = CyclingData(
+                    timestamp=time.time(),
+                    power=self.current_data.power,
+                    cadence=self.current_data.cadence,
+                    speed=self.current_data.speed,
+                    heart_rate=self.current_data.heart_rate
+                )
+                
+                if self.use_binary:
+                    message = updated_data.to_binary()
+                else:
+                    message = updated_data.to_json()
+                
+                websockets.broadcast(self.clients, message)
+    
     async def start_server(self):
         """Start WebSocket server for Unity"""
         self.running = True
+        
+        # Start heartbeat loop in background
+        heartbeat_task = asyncio.create_task(self.heartbeat_loop())
+        
         async with websockets.serve(self.register_client, "localhost", self.port):
             logging.info(f"WebSocket server started on ws://localhost:{self.port}")
+            logging.info(f"Heartbeat enabled: {1/self.broadcast_interval:.0f} Hz constant stream")
             logging.info("Waiting for Unity to connect...")
             await asyncio.Future()  # Run forever
 
@@ -260,7 +294,7 @@ class WahooDeviceHandler:
         
         # ZERO DETECTION: Track when we last got data
         self.last_update_time = time.time()
-        self.zero_timeout = 1.2  # Send zeros if no update for 1.2 seconds
+        self.zero_timeout = 2.5  # Send zeros if no update for 2.5 seconds (less aggressive)
         self.zero_check_task = None
     
     def calculate_cadence(self, crank_revs: int, crank_time: int) -> Optional[float]:
@@ -312,7 +346,7 @@ class WahooDeviceHandler:
     async def zero_detection_loop(self):
         """Monitor for inactivity and send zero values when stopped"""
         while self.running:
-            await asyncio.sleep(0.5)  # Check twice per second
+            await asyncio.sleep(0.25)  # Check every 250ms (less frequent checks)
             
             time_since_update = time.time() - self.last_update_time
             
@@ -331,6 +365,8 @@ class WahooDeviceHandler:
                     )
                     await self.bridge.broadcast_data(zero_data)
                     logging.info("⚠ No activity detected - sending zeros")
+                    # Update last_update_time to prevent repeated zero broadcasts
+                    self.last_update_time = time.time()
     
     async def connect_and_stream(self):
         """Connect and stream data to Unity"""
