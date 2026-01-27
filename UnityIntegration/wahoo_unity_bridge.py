@@ -26,6 +26,10 @@ CYCLING_POWER_MEASUREMENT = "00002a63-0000-1000-8000-00805f9b34fb"
 HEART_RATE_SERVICE = "0000180d-0000-1000-8000-00805f9b34fb"
 HEART_RATE_MEASUREMENT = "00002a37-0000-1000-8000-00805f9b34fb"
 
+# Garmin Speed & Cadence Sensor (CSC Service)
+CSC_SERVICE = "00001816-0000-1000-8000-00805f9b34fb"  # Cycling Speed and Cadence
+CSC_MEASUREMENT = "00002a5b-0000-1000-8000-00805f9b34fb"  # CSC Measurement
+
 
 @dataclass
 class CyclingData:
@@ -188,13 +192,60 @@ class HeartRateParser:
         return {"bpm": bpm}
 
 
-class WahooDeviceHandler:
-    """Handles a single Wahoo BLE device"""
+class CSCParser:
+    """Parses Cycling Speed and Cadence (CSC) Measurement data (Garmin sensors)"""
     
-    def __init__(self, device: BLEDevice, bridge: UnityBridge, is_hr: bool = False):
+    @staticmethod
+    def parse(data: bytearray) -> Dict[str, Any]:
+        """
+        Parse CSC Measurement characteristic (0x2A5B)
+        Format:
+        - Flags (1 byte)
+          - Bit 0: Wheel Revolution Data Present
+          - Bit 1: Crank Revolution Data Present
+        - Cumulative Wheel Revolutions (4 bytes, uint32) - if bit 0 set
+        - Last Wheel Event Time (2 bytes, uint16, 1/1024s) - if bit 0 set
+        - Cumulative Crank Revolutions (2 bytes, uint16) - if bit 1 set
+        - Last Crank Event Time (2 bytes, uint16, 1/1024s) - if bit 1 set
+        """
+        if len(data) < 1:
+            return {}
+        
+        try:
+            result = {}
+            flags = data[0]
+            offset = 1
+            
+            # Wheel Revolution Data (Speed)
+            if flags & 0x01 and len(data) >= offset + 6:
+                wheel_revs = int.from_bytes(data[offset:offset+4], byteorder='little')
+                wheel_time = int.from_bytes(data[offset+4:offset+6], byteorder='little')
+                result["wheel_revs"] = wheel_revs
+                result["wheel_time"] = wheel_time
+                offset += 6
+            
+            # Crank Revolution Data (Cadence)
+            if flags & 0x02 and len(data) >= offset + 4:
+                crank_revs = int.from_bytes(data[offset:offset+2], byteorder='little')
+                crank_time = int.from_bytes(data[offset+2:offset+4], byteorder='little')
+                result["crank_revs"] = crank_revs
+                result["crank_time"] = crank_time
+                offset += 4
+            
+            return result
+        except Exception as e:
+            logging.warning(f"CSC parse error: {e}")
+            return {}
+
+
+class WahooDeviceHandler:
+    """Handles a single BLE device (Wahoo, Garmin, etc.)"""
+    
+    def __init__(self, device: BLEDevice, bridge: UnityBridge, is_hr: bool = False, is_csc: bool = False):
         self.device = device
         self.bridge = bridge
-        self.is_hr = is_hr
+        self.is_hr = is_hr  # Heart Rate sensor
+        self.is_csc = is_csc  # Garmin Speed/Cadence sensor (CSC)
         self.client: Optional[BleakClient] = None
         self.running = False
         
@@ -323,6 +374,67 @@ class WahooDeviceHandler:
                             # HR doesn't reset activity timer (only cycling data does)
                             asyncio.create_task(self.bridge.broadcast_data(updated))
                             logging.info(f"HR: {parsed['bpm']} bpm")
+                
+                elif self.is_csc:
+                    # Garmin Speed/Cadence Sensor (CSC)
+                    service_uuid = CSC_SERVICE
+                    char_uuid = CSC_MEASUREMENT
+                    
+                    def callback(sender, data):
+                        parsed = CSCParser.parse(data)
+                        
+                        # Get current values
+                        current = self.bridge.current_data
+                        power = current.power
+                        cadence = current.cadence
+                        speed = current.speed
+                        
+                        # Calculate speed if wheel data present
+                        if "wheel_revs" in parsed and "wheel_time" in parsed:
+                            calc_speed = self.calculate_speed(
+                                parsed["wheel_revs"],
+                                parsed["wheel_time"]
+                            )
+                            if calc_speed is not None:
+                                speed = calc_speed
+                        
+                        # Calculate cadence if crank data present
+                        if "crank_revs" in parsed and "crank_time" in parsed:
+                            calc_cadence = self.calculate_cadence(
+                                parsed["crank_revs"],
+                                parsed["crank_time"]
+                            )
+                            if calc_cadence is not None:
+                                cadence = calc_cadence
+                        
+                        # Update bridge data
+                        updated = CyclingData(
+                            timestamp=time.time(),
+                            power=power,
+                            cadence=cadence,
+                            speed=speed,
+                            heart_rate=current.heart_rate
+                        )
+                        
+                        # Update activity timestamp for zero detection
+                        self.last_update_time = time.time()
+                        
+                        asyncio.create_task(self.bridge.broadcast_data(updated))
+                        
+                        # Log updates
+                        if not hasattr(self, '_log_counter'):
+                            self._log_counter = 0
+                        self._log_counter += 1
+                        
+                        if self._log_counter % 10 == 0:
+                            log_parts = []
+                            if speed > 0:
+                                log_parts.append(f"Speed: {speed:.1f} km/h")
+                            if cadence > 0:
+                                log_parts.append(f"Cadence: {cadence:.1f} rpm")
+                            if log_parts:
+                                logging.info(" | ".join(log_parts))
+                
                 else:
                     # Cycling Power device (KICKR)
                     service_uuid = CYCLING_POWER_SERVICE
@@ -460,7 +572,7 @@ async def main():
     )
     
     print("=" * 60)
-    print("  Wahoo BLE to Unity Bridge")
+    print("  BLE to Unity Bridge (Wahoo + Garmin)")
     print("=" * 60)
     print()
     
@@ -468,20 +580,32 @@ async def main():
     bridge = UnityBridge(port=8765)
     
     # Find devices
+    print("Scanning for devices...")
     kickr = await scan_for_device("KICKR")
     tickr = await scan_for_device("TICKR")
+    garmin_speed = await scan_for_device("SPD")  # Garmin Speed Sensor 2
+    garmin_cadence = await scan_for_device("CAD")  # Garmin Cadence Sensor (optional)
     
-    if not kickr:
-        logging.error("KICKR not found! Make sure it's on and pedaling.")
+    if not kickr and not garmin_speed:
+        logging.error("No cycling device found! Connect either KICKR or Garmin Speed Sensor.")
         return
     
     print()
     print("✓ Devices ready!")
+    if kickr:
+        print(f"  • KICKR: {kickr.name}")
+    if garmin_speed:
+        print(f"  • Garmin Speed: {garmin_speed.name}")
+    if garmin_cadence:
+        print(f"  • Garmin Cadence: {garmin_cadence.name}")
+    if tickr:
+        print(f"  • Heart Rate: {tickr.name}")
+    print()
     print(f"✓ WebSocket server: ws://localhost:8765")
     print()
     print("Next steps:")
     print("1. Start Unity")
-    print("2. Attach the WahooDataReceiver script to a GameObject")
+    print("2. Attach BikeMovementController to your bike")
     print("3. Press Play in Unity")
     print()
     print("Press Ctrl+C to stop")
@@ -490,16 +614,26 @@ async def main():
     
     # Start tasks
     tasks = [bridge.start_server()]
-    
     handlers = []
     
     if kickr:
-        kickr_handler = WahooDeviceHandler(kickr, bridge, is_hr=False)
+        kickr_handler = WahooDeviceHandler(kickr, bridge, is_hr=False, is_csc=False)
         handlers.append(kickr_handler)
         tasks.append(kickr_handler.connect_and_stream())
     
+    if garmin_speed:
+        garmin_handler = WahooDeviceHandler(garmin_speed, bridge, is_hr=False, is_csc=True)
+        handlers.append(garmin_handler)
+        tasks.append(garmin_handler.connect_and_stream())
+    
+    if garmin_cadence and not garmin_speed:
+        # Only add separate cadence if no speed sensor (Speed Sensor 2 can do both)
+        cadence_handler = WahooDeviceHandler(garmin_cadence, bridge, is_hr=False, is_csc=True)
+        handlers.append(cadence_handler)
+        tasks.append(cadence_handler.connect_and_stream())
+    
     if tickr:
-        tickr_handler = WahooDeviceHandler(tickr, bridge, is_hr=True)
+        tickr_handler = WahooDeviceHandler(tickr, bridge, is_hr=True, is_csc=False)
         handlers.append(tickr_handler)
         tasks.append(tickr_handler.connect_and_stream())
     
