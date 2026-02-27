@@ -124,6 +124,9 @@ class MockWahooBridge:
         print()
         
         last_log_time = 0
+        last_spawn_time = 0
+        spawn_interval = 7  # seconds between spawn events while riding
+        spawn_counter = 0
         
         while self.running:
             if self.clients:
@@ -158,6 +161,28 @@ class MockWahooBridge:
                           f"Cadence: {cadence:.0f}rpm | "
                           f"Speed: {speed:.1f}km/h | "
                           f"HR: {hr}bpm")
+
+                # Emit spawn events periodically while riding so GUI can display markers
+                now = time.time()
+                try:
+                    riding = (power > 0)
+                except Exception:
+                    riding = False
+
+                if riding and (now - last_spawn_time) >= spawn_interval:
+                    last_spawn_time = now
+                    spawn_counter += 1
+                    event = {
+                        "event": "spawn",
+                        "entity": "car",
+                        "id": f"car_{spawn_counter}",
+                        "timestamp": now
+                    }
+                    try:
+                        websockets.broadcast(self.clients, json.dumps(event))
+                        print(f"[EVENT] spawn -> {event['id']} at {int(now)}")
+                    except Exception:
+                        pass
             
             await asyncio.sleep(0.05)  # 20Hz update rate = constant smooth data flow
     
@@ -200,7 +225,7 @@ if __name__ == "__main__":
     print()
     print("🚴 Mock Wahoo Bridge - ZERO DETECTION TEST")
     print()
-    print("Brug dette til at teste Unity integration uden KICKR!")
+    print("Brug dette til at teste Unity integration uden hardware!")
     print("Simulerer stop/start for at teste zero detection.")
     print()
     
