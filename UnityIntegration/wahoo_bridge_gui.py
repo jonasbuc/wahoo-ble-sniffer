@@ -13,6 +13,7 @@ from collections import deque
 import threading
 import json
 import math
+import logging
 
 try:
     import websockets
@@ -25,6 +26,7 @@ except ImportError:
 
 class WahooBridgeGUI:
     def __init__(self):
+        self.logger = logging.getLogger("wahoo_bridge_gui")
         self.root = tk.Tk()
         self.root.title("Wahoo Bridge Monitor")
         # Increased default window size so graphs and axis labels are visible
@@ -356,6 +358,29 @@ class WahooBridgeGUI:
             canvas.create_oval(cur_x-4, cur_y-4, cur_x+4, cur_y+4, fill="red", outline="pink", tag="graph")
             canvas.create_text(gw - rm + 6, tm, text=f"{cur_hr} BPM", fill="white", font=("Arial", 10, "bold"), tag="graph")
         
+        # Draw event markers (vertical lines) for any markers that fall inside the visible window
+        try:
+            for m in list(self.markers):
+                try:
+                    mts = float(m.get('ts', 0.0))
+                except Exception:
+                    continue
+                if mts < start or mts > start + self.graph_seconds:
+                    continue
+                mx = lm + int((mts - start) / self.graph_seconds * inner_w)
+                mcolor = m.get('color', '#ff66aa')
+                mlabel = str(m.get('label', ''))
+                # Draw dashed vertical line
+                canvas.create_line(mx, tm, mx, tm + inner_h, fill=mcolor, dash=(4, 3), width=2, tag="graph")
+                # Draw label at top (avoid clipping by nudging inside left/right bounds)
+                tx = mx + 6
+                if tx > lm + inner_w - 40:
+                    tx = mx - 6 - 40
+                canvas.create_rectangle(tx-2, tm+2, tx+4+len(mlabel)*6, tm+14, fill="#111111", outline=mcolor, tag="graph")
+                canvas.create_text(tx, tm+4, text=mlabel, fill=mcolor, anchor='nw', font=("Arial", 8), tag="graph")
+        except Exception:
+            pass
+        
         
     def run_websocket(self):
         """Run WebSocket client in background thread"""
@@ -490,6 +515,12 @@ class WahooBridgeGUI:
           {"event":"spawn","entity":"car","id":"car_1","timestamp": 168}
         """
         try:
+            # Log receipt for debugging
+            try:
+                self.logger.debug("Received event: %s", data)
+            except Exception:
+                pass
+
             ev = data.get('event')
             ts = data.get('timestamp', time.time())
             label = None
@@ -530,13 +561,15 @@ class WahooBridgeGUI:
     async def websocket_client(self):
         """Connect to bridge and receive data"""
         uri = "ws://localhost:8765"
-        
+        backoff = 1.0
+        max_backoff = 30.0
         while True:
             try:
                 async with websockets.connect(uri) as websocket:
                     # Connected!
+                    backoff = 1.0
                     self.root.after(0, self.update_status, True)
-                    
+
                     # Receive data
                     async for message in websocket:
                         try:
@@ -553,8 +586,7 @@ class WahooBridgeGUI:
                                     except Exception:
                                         pass
                                     continue
-                                    
-                                # Update UI
+
                                 # Update UI (only heart rate is used)
                                 self.root.after(
                                     0,
@@ -577,11 +609,13 @@ class WahooBridgeGUI:
                                     )
                         except Exception as e:
                             print(f"Parse error: {e}")
-                            
+
             except Exception as e:
                 # Connection failed
                 self.root.after(0, self.update_status, False)
-                await asyncio.sleep(3)  # Retry after 3 seconds
+                # Exponential backoff
+                await asyncio.sleep(backoff)
+                backoff = min(max_backoff, backoff * 2.0)
                 
     
     def run(self):

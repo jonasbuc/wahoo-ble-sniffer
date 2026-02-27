@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
-"""
-Mock Wahoo Bridge - Til test uden rigtige enheder
-Sender simulerede cycling data til Unity
-UPDATED: Binary protocol + stop/start simulation
+"""Mock Wahoo Bridge - CLI-configurable test server
+
+Runs a WebSocket server that emits mock cycling frames in the project's
+binary protocol by default and optionally emits JSON event messages (spawn)
+so the GUI can display markers.
 """
 
+import argparse
 import asyncio
 import json
+import logging
 import time
 import math
 import struct
@@ -78,14 +81,16 @@ class MockCyclingData:
 
 
 class MockWahooBridge:
-    """WebSocket server der sender mock data med binary protocol"""
-    
-    def __init__(self, port: int = 8765, use_binary: bool = True):
+    """WebSocket server that sends mock data using binary or JSON frames."""
+
+    def __init__(self, port: int = 8765, use_binary: bool = True, spawn_interval: float = 7.0):
         self.port = port
         self.clients: Set[WebSocketServerProtocol] = set()
         self.mock_data = MockCyclingData()
         self.running = False
         self.use_binary = use_binary
+        self.spawn_interval = spawn_interval
+        self.logger = logging.getLogger("mock_bridge")
     
     async def register_client(self, websocket: WebSocketServerProtocol):
         """Register en Unity client"""
@@ -112,20 +117,25 @@ class MockWahooBridge:
         
         try:
             async for message in websocket:
-                # Echo for ping/pong
-                await websocket.send(json.dumps({"pong": message}))
+                # Simple echo/ping handler for client messages; ignore otherwise
+                try:
+                    await websocket.send(json.dumps({"pong": message}))
+                except Exception:
+                    pass
         finally:
-            self.clients.remove(websocket)
-            print(f"✗ Unity client disconnected")
+            try:
+                self.clients.remove(websocket)
+            except Exception:
+                pass
+            self.logger.info("Unity client disconnected")
     
     async def broadcast_loop(self):
         """Send mock data kontinuerligt med stop/start cycles"""
-        print("✓ Broadcasting mock cycling data (20s ride / 5s stop)...")
-        print()
-        
+        self.logger.info("Broadcasting mock cycling data (20s ride / 5s stop)...")
+
         last_log_time = 0
         last_spawn_time = 0
-        spawn_interval = 7  # seconds between spawn events while riding
+        spawn_interval = float(self.spawn_interval)
         spawn_counter = 0
         
         while self.running:
@@ -135,15 +145,21 @@ class MockWahooBridge:
                 # Broadcast til alle clients
                 if self.use_binary:
                     # Binary broadcast
-                    for client in self.clients.copy():
+                    for client in list(self.clients):
                         try:
                             await client.send(message)
-                        except:
-                            self.clients.discard(client)
-                    
+                        except Exception:
+                            try:
+                                self.clients.discard(client)
+                            except Exception:
+                                pass
+
                     # Parse for logging
-                    parsed = struct.unpack('dfffi', message)
-                    timestamp, power, cadence, speed, hr = parsed
+                    try:
+                        parsed = struct.unpack('dfffi', message)
+                        timestamp, power, cadence, speed, hr = parsed
+                    except struct.error:
+                        power = cadence = speed = hr = 0
                 else:
                     # JSON broadcast
                     websockets.broadcast(self.clients, json.dumps(message))
@@ -180,9 +196,9 @@ class MockWahooBridge:
                     }
                     try:
                         websockets.broadcast(self.clients, json.dumps(event))
-                        print(f"[EVENT] spawn -> {event['id']} at {int(now)}")
+                        self.logger.info("[EVENT] spawn -> %s at %d", event['id'], int(now))
                     except Exception:
-                        pass
+                        self.logger.debug("Failed to broadcast event")
             
             await asyncio.sleep(0.05)  # 20Hz update rate = constant smooth data flow
     
@@ -210,9 +226,9 @@ class MockWahooBridge:
             await self.broadcast_loop()
 
 
-async def main():
-    bridge = MockWahooBridge(port=8765, use_binary=True)
-    
+async def main(port: int, use_binary: bool, spawn_interval: float):
+    bridge = MockWahooBridge(port=port, use_binary=use_binary, spawn_interval=spawn_interval)
+
     try:
         await bridge.start_server()
     except KeyboardInterrupt:
@@ -221,14 +237,24 @@ async def main():
         bridge.running = False
 
 
+def parse_args():
+    p = argparse.ArgumentParser(prog="mock_wahoo_bridge.py")
+    p.add_argument("--port", type=int, default=8765)
+    p.add_argument("--no-binary", dest="use_binary", action="store_false", help="Send JSON frames instead of binary")
+    p.add_argument("--spawn-interval", type=float, default=7.0, help="Seconds between spawn events while riding")
+    p.add_argument("--log-level", default="INFO")
+    return p.parse_args()
+
+
 if __name__ == "__main__":
+    args = parse_args()
+    logging.basicConfig(level=getattr(logging, args.log_level.upper(), logging.INFO), format="%(asctime)s %(levelname)s %(message)s")
     print()
     print("🚴 Mock Wahoo Bridge - ZERO DETECTION TEST")
     print()
-    print("Brug dette til at teste Unity integration uden hardware!")
-    print("Simulerer stop/start for at teste zero detection.")
+    print("Use this to test Unity integration without hardware.")
     print()
-    
-    asyncio.run(main())
-    
-    asyncio.run(main())
+    try:
+        asyncio.run(main(args.port, args.use_binary, args.spawn_interval))
+    except KeyboardInterrupt:
+        pass

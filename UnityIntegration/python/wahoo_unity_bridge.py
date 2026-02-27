@@ -19,7 +19,7 @@ import time
 import struct
 import argparse
 import logging
-from typing import Set
+from typing import Set, Optional
 
 try:
     import websockets
@@ -81,9 +81,24 @@ class WahooBridgeServer:
             handshake = json.dumps({"protocol": "binary" if self.use_binary else "json", "version": "1.0"})
             await ws.send(handshake)
 
-            async for _ in ws:
-                # keep connection alive; ignore incoming messages
-                pass
+            # Receive messages from this client and handle them (event proxying)
+            async for message in ws:
+                try:
+                    # If we get JSON with an "event" field, forward it to all clients
+                    if isinstance(message, str):
+                        try:
+                            data = json.loads(message)
+                        except Exception:
+                            data = None
+                        if data and isinstance(data, dict) and "event" in data:
+                            # Broadcast event JSON to all connected clients
+                            await self.broadcast_json(data, exclude=ws)
+                        # otherwise ignore
+                    else:
+                        # Binary data from client - not expected; ignore
+                        pass
+                except Exception as e:
+                    LOG.debug("Error handling message from %s: %s", ws.remote_address, e)
         except Exception as e:
             LOG.debug("Client handling error: %s", e)
         finally:
@@ -109,6 +124,7 @@ class WahooBridgeServer:
                         try:
                             await c.send(message)
                         except Exception:
+                            LOG.debug("Removing client after send failure: %s", getattr(c, 'remote_address', None))
                             try:
                                 self.clients.discard(c)
                             except Exception:
@@ -132,8 +148,46 @@ class WahooBridgeServer:
 
     async def start(self):
         LOG.info("Starting WahooBridgeServer (mock=%s) on %s:%d", self.mock, self.host, self.port)
-        async with websockets.serve(self.register, self.host, self.port):
-            await self.broadcast_loop()
+        async with websockets.serve(self.register, self.host, self.port) as server:
+            # Run broadcast loop and ping loop concurrently while server context is active
+            ping_task = asyncio.create_task(self.ping_loop())
+            broadcast_task = asyncio.create_task(self.broadcast_loop())
+            try:
+                await asyncio.gather(ping_task, broadcast_task)
+            finally:
+                ping_task.cancel()
+                broadcast_task.cancel()
+
+    async def broadcast_json(self, data: dict, exclude: Optional[WebSocketServerProtocol] = None):
+        """Broadcast a JSON dict to all connected clients (optionally excluding the sender)."""
+        text = json.dumps(data)
+        for c in list(self.clients):
+            if c is exclude:
+                continue
+            try:
+                await c.send(text)
+            except Exception:
+                LOG.debug("Error sending JSON to client, removing: %s", getattr(c, 'remote_address', None))
+                try:
+                    self.clients.discard(c)
+                except Exception:
+                    pass
+
+    async def ping_loop(self):
+        """Periodically ping clients to detect dead connections."""
+        while True:
+            await asyncio.sleep(10)
+            for c in list(self.clients):
+                try:
+                    pong_waiter = await c.ping()
+                    await asyncio.wait_for(pong_waiter, timeout=5)
+                except Exception:
+                    LOG.debug("Ping failed for client %s, removing", getattr(c, 'remote_address', None))
+                    try:
+                        self.clients.discard(c)
+                        await c.close()
+                    except Exception:
+                        pass
 
 
 def parse_args():
