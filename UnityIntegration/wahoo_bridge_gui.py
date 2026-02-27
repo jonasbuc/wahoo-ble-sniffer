@@ -42,6 +42,9 @@ class WahooBridgeGUI:
         self.pan_offset = 0.0
         # Heart rate history for graph: store (timestamp, hr)
         self.hr_history = deque(maxlen=2000)
+        # Event markers from Unity (scenario starts/ends, spawns, etc.)
+        # Each marker: dict with keys: ts (timestamp), label (str), color (str)
+        self.markers = []
         self.graph_seconds = 30.0  # show last 30 seconds on X axis
         # Graph margins (so axis labels and markers are not clipped)
         self.graph_left_margin = 48
@@ -478,6 +481,51 @@ class WahooBridgeGUI:
             self.draw_graph()
         except Exception:
             pass
+
+    def handle_event(self, data: dict):
+        """Handle an event message from Unity and add a marker to the graph.
+
+        Expected event format (examples):
+          {"event":"scenario","action":"start","id":1,"name":"S1","timestamp": 167"}
+          {"event":"spawn","entity":"car","id":"car_1","timestamp": 168}
+        """
+        try:
+            ev = data.get('event')
+            ts = data.get('timestamp', time.time())
+            label = None
+            color = '#ff66aa'
+            if ev == 'scenario':
+                action = data.get('action', '')
+                sid = data.get('id')
+                name = data.get('name') or f"Scenario {sid}"
+                if action == 'start':
+                    label = f"{name} start"
+                    color = '#66ccff'
+                elif action == 'end':
+                    label = f"{name} end"
+                    color = '#6666ff'
+            elif ev == 'spawn':
+                ent = data.get('entity', 'obj')
+                eid = data.get('id', '')
+                label = f"spawn:{ent}{(':'+str(eid)) if eid else ''}"
+                color = '#ffcc66'
+            else:
+                # Generic event label
+                label = ev or data.get('type') or 'event'
+
+            if label:
+                # Store marker (keep list bounded)
+                self.markers.append({'ts': float(ts), 'label': str(label), 'color': color})
+                if len(self.markers) > 500:
+                    # drop oldest
+                    self.markers.pop(0)
+                # redraw to show marker
+                try:
+                    self.root.after(0, self.draw_graph)
+                except Exception:
+                    pass
+        except Exception:
+            pass
         
     async def websocket_client(self):
         """Connect to bridge and receive data"""
@@ -497,6 +545,14 @@ class WahooBridgeGUI:
                                 data = json.loads(message)
                                 if "protocol" in data:
                                     continue  # Skip handshake
+                                # Handle events from Unity (scenario start/end, spawn, etc.)
+                                if "event" in data:
+                                    # schedule marker handling on main thread
+                                    try:
+                                        self.root.after(0, self.handle_event, data)
+                                    except Exception:
+                                        pass
+                                    continue
                                     
                                 # Update UI
                                 # Update UI (only heart rate is used)
