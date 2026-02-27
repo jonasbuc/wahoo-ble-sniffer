@@ -61,6 +61,12 @@ class WahooBridgeGUI:
         self.demo_event = None
         # Start periodic tick to keep time labels updating even without incoming frames
         self.root.after(250, self._tick)
+
+        # Drawing throttling and downsampling
+        self.min_draw_interval = 1.0 / 25.0  # seconds (25 FPS)
+        self._last_draw_time = 0.0
+        self._draw_pending = False
+        self.max_plot_points = 600
         
     def create_widgets(self):
         # Title
@@ -214,11 +220,22 @@ class WahooBridgeGUI:
         # Update numeric label
         self.hr_value.config(text=str(int(hr)))
 
-        # Redraw graph in main thread
-        self.root.after(0, self.draw_graph)
+        # Redraw graph in main thread (draw_graph will throttle itself)
+        try:
+            self.root.after(0, self.draw_graph)
+        except Exception:
+            pass
 
     def draw_graph(self):
         """Draw heart rate time-series on the canvas (Y=BPM, X=time)."""
+        # Throttle drawing to avoid excessive CPU/GPU use
+        nowt = time.time()
+        if nowt - self._last_draw_time < self.min_draw_interval:
+            # mark pending draw and return; periodic _tick will call draw_graph later
+            self._draw_pending = True
+            return
+        self._draw_pending = False
+        self._last_draw_time = nowt
         canvas = self.graph_canvas
         canvas.delete("graph")
 
@@ -307,9 +324,16 @@ class WahooBridgeGUI:
 
         
 
-        # Build polyline points inside inner area
+        # Build polyline points inside inner area, downsampling if too many points
         pts = []
-        for (t, v) in visible:
+        visible_len = len(visible)
+        if visible_len > self.max_plot_points:
+            step = int(math.ceil(visible_len / float(self.max_plot_points)))
+        else:
+            step = 1
+
+        for i in range(0, visible_len, step):
+            (t, v) = visible[i]
             x = lm + int((t - start) / self.graph_seconds * inner_w)
             y = tm + inner_h - int((v - min_hr) / (max_hr - min_hr) * inner_h)
             pts.append((x, y))
