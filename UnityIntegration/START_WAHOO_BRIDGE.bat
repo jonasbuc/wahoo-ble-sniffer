@@ -43,7 +43,11 @@ echo ═════════════════════════
 echo.
 
 REM Start bridge
-python wahoo_unity_bridge.py
+REM Also start the GUI in a separate window so users get the monitor automatically
+start "" python python\wahoo_bridge_gui.py
+
+REM Start bridge (canonical copy)
+python python\wahoo_unity_bridge.py
 
 echo.
 echo Bridge stopped.

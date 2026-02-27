@@ -8,7 +8,7 @@ echo ============================================================
 echo   Wahoo MOCK Bridge (Test without hardware)
 echo ============================================================
 echo.
-echo This is for testing/development without KICKR!
+echo This is for testing/development without hardware!
 echo.
 
 REM Check if Python is installed
@@ -43,8 +43,8 @@ echo.
 echo ════════════════════════════════════════════════════════════
 echo.
 
-REM Start mock bridge
-python mock_wahoo_bridge.py
+REM Start mock bridge (canonical copy)
+python python\mock_wahoo_bridge.py
 
 echo.
 echo Mock bridge stopped.

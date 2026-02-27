@@ -11,5 +11,5 @@ if [ ! -f "$PYTHON" ]; then
     PYTHON="python3"
 fi
 
-# Launch GUI
-$PYTHON wahoo_bridge_gui.py
+# Launch GUI (use canonical python/ copy)
+$PYTHON python/wahoo_bridge_gui.py

@@ -1,4 +1,35 @@
 #!/usr/bin/env python3
+"""
+Deprecated mock wrapper.
+
+The canonical mock implementation lives at:
+  UnityIntegration/python/mock_wahoo_bridge.py
+
+This wrapper preserves the old entrypoint and will execute the canonical
+script if it exists.
+"""
+
+from __future__ import annotations
+
+import os
+import runpy
+import sys
+
+
+def main() -> None:
+    base = os.path.dirname(__file__)
+    target = os.path.join(base, "python", "mock_wahoo_bridge.py")
+    if os.path.exists(target):
+        runpy.run_path(target, run_name="__main__")
+    else:
+        print("The mock bridge has moved to: UnityIntegration/python/mock_wahoo_bridge.py")
+        print("Please run that script directly for mock/testing.")
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()
+#!/usr/bin/env python3
 """Mock Wahoo Bridge - CLI-configurable test server
 
 Runs a WebSocket server that emits mock cycling frames in the project's
@@ -13,9 +44,9 @@ import logging
 import time
 import math
 import struct
-from typing import Set
+from typing import Set, Any
 import websockets
-from websockets.server import WebSocketServerProtocol
+# Note: avoid importing WebSocketServerProtocol to reduce deprecation warnings from websockets
 
 
 class MockCyclingData:
@@ -85,14 +116,14 @@ class MockWahooBridge:
 
     def __init__(self, port: int = 8765, use_binary: bool = True, spawn_interval: float = 7.0):
         self.port = port
-        self.clients: Set[WebSocketServerProtocol] = set()
+        self.clients: Set[Any] = set()
         self.mock_data = MockCyclingData()
         self.running = False
         self.use_binary = use_binary
         self.spawn_interval = spawn_interval
         self.logger = logging.getLogger("mock_bridge")
     
-    async def register_client(self, websocket: WebSocketServerProtocol):
+    async def register_client(self, websocket: Any):
         """Register en Unity client"""
         # Enable TCP_NODELAY
         try:
