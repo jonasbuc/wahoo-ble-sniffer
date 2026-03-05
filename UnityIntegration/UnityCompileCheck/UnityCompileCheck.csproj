@@ -7,12 +7,12 @@
     <LangVersion>10.0</LangVersion>
   </PropertyGroup>
   <ItemGroup>
-    <Compile Include="..\VrsCrc32.cs" />
-    <Compile Include="..\VrsFormats.cs" />
-    <Compile Include="..\VrsFileWriterFixed.cs" />
-    <Compile Include="..\VrsFileWriterEvents.cs" />
-    <Compile Include="..\VrsSessionLogger.cs" />
-    <Compile Include="..\VrsLoggerHud.cs" />
+    <Compile Include="..\Assets\VrsLogging\VrsCrc32.cs" />
+    <Compile Include="..\Assets\VrsLogging\VrsFormats.cs" />
+    <Compile Include="..\Assets\VrsLogging\VrsFileWriterFixed.cs" />
+    <Compile Include="..\Assets\VrsLogging\VrsFileWriterEvents.cs" />
+    <Compile Include="..\Assets\VrsLogging\VrsSessionLogger.cs" />
+    <Compile Include="..\Assets\VrsLogging\VrsLoggerHud.cs" />
     <Compile Include="UnityEngineStubs.cs" />
   </ItemGroup>
 </Project>
