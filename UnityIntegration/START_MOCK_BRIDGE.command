@@ -8,9 +8,10 @@ echo "============================================================"
 echo "  Wahoo MOCK Bridge (Test without hardware)"
 echo "============================================================"
 echo ""
-echo "This is for testing/development without KICKR!"
+echo "This is for testing/development without hardware!"
 echo ""
 
+# Find Python in virtual environment
 # Find Python in virtual environment
 PYTHON="../.venv/bin/python"
 
@@ -20,11 +21,10 @@ if [ ! -f "$PYTHON" ]; then
     PYTHON="python3"
 fi
 
-# Check if dependencies are installed
+# Ensure websockets is installed in the chosen interpreter
 if ! $PYTHON -c "import websockets" 2>/dev/null; then
-    echo "WARNING: Websockets missing!"
-    echo "Installing websockets..."
-    pip install websockets
+    echo "WARNING: Websockets missing! Installing into the chosen Python..."
+    $PYTHON -m pip install websockets
 fi
 
 echo "OK: Dependencies installed"
@@ -38,8 +38,8 @@ echo ""
 echo "════════════════════════════════════════════════════════════"
 echo ""
 
-# Start mock bridge
-$PYTHON mock_wahoo_bridge.py
+# Start mock bridge (moved into python/ folder)
+$PYTHON python/mock_wahoo_bridge.py
 
 echo ""
 echo "Mock bridge stopped."

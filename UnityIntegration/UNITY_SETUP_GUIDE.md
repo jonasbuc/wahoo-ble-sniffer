@@ -157,11 +157,11 @@ Hvis det stadig sker:
 
 ### "Hastigheden er mærkelig"
 
-Unity bruger **meters per second**, KICKR sender **km/h**.
+Unity bruger **meters per second**, trainers/sensors sender **km/h**.
 
 Konvertering:
 ```csharp
-float speedKmh = 20f;  // Fra KICKR
+float speedKmh = 20f;  // Fra trainer/sensor
 float speedMs = speedKmh / 3.6f;  // = 5.55 m/s
 float moveSpeed = speedMs * speedMultiplier;
 ```
@@ -261,7 +261,7 @@ Fra `WahooDataReceiver.CyclingData`:
 ## 🚀 Næste Skridt
 
 1. **Test med mock data først** - sørg for alt virker
-2. **Test med rigtig KICKR** - start på cyklen og brug START_WAHOO_BRIDGE.command
+2. **Test med rigtig trainer/sensor** - start på cyklen og brug START_WAHOO_BRIDGE.command
 3. **Juster speedMultiplier** til det føles naturligt
 4. **Tilføj hjul rotation** for visuel feedback
 5. **Byg din VR verden** omkring cyklen!

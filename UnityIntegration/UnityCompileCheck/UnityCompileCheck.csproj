@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net6.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <LangVersion>10.0</LangVersion>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="..\Assets\VrsLogging\VrsCrc32.cs" />
+    <Compile Include="..\Assets\VrsLogging\VrsFormats.cs" />
+    <Compile Include="..\Assets\VrsLogging\VrsFileWriterFixed.cs" />
+    <Compile Include="..\Assets\VrsLogging\VrsFileWriterEvents.cs" />
+    <Compile Include="..\Assets\VrsLogging\VrsSessionLogger.cs" />
+    <Compile Include="..\Assets\VrsLogging\VrsLoggerHud.cs" />
+    <Compile Include="UnityEngineStubs.cs" />
+  </ItemGroup>
+</Project>

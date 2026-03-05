@@ -1,7 +1,7 @@
 using UnityEngine;
 
 /// <summary>
-/// Example VR bike controller using real KICKR SNAP data
+/// Example VR bike controller using real trainer data
 /// Attach this to your VR bike GameObject with a Rigidbody
 /// </summary>
 [RequireComponent(typeof(Rigidbody))]
@@ -65,7 +65,7 @@ public class VRBikeController : MonoBehaviour
         }
         else
         {
-            // Use real KICKR data for target speed
+            // Use real trainer data for target speed
             float targetSpeedKmh = wahooBLE.Speed;
             
             // Clamp to max speed
@@ -188,12 +188,12 @@ public class VRBikeController : MonoBehaviour
 
     private void OnWahooConnected()
     {
-        Debug.Log("[VRBike] KICKR connected - real data active!");
+        Debug.Log("[VRBike] Trainer connected - real data active!");
     }
 
     private void OnWahooDisconnected()
     {
-        Debug.LogWarning("[VRBike] KICKR disconnected - coasting...");
+        Debug.LogWarning("[VRBike] Trainer disconnected - coasting...");
     }
 
     void OnDestroy()

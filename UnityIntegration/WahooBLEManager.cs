@@ -118,10 +118,10 @@ public class WahooBLEManager : MonoBehaviour
         {
             if (!string.IsNullOrEmpty(name))
             {
-                // Check for KICKR
+                // Check for trainer/power device
                 if (name.ToUpper().Contains(kickrNameFilter.ToUpper()) && string.IsNullOrEmpty(kickrDeviceAddress))
                 {
-                    Debug.Log($"[WahooBLE] Found KICKR: {name} at {address}");
+                    Debug.Log($"[WahooBLE] Found trainer/power device: {name} at {address}");
                     kickrDeviceAddress = address;
                     ConnectToKickr();
                 }
@@ -158,13 +158,13 @@ public class WahooBLEManager : MonoBehaviour
 
     private void ConnectToKickr()
     {
-        Debug.Log("[WahooBLE] Connecting to KICKR...");
+    Debug.Log("[WahooBLE] Connecting to trainer/power device...");
 
         BluetoothLEHardwareInterface.ConnectToPeripheral(
             kickrDeviceAddress,
             (address) => 
             {
-                Debug.Log($"[WahooBLE] ✓ Connected to KICKR");
+                Debug.Log($"[WahooBLE] ✓ Connected to trainer/power device");
                 IsKickrConnected = true;
                 OnKickrConnected?.Invoke();
             },
@@ -198,7 +198,7 @@ public class WahooBLEManager : MonoBehaviour
             },
             (address) => 
             {
-                Debug.LogWarning($"[WahooBLE] KICKR disconnected");
+                Debug.LogWarning($"[WahooBLE] trainer/power device disconnected");
                 IsKickrConnected = false;
                 OnKickrDisconnected?.Invoke();
                 kickrDeviceAddress = null;

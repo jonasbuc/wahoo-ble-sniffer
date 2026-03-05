@@ -25,24 +25,22 @@ if [ ! -f "$PYTHON" ]; then
 fi
 
 # Check if dependencies are installed
+# Use the venv pip if we need to install
 if ! $PYTHON -c "import bleak, websockets" 2>/dev/null; then
     echo "WARNING: Dependencies missing!"
-    echo "Installing bleak and websockets..."
-    pip install bleak websockets
+    echo "Installing bleak and websockets into the virtualenv..."
+    $PYTHON -m pip install bleak websockets
 fi
 
 echo "OK: Dependencies installed"
-echo ""
-echo "Scanning for KICKR and TICKR..."
-echo "TIP: Pedal to wake up your KICKR!"
 echo ""
 echo "WebSocket server starting on ws://localhost:8765"
 echo ""
 echo "════════════════════════════════════════════════════════════"
 echo ""
 
-# Start bridge
-$PYTHON wahoo_unity_bridge.py
+# Start bridge (moved into python/ folder)
+$PYTHON python/wahoo_unity_bridge.py
 
 echo ""
 echo "Bridge stopped."

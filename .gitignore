@@ -42,3 +42,11 @@ training.db
 
 # Logs
 *.log
+
+# Ignore UnityCompileCheck build artifacts
+UnityIntegration/UnityCompileCheck/bin/
+UnityIntegration/UnityCompileCheck/obj/
+
+# Ignore UnityCompileCheck runtime output
+UnityIntegration/UnityCompileCheck/*.dll
+UnityIntegration/UnityCompileCheck/*.pdb

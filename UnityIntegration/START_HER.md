@@ -26,7 +26,7 @@
 
 ```bash
 cd "/Users/jonasbuchner/Blu Sniffer/UnityIntegration"
-python3 mock_wahoo_bridge.py
+python3 python/mock_wahoo_bridge.py
 ```
 
 ### Step 2: I Unity
@@ -39,7 +39,7 @@ python3 mock_wahoo_bridge.py
 ### Step 3: Test Med Real KICKR
 
 ```bash
-python3 wahoo_unity_bridge.py
+python3 python/wahoo_unity_bridge.py
 ```
 
 (Kræver KICKR tændt + pedaling)
@@ -101,8 +101,7 @@ Læs i denne rækkefølge:
 ## 💡 Hvad Siger Tests?
 
 ### Python Bridge:
-```bash
-$ python3 -m py_compile wahoo_unity_bridge.py
+$ python3 -m py_compile python/wahoo_unity_bridge.py
 ✅ Success - compiles without errors
 ```
 
