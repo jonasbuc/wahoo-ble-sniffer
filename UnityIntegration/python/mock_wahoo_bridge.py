@@ -1,194 +1,164 @@
 #!/usr/bin/env python3
 """
-Mock Wahoo Bridge - Til test uden rigtige enheder
-Sender simulerede cycling data til Unity
-UPDATED: Binary protocol + stop/start simulation
+Mock Wahoo Bridge - Test server for UnityIntegration
+
+Provides a small WebSocket server that emits a simple binary frame
+(format: dfffi -> timestamp, power, cadence, speed, hr) at ~20Hz.
+
+This file is intentionally lightweight and self-contained for local
+testing. It supports an optional ``spawn_interval`` which will emit
+JSON "spawn" events (used by integration tests / GUI markers).
 """
 
+import argparse
 import asyncio
 import json
-import time
+import logging
 import math
 import struct
-from typing import Set
+import time
+from typing import Any, Optional, Set
+
 import websockets
-from websockets.server import WebSocketServerProtocol
+
+LOG = logging.getLogger("mock_wahoo_bridge")
 
 
 class MockCyclingData:
     """Simulerer cycling data med stop/start cycles"""
-    
-    def __init__(self):
+
+    def __init__(self) -> None:
         self.time_offset = time.time()
         self.base_power = 150
         self.base_cadence = 80
         self.base_speed = 25.0
         self.base_hr = 140
         self.cycle_duration = 20  # 20 second cycles
-        self.stop_duration = 5    # 5 second stops
-    
-    def get_current_data(self, use_binary=True):
-        """Generer realistisk cycling data med stop/start cycles"""
+        self.stop_duration = 5  # 5 second stops
+
+    def get_current_data(self, use_binary: bool = True):
+        """Generate realistic cycling data with ride/stop cycles."""
         elapsed = time.time() - self.time_offset
-        
-        # Cycle between riding and stopping
-        cycle_time = elapsed % (self.cycle_duration + self.stop_duration)
-        is_stopped = cycle_time > self.cycle_duration
-        
-        if is_stopped:
-            # STOPPED - all zeros except HR
-            power = 0
-            cadence = 0.0
-            speed = 0.0
-            hr = self.base_hr - 20  # Lower HR when stopped
-        else:
-            # RIDING - normal variations
-            power_variation = math.sin(elapsed * 0.3) * 30
-            cadence_variation = math.sin(elapsed * 0.5) * 10
-            speed_variation = math.sin(elapsed * 0.3) * 5
-            hr_variation = math.sin(elapsed * 0.2) * 10
-            
-            # Add random micro-variations
-            import random
-            micro_noise = random.uniform(-5, 5)
-            
-            power = max(0, int(self.base_power + power_variation + micro_noise))
-            cadence = max(0, self.base_cadence + cadence_variation)
-            speed = max(0, self.base_speed + speed_variation)
-            hr = max(40, int(self.base_hr + hr_variation))
-        
+        # We only simulate heart-rate now. Other fields are zero but we keep
+        # the same binary format for compatibility (dfffi).
+        import random
+
+        hr_variation = math.sin(elapsed * 0.2) * 8.0
+        micro_noise = random.uniform(-2.0, 2.0)
+        hr = max(40, int(self.base_hr + hr_variation + micro_noise))
+
+        power = 0.0
+        cadence = 0.0
+        speed = 0.0
+
         if use_binary:
-            # Binary format: dfffi (24 bytes)
-            return struct.pack('dfffi',
-                time.time(),
-                float(power),
-                cadence,
-                speed,
-                hr
+            # Binary format: dfffi (timestamp, power, cadence, speed, hr)
+            return struct.pack(
+                "dfffi", time.time(), float(power), float(cadence), float(speed), int(hr)
             )
         else:
-            # JSON format
-            return {
-                "timestamp": time.time(),
-                "power": power,
-                "cadence": cadence,
-                "speed": speed,
-                "heart_rate": hr
-            }
+            return {"timestamp": time.time(), "power": 0.0, "cadence": 0.0, "speed": 0.0, "heart_rate": hr}
 
 
 class MockWahooBridge:
-    """WebSocket server der sender mock data med binary protocol
+    """Simple WebSocket server that broadcasts mock cycling frames.
 
-    Backwards-compatible: accepts optional spawn_interval to emit JSON
-    spawn events periodically (used by integration tests).
+    If ``spawn_interval`` is set, the bridge will also periodically
+    emit JSON spawn events to all connected clients.
     """
 
-    def __init__(self, port: int = 8765, use_binary: bool = True, spawn_interval: float | None = None):
+    def __init__(
+        self,
+        port: int = 8765,
+        use_binary: bool = True,
+        spawn_interval: Optional[float] = None,
+    ) -> None:
         self.port = port
-        self.clients: Set[WebSocketServerProtocol] = set()
+        self.use_binary = use_binary
         self.mock_data = MockCyclingData()
         self.running = False
-        self.use_binary = use_binary
-        # If set, periodically emit JSON spawn events every spawn_interval seconds
-        self.spawn_interval = float(spawn_interval) if spawn_interval is not None else None
-        self._spawn_task = None
-    
-    async def register_client(self, websocket: WebSocketServerProtocol):
-        """Register en Unity client"""
-        # Enable TCP_NODELAY
+        self.clients: Set[Any] = set()
+        self.spawn_interval = (
+            float(spawn_interval) if spawn_interval is not None else None
+        )
+        self._spawn_task: Optional[asyncio.Task] = None
+
+    async def register_client(self, websocket: Any) -> None:
+        """Register a client and handle incoming messages (basic echo/pong)."""
+        # Try to set TCP_NODELAY where possible (best-effort)
         try:
-            websocket.transport.get_extra_info('socket').setsockopt(
-                __import__('socket').IPPROTO_TCP,
-                __import__('socket').TCP_NODELAY,
-                1
-            )
-        except:
+            sock = websocket.transport.get_extra_info("socket")
+            if sock is not None:
+                sock.setsockopt(
+                    __import__("socket").IPPROTO_TCP,
+                    __import__("socket").TCP_NODELAY,
+                    1,
+                )
+        except Exception:
             pass
-        
+
         self.clients.add(websocket)
-        print(f"✓ Unity client connected: {websocket.remote_address}")
-        
-        # Send handshake
-        handshake = json.dumps({
-            "protocol": "binary" if self.use_binary else "json",
-            "version": "1.0",
-            "format": "dfffi (timestamp, power, cadence, speed, hr)"
-        })
+        LOG.info("Client connected: %s", getattr(websocket, "remote_address", None))
+
+        handshake = json.dumps(
+            {
+                "protocol": "binary" if self.use_binary else "json",
+                "version": "1.0",
+                "format": "dfffi (timestamp, power, cadence, speed, hr)",
+            }
+        )
         await websocket.send(handshake)
-        
+
         try:
             async for message in websocket:
-                # Echo for ping/pong
-                await websocket.send(json.dumps({"pong": message}))
+                # Keep connection alive; echo simple pings
+                try:
+                    await websocket.send(json.dumps({"pong": True}))
+                except Exception:
+                    break
         finally:
-            self.clients.remove(websocket)
-            print(f"✗ Unity client disconnected")
-    
-    async def broadcast_loop(self):
-        """Send mock data kontinuerligt med stop/start cycles"""
-        print("✓ Broadcasting mock cycling data (20s ride / 5s stop)...")
-        print()
-        
+            self.clients.discard(websocket)
+            LOG.info("Client disconnected")
+
+    async def broadcast_loop(self) -> None:
+        """Broadcast mock data to connected clients at ~20Hz."""
+        LOG.info("Starting broadcast loop on ws://localhost:%d", self.port)
         last_log_time = 0
-        
         while self.running:
             if self.clients:
                 message = self.mock_data.get_current_data(use_binary=self.use_binary)
-                
-                # Broadcast til alle clients
+
                 if self.use_binary:
-                    # Binary broadcast
-                    for client in self.clients.copy():
+                    for client in list(self.clients):
                         try:
                             await client.send(message)
-                        except:
+                        except Exception:
                             self.clients.discard(client)
-                    
-                    # Parse for logging
-                    parsed = struct.unpack('dfffi', message)
-                    timestamp, power, cadence, speed, hr = parsed
+                        try:
+                            _, power, cadence, speed, hr = struct.unpack("dfffi", message[:24])
+                        except struct.error:
+                            power = cadence = speed = hr = 0
                 else:
-                    # JSON broadcast
-                    websockets.broadcast(self.clients, json.dumps(message))
-                    power = message['power']
-                    cadence = message['cadence']
-                    speed = message['speed']
-                    hr = message['heart_rate']
-                
-                # Log every second
-                current_time = int(time.time())
-                if current_time != last_log_time:
-                    last_log_time = current_time
-                    status = "🚴 RIDING" if power > 0 else "🛑 STOPPED"
-                    print(f"{status} | Power: {power:.0f}W | "
-                          f"Cadence: {cadence:.0f}rpm | "
-                          f"Speed: {speed:.1f}km/h | "
-                          f"HR: {hr}bpm")
-            
-            await asyncio.sleep(0.05)  # 20Hz update rate = constant smooth data flow
-    
-    
-    async def start_server(self):
-        """Start WebSocket server"""
+                    try:
+                        websockets.broadcast(self.clients, json.dumps(message))
+                    except Exception:
+                        pass
+                now = int(time.time())
+                if now != last_log_time:
+                    last_log_time = now
+                    # Only log heart-rate now; other fields are unused.
+                    try:
+                        LOG.info("HR:%dbpm", int(hr))
+                    except Exception:
+                        LOG.info("HR:unknown")
+
+            await asyncio.sleep(0.05)
+
+    async def start_server(self) -> None:
+        """Start the WebSocket server and optional spawn loop."""
         self.running = True
-        
-        print("=" * 60)
-        print("  Mock Wahoo Bridge - Test Server (BINARY PROTOCOL)")
-        print("=" * 60)
-        print()
-        print("⚠️  Dette er MOCK DATA - ingen rigtige BLE enheder!")
-        print()
-        print(f"✓ WebSocket server: ws://localhost:{self.port}")
-        print(f"✓ Protocol: {'BINARY (24 bytes)' if self.use_binary else 'JSON'}")
-        print(f"✓ Update rate: 20 Hz")
-        print(f"✓ Simulation: 20s riding → 5s stopped (cycles)")
-        print()
-        print("Waiting for Unity to connect...")
-        print("(Tryk Ctrl+C for at stoppe)")
-        print()
-        
-        # If spawn events are requested, start the background task
+        LOG.info("Mock Wahoo Bridge starting on ws://localhost:%d", self.port)
+
         try:
             if self.spawn_interval:
                 self._spawn_task = asyncio.create_task(self._spawn_loop())
@@ -196,7 +166,6 @@ class MockWahooBridge:
             async with websockets.serve(self.register_client, "localhost", self.port):
                 await self.broadcast_loop()
         finally:
-            # Cancel spawn task when shutting down
             if self._spawn_task:
                 self._spawn_task.cancel()
                 try:
@@ -204,44 +173,67 @@ class MockWahooBridge:
                 except asyncio.CancelledError:
                     pass
 
-
-    async def _spawn_loop(self):
+    async def _spawn_loop(self) -> None:
         """Periodically broadcast JSON spawn events to all connected clients."""
         counter = 0
-        while self.running:
+        while self.running and self.spawn_interval:
             await asyncio.sleep(self.spawn_interval)
             counter += 1
             event = {
                 "event": "spawn",
                 "entity": "car",
                 "id": f"car_{counter}",
-                "timestamp": time.time()
+                "timestamp": time.time(),
+                "source": "mock",
             }
             try:
                 if self.clients:
                     websockets.broadcast(self.clients, json.dumps(event))
             except Exception:
-                # ignore broadcast errors in spawn loop
-                pass
+                LOG.debug("Failed to broadcast spawn event")
 
 
-async def main():
-    bridge = MockWahooBridge(port=8765, use_binary=True)
-    
+def parse_args():
+    p = argparse.ArgumentParser(prog="mock_wahoo_bridge")
+    p.add_argument("--port", type=int, default=8765)
+    p.add_argument(
+        "--no-binary", action="store_true", help="Emit JSON instead of binary frames"
+    )
+    p.add_argument(
+        "--spawn-interval",
+        type=float,
+        default=None,
+        help="Emit spawn events every N seconds",
+    )
+    return p.parse_args()
+
+
+async def _main():
+    args = parse_args()
+    bridge = MockWahooBridge(
+        port=args.port,
+        use_binary=not args.no_binary,
+        spawn_interval=args.spawn_interval,
+    )
     try:
         await bridge.start_server()
+    except asyncio.CancelledError:
+        pass
+
+
+def main():
+    logging.basicConfig(
+        level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
+    )
+    try:
+        asyncio.run(_main())
     except KeyboardInterrupt:
-        print()
-        print("Shutting down...")
-        bridge.running = False
+        LOG.info("Shutting down mock bridge")
 
 
 if __name__ == "__main__":
-    print()
-    print("🚴 Mock Wahoo Bridge - ZERO DETECTION TEST")
-    print()
-    print("Brug dette til at teste Unity integration uden hardware!")
-    print("Simulerer stop/start for at teste zero detection.")
-    print()
-    
-    asyncio.run(main())
+    print("\n🚴 Mock Wahoo Bridge - ZERO DETECTION TEST\n")
+    print(
+        "Use this tool to test Unity integration without hardware (simulated ride/stop)."
+    )
+    main()

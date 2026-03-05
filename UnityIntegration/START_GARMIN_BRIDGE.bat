@@ -1,4 +1,4 @@
-@echo off
+ @echo off
 REM Garmin Speed Sensor Bridge Launcher (Windows)
 REM Connects Garmin Speed Sensor 2 to Unity
 
@@ -67,7 +67,7 @@ echo ===============================================================
 echo.
 
 REM Start the bridge
-python wahoo_unity_bridge.py
+ python python\wahoo_unity_bridge.py
 
 REM Keep window open on error
 if %errorlevel% neq 0 (

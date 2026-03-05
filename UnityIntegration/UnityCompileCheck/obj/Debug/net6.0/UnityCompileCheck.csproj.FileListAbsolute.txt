@@ -1,0 +1,12 @@
+/Users/jonasbuchner/Blu Sniffer/UnityIntegration/UnityCompileCheck/obj/Debug/net6.0/UnityCompileCheck.GeneratedMSBuildEditorConfig.editorconfig
+/Users/jonasbuchner/Blu Sniffer/UnityIntegration/UnityCompileCheck/obj/Debug/net6.0/UnityCompileCheck.AssemblyInfoInputs.cache
+/Users/jonasbuchner/Blu Sniffer/UnityIntegration/UnityCompileCheck/obj/Debug/net6.0/UnityCompileCheck.AssemblyInfo.cs
+/Users/jonasbuchner/Blu Sniffer/UnityIntegration/UnityCompileCheck/obj/Debug/net6.0/UnityCompileCheck.csproj.CoreCompileInputs.cache
+/Users/jonasbuchner/Blu Sniffer/UnityIntegration/UnityCompileCheck/obj/Debug/net6.0/UnityCompileCheck.sourcelink.json
+/Users/jonasbuchner/Blu Sniffer/UnityIntegration/UnityCompileCheck/bin/Debug/net6.0/UnityCompileCheck.deps.json
+/Users/jonasbuchner/Blu Sniffer/UnityIntegration/UnityCompileCheck/bin/Debug/net6.0/UnityCompileCheck.dll
+/Users/jonasbuchner/Blu Sniffer/UnityIntegration/UnityCompileCheck/bin/Debug/net6.0/UnityCompileCheck.pdb
+/Users/jonasbuchner/Blu Sniffer/UnityIntegration/UnityCompileCheck/obj/Debug/net6.0/UnityCompileCheck.dll
+/Users/jonasbuchner/Blu Sniffer/UnityIntegration/UnityCompileCheck/obj/Debug/net6.0/refint/UnityCompileCheck.dll
+/Users/jonasbuchner/Blu Sniffer/UnityIntegration/UnityCompileCheck/obj/Debug/net6.0/UnityCompileCheck.pdb
+/Users/jonasbuchner/Blu Sniffer/UnityIntegration/UnityCompileCheck/obj/Debug/net6.0/ref/UnityCompileCheck.dll

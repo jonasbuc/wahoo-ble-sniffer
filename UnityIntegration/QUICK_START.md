@@ -4,7 +4,7 @@
 
 Vi har lavet nemme starter-filer så du ikke behøver at åbne Terminal/CMD!
 
-### **For Real KICKR SNAP:**
+### **For Real BLE Speed / Trainer (Garmin etc):**
 
 **macOS:**
 ```
@@ -34,7 +34,7 @@ Dobbeltklik på: START_MOCK_BRIDGE.bat
 
 ### Step 1: Start Python Bridge
 
-1. **Tænd KICKR SNAP** (og træd på pedalerne!)
+1. **Tænd din speed/trainer sensor** (og træd på pedalerne for at vække den!)
 2. **Dobbeltklik** på `START_WAHOO_BRIDGE.command` (macOS) eller `.bat` (Windows)
 3. Vent til du ser: `✓ WebSocket server: ws://localhost:8765`
 
@@ -44,25 +44,24 @@ Dobbeltklik på: START_MOCK_BRIDGE.bat
 2. Tryk **Play**
 3. Se Unity Console - du skulle se cycling data! 🎉
 
----
 
 ## 💡 Tips
 
 ### Første Gang Setup (Kun Én Gang):
 
 **macOS:**
-- Højreklik på `.command` fil → Åbn
+ Højreklik på `.command` fil → Åbn
 - Klik "Åbn" i sikkerhedsadvarslen
 - Næste gang kan du bare dobbeltklikke!
 
 **Windows:**
-- Hvis Python mangler, download fra [python.org](https://www.python.org/downloads/)
+ Hvis Python mangler, download fra [python.org](https://www.python.org/downloads/)
 - Installer med "Add Python to PATH" aktiveret
 
 ### Troubleshooting:
 
-**"KICKR not found!"**
-- ✅ Tænd KICKR
+**"Sensor not found!"**
+- ✅ Tænd din sensor
 - ✅ Træd på pedalerne (vækker den)
 - ✅ macOS: Unpair fra Bluetooth Settings hvis tidligere paired
 
@@ -77,7 +76,6 @@ Dobbeltklik på: START_MOCK_BRIDGE.bat
 - Stop den gamle bridge først (Ctrl+C i vinduet)
 - Eller genstart computer
 
----
 
 ## 🎮 Unity Setup (Én Gang)
 
@@ -89,7 +87,6 @@ Dobbeltklik på: START_MOCK_BRIDGE.bat
    - Use Binary Protocol: ✅ (for lav latency)
    - Auto Connect: ✅
 
----
 
 ## 📊 Hvad Du Får
 
@@ -102,7 +99,6 @@ Bridge'en sender **real-time** data til Unity:
 
 **Latency:** ~5-15ms med optimeret binary protocol! 💨
 
----
 
 ## 🔄 Normal Workflow
 
@@ -121,7 +117,6 @@ Bridge'en sender **real-time** data til Unity:
 4. Cykel i VR! 🎉
 ```
 
----
 
 ## ⚙️ Avanceret
 
@@ -130,16 +125,15 @@ Hvis du vil se Python koden køre:
 **macOS Terminal:**
 ```bash
 cd "Blu Sniffer/UnityIntegration"
-../venv/bin/python wahoo_unity_bridge.py
+../venv/bin/python python/wahoo_unity_bridge.py
 ```
 
 **Windows CMD:**
 ```cmd
 cd "Blu Sniffer\UnityIntegration"
-python wahoo_unity_bridge.py
+python python/wahoo_unity_bridge.py
 ```
 
----
 
 ## 🆘 Hjælp
 
@@ -147,10 +141,9 @@ Se `GRATIS_LØSNING.md` for fuld guide!
 
 **Problem?** Check at:
 1. ✅ Python er installeret
-2. ✅ KICKR er tændt
+2. ✅ Sensor er tændt
 3. ✅ Du træder på pedalerne
 4. ✅ Unity's Server URL er `ws://localhost:8765`
 
----
 
 **Nyd din VR cycling simulator! 🚴‍♂️🎮**

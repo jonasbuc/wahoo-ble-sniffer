@@ -120,14 +120,12 @@ public class VRBikeController : MonoBehaviour
         if (currentSpeedKmh < 0.1f) return;
 
         // Calculate wheel rotation based on speed
-        // rotation (deg/s) = (speed m/s) / (2 * PI * radius) * 360
         float speedMetersPerSec = currentSpeedKmh / 3.6f;
         float rotationSpeed = (speedMetersPerSec / (2f * Mathf.PI * wheelRadius)) * 360f;
         
         wheelRotation += rotationSpeed * Time.fixedDeltaTime;
         wheelRotation = wheelRotation % 360f;
 
-        // Apply rotation to wheels
         if (frontWheel != null)
         {
             frontWheel.localRotation = Quaternion.Euler(wheelRotation, 0f, 0f);
@@ -151,11 +149,9 @@ public class VRBikeController : MonoBehaviour
                 chainAudio.Play();
             }
             
-            // Adjust pitch based on cadence (60rpm = 1.0 pitch)
             float pitchFactor = wahooBLE.Cadence / 60f;
             chainAudio.pitch = Mathf.Clamp(pitchFactor, 0.5f, 2f);
             
-            // Adjust volume based on power
             float volumeFactor = Mathf.Clamp01(wahooBLE.Power / 200f);
             chainAudio.volume = Mathf.Lerp(0.3f, 1f, volumeFactor);
         }
@@ -170,7 +166,6 @@ public class VRBikeController : MonoBehaviour
 
     private bool IsGrounded()
     {
-        // Simple ground check - raycast downward
         float rayDistance = 1.1f;
         return Physics.Raycast(transform.position, Vector3.down, rayDistance);
     }
@@ -178,8 +173,6 @@ public class VRBikeController : MonoBehaviour
     // Event handlers
     private void OnCyclingDataReceived(WahooBLEManager.CyclingData data)
     {
-        // Custom logic when new data arrives
-        // For example, trigger haptic feedback based on power
         if (data.power > 250)
         {
             // High power - could trigger strong vibration
@@ -216,7 +209,6 @@ public class VRBikeController : MonoBehaviour
 #if UNITY_EDITOR
     void OnGUI()
     {
-        // Debug overlay in editor
         if (!Application.isPlaying) return;
 
         GUIStyle style = new GUIStyle();

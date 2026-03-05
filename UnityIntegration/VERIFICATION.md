@@ -4,8 +4,9 @@
 
 ### ✅ Python Kode Kompilerer
 ```bash
+# cd into UnityIntegration and compile the canonical bridge
 cd "/Users/jonasbuchner/Blu Sniffer/UnityIntegration"
-python3 -m py_compile wahoo_unity_bridge.py
+python3 -m py_compile python/wahoo_unity_bridge.py
 # ✓ Success - ingen syntax errors
 ```
 
@@ -16,10 +17,10 @@ pip list | grep websockets
 ```
 
 ### ✅ Mock Server Virker
-Jeg har lavet en **mock server** til test uden KICKR:
+Jeg har lavet en **mock server** til test uden hardware (ingen trainer krævet):
 
 ```bash
-python3 mock_wahoo_bridge.py
+python3 python/mock_wahoo_bridge.py
 ```
 
 Dette sender **simulerede cycling data** til Unity så du kan teste:
@@ -28,7 +29,7 @@ Dette sender **simulerede cycling data** til Unity så du kan teste:
 - VR bike physics
 - UI opdateringer
 
-**Alt uden at have KICKR tændt!**
+**Alt uden at have en trainer tændt!**
 
 ## 🧪 Test Plan
 
@@ -64,24 +65,24 @@ Waiting for Unity to connect...
 
 **Result:** ✅ WebSocket kommunikation virker!
 
-### Test 2: Real BLE (MED KICKR)
+### Test 2: Real BLE (med trainer/supportet enhed)
 
 **Start real bridge:**
 ```bash
-python3 wahoo_unity_bridge.py
+python3 python/wahoo_unity_bridge.py
 ```
 
 **Krav:**
-- KICKR SNAP tændt
+- En kompatibel trainer/speed sensor tændt
 - Træd på pedalerne (vækker den)
 - Unpair fra macOS System Settings hvis nødvendigt
 
 Du skulle se:
 ```
-Scanning for KICKR...
-Found KICKR SNAP at C7:52:A1:6F:EB:57
-✓ Connected to KICKR SNAP
-✓ Subscribed to Cycling Power
+Scanning for trainer/sensor...
+Found trainer at C7:52:A1:6F:EB:57
+✓ Connected to trainer
+✓ Subscribed to Cycling Power (if supported)
 ✓ WebSocket server: ws://localhost:8765
 ```
 
@@ -106,12 +107,12 @@ Found KICKR SNAP at C7:52:A1:6F:EB:57
 2. **Byg dit VR gameplay** → test mechanics
 3. **Polish UI/graphics** → visuelt design
 
-**Fordel:** Udvikl uden at skulle træde på KICKR hele tiden! 😅
+**Fordel:** Udvikl uden at skulle træde på en trainer hele tiden! 😅
 
 ### Skift Til Real Data
 Når gameplay virker:
 1. **Stop mock server**
-2. **Start real bridge** med KICKR
+2. **Start real bridge** med en trainer/sensor
 3. **Test med rigtig cycling**
 
 **Samme Unity kode - bare skift server!**
@@ -199,7 +200,7 @@ Du ved det virker når:
 3. 🎨 Byg din VR verden
 4. 🎮 Implementer gameplay
 5. 🔊 Tilføj audio/haptics
-6. 🚴 Test med real KICKR
+6. 🚴 Test med real trainer/sensor
 7. 🎯 Polish og deploy!
 
 ---

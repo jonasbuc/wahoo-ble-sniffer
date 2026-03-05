@@ -268,24 +268,20 @@ public class WahooBLEManager : MonoBehaviour
 
         try
         {
-            // Parse Cycling Power Measurement
-            // Flags (2 bytes) + Instantaneous Power (2 bytes, sint16)
             ushort flags = BitConverter.ToUInt16(data, 0);
             short power = BitConverter.ToInt16(data, 2);
 
             currentPower = power;
 
-            // Update smoothed values
             if (enableSmoothing)
             {
                 float alpha = 1f - smoothingFactor;
                 smoothedPower = Mathf.Lerp(smoothedPower, currentPower, alpha);
             }
 
-            // Broadcast data
             BroadcastData();
 
-            if (Time.frameCount % 60 == 0) // Log every ~1 second
+            if (Time.frameCount % 60 == 0)
             {
                 Debug.Log($"[WahooBLE] Power: {Power}W");
             }
@@ -302,7 +298,6 @@ public class WahooBLEManager : MonoBehaviour
 
         try
         {
-            // Parse Heart Rate Measurement
             byte flags = data[0];
             bool isUint16 = (flags & 0x01) != 0;
 
@@ -315,10 +310,9 @@ public class WahooBLEManager : MonoBehaviour
                 currentHeartRate = data[1];
             }
 
-            // Broadcast data
             BroadcastData();
 
-            if (Time.frameCount % 60 == 0) // Log every ~1 second
+            if (Time.frameCount % 60 == 0)
             {
                 Debug.Log($"[WahooBLE] HR: {HeartRate}bpm");
             }
@@ -345,7 +339,6 @@ public class WahooBLEManager : MonoBehaviour
 
     void OnDestroy()
     {
-        // Cleanup BLE connections
         if (!string.IsNullOrEmpty(kickrDeviceAddress))
         {
             BluetoothLEHardwareInterface.DisconnectPeripheral(kickrDeviceAddress, null);

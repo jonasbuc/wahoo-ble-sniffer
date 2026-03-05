@@ -123,7 +123,7 @@ UnityIntegration/
 ### Option B (Python) - 4 Steps
 
 1. **Installer Python packages:** `pip install -r requirements.txt`
-2. **Kør bridge:** `python wahoo_unity_bridge.py`
+2. **Kør bridge:** `python python/wahoo_unity_bridge.py`
 3. **Tilføj WahooDataReceiver.cs** til Unity scene
 4. **Tryk Play** i Unity
 
@@ -131,7 +131,7 @@ UnityIntegration/
 
 ### C# Løsning:
 ```
-KICKR SNAP ─BLE─> Unity (WahooBLEManager) ─> VRBikeController ─> VR Scene
+trainer ─BLE─> Unity (WahooBLEManager) ─> VRBikeController ─> VR Scene
      ↑                                              ↓
      └──────────────────────────────────────────────┘
          Real-time Bluetooth LE (20-50ms latency)
@@ -139,7 +139,7 @@ KICKR SNAP ─BLE─> Unity (WahooBLEManager) ─> VRBikeController ─> VR Scen
 
 ### Python Løsning:
 ```
-KICKR SNAP ─BLE─> Python Bridge ─WebSocket─> Unity (WahooDataReceiver) ─> VRBikeController ─> VR Scene
+trainer ─BLE─> Python Bridge ─WebSocket─> Unity (WahooDataReceiver) ─> VRBikeController ─> VR Scene
      ↑                 ↓                                                           ↓
      │              SQLite DB                                                VR Scene
      └────────────────────────────────────────────────────────────────────────┘

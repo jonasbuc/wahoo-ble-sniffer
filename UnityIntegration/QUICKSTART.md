@@ -73,7 +73,7 @@ pip install -r requirements.txt
 
 ```bash
 cd UnityIntegration
-python wahoo_unity_bridge.py
+python python/wahoo_unity_bridge.py
 ```
 
 Du skal se:

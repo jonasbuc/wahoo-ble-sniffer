@@ -1,6 +1,6 @@
 # Wahoo to Unity VR Integration
 
-Stream live data fra din Wahoo KICKR SNAP og TICKR til Unity for VR cycling simulations.
+Stream live data fra dine Wahoo BLE-enheder (trainers, speed/cadence sensors og TICKR) til Unity for VR cycling simulations.
 
 ## ⚡ TL;DR - Hvad Virker NU
 
@@ -18,7 +18,7 @@ Stream live data fra din Wahoo KICKR SNAP og TICKR til Unity for VR cycling simu
 **Status:** ✅ Verificeret working
 
 **Fordele:**
-- Stream **real-time power, cadence, and speed** from KICKR SNAP to Unity
+- Stream **real-time power, cadence, and speed** from power-capable trainers to Unity
 - Stream **heart rate** from TICKR (optional)
 - Control a VR bike in Unity using actual cycling data
 - Build immersive VR cycling experiences with real physical input
@@ -64,7 +64,7 @@ pip install bleak websockets
 
 ### Step 4: Start the Bridge
 
-Make sure your KICKR SNAP is on and you're pedaling (it wakes up when pedaling starts).
+Make sure your trainer/sensor is on and you're pedaling (it wakes up when pedaling starts).
 
 **macOS users:** If devices were previously paired in System Settings, unpair them first:
 ```
@@ -74,13 +74,13 @@ System Settings → Bluetooth → [Device] → Forget Device
 Run the Python bridge:
 
 ```bash
-python wahoo_unity_bridge.py
+python python/wahoo_unity_bridge.py
 ```
 
 You should see:
 ```
-Scanning for KICKR...
-Found KICKR SNAP at C7:52:A1:6F:EB:57
+Scanning for trainer/sensor...
+Found trainer at C7:52:A1:6F:EB:57
 ✓ Devices ready!
 ✓ WebSocket server: ws://localhost:8765
 
@@ -183,7 +183,7 @@ The included `VRBikeController.cs` shows how to:
 
 ## 📊 Data Format
 
-The WebSocket sends JSON messages every time new data arrives from the KICKR:
+The WebSocket sends JSON messages every time new data arrives from the cycling device:
 
 ```json
 {
@@ -205,10 +205,10 @@ The WebSocket sends JSON messages every time new data arrives from the KICKR:
 
 ## 🐛 Troubleshooting
 
-### "No device found containing 'KICKR'"
+### "No device found containing the target name"
 
-- Make sure KICKR is powered on
-- **Start pedaling** (KICKR wakes up when it detects movement)
+- Make sure your sensor/trainer is powered on
+- **Start pedaling** (many devices wake up when they detect movement)
 - On macOS: unpair from System Settings if previously paired
 - Run `python quick_find.py` from parent directory to verify device is visible
 
@@ -225,9 +225,9 @@ The WebSocket sends JSON messages every time new data arrives from the KICKR:
 - Check network latency (though localhost should be <1ms)
 - Reduce Unity frame rate if very high (cap at 90 FPS for VR)
 
-### KICKR disconnects frequently
+### Device disconnects frequently
 
-- Check Bluetooth range - keep KICKR within 5 meters of computer
+- Check Bluetooth range - keep your sensor/trainer within 5 meters of computer
 - Remove interference - turn off other Bluetooth devices
 - On macOS: reset Bluetooth module (hold Shift+Option, click BT icon, Debug → Reset)
 
@@ -289,7 +289,7 @@ UnityIntegration/
 
 ## 🚴 Hardware Setup Tips
 
-1. Position your VR headset near your KICKR for best tracking
+1. Position your VR headset near your trainer/sensor for best tracking
 2. Use a fan - VR + cycling = hot! 🔥
 3. Keep a towel nearby for the headset
 4. Use over-ear headphones or VR headset audio
@@ -298,7 +298,7 @@ UnityIntegration/
 ## ⚡ Performance Notes
 
 - WebSocket overhead: ~1-2ms latency on localhost
-- Data rate: ~10-20 messages/second (depends on KICKR update rate)
+- Data rate: ~10-20 messages/second (depends on device update rate)
 - Unity CPU impact: Negligible (<0.1% on modern CPUs)
 - Memory: ~2MB for WebSocket client
 - VR headroom: 60+ FPS with proper optimization

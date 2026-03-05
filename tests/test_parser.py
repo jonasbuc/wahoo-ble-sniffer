@@ -9,10 +9,10 @@ def test_pack_unpack_dfffi():
     speed = 25.5
     hr = 142
 
-    b = struct.pack('dfffi', ts, power, cadence, speed, hr)
+    b = struct.pack("dfffi", ts, power, cadence, speed, hr)
     assert len(b) >= 24
 
-    uts, upower, ucadence, uspeed, uhr = struct.unpack('dfffi', b[:24])
+    uts, upower, ucadence, uspeed, uhr = struct.unpack("dfffi", b[:24])
     assert abs(uts - ts) < 1e-6
     assert abs(upower - power) < 1e-3
     assert abs(ucadence - cadence) < 1e-3

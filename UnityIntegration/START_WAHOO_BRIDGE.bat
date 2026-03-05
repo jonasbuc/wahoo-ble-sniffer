@@ -12,23 +12,34 @@ echo Starting Python bridge...
 echo.
 
 REM Check if Python is installed
-python --version >nul 2>&1
+REM Prefer repository virtualenv (created by INSTALL.bat) if present
+set "REPO_ROOT=%~dp0.."
+set "VENV_PY=%REPO_ROOT%\.venv\Scripts\python.exe"
+set "PYCMD=python"
+if exist "%VENV_PY%" (
+    set "PYCMD=%VENV_PY%"
+)
+
+REM Check if Python is available (either venv or system)
+"%PYCMD%" --version >nul 2>&1
 if %errorlevel% neq 0 (
-    echo WARNING: Python not found!
+    echo WARNING: Python not found (neither system Python nor .venv)!
     echo.
-    echo Download Python from: https://www.python.org/downloads/
+    echo Install Python or run INSTALL.bat to create the virtual environment.
     echo.
     pause
     exit /b 1
 )
 
 REM Check if dependencies are installed
-python -c "import bleak, websockets" >nul 2>&1
+REM Check if dependencies are installed; install via the chosen Python if missing
+"%PYCMD%" -c "import bleak, websockets" >nul 2>&1
 if %errorlevel% neq 0 (
-    echo WARNING: Dependencies missing!
-    echo Installing bleak and websockets...
+    echo WARNING: Dependencies missing for %PYCMD%!
+    echo Installing bleak and websockets into environment used by %PYCMD%...
     echo.
-    pip install bleak websockets
+    "%PYCMD%" -m pip install --upgrade pip
+    "%PYCMD%" -m pip install bleak websockets
     echo.
 )
 
@@ -44,10 +55,12 @@ echo.
 
 REM Start bridge
 REM Also start the GUI in a separate window so users get the monitor automatically
-start "" python python\wahoo_bridge_gui.py
+REM Start bridge
+REM Start the GUI in a separate window so users get the monitor automatically
+start "Wahoo Bridge GUI" "%PYCMD%" "%~dp0python\wahoo_bridge_gui.py"
 
-REM Start bridge (canonical copy)
-python python\wahoo_unity_bridge.py
+REM Start canonical bridge (runs in this window)
+"%PYCMD%" "%~dp0python\wahoo_unity_bridge.py"
 
 echo.
 echo Bridge stopped.

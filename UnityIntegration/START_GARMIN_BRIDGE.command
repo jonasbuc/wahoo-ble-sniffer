@@ -65,7 +65,7 @@ echo "════════════════════════�
 echo ""
 
 # Start the bridge
-python3 wahoo_unity_bridge.py
+python3 python/wahoo_unity_bridge.py
 
 # Keep terminal open on error
 if [ $? -ne 0 ]; then

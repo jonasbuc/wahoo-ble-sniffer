@@ -1,10 +1,10 @@
 import asyncio
 import json
+
 import pytest
-import time
+import websockets
 
 from UnityIntegration.mock_wahoo_bridge import MockWahooBridge
-import websockets
 
 
 @pytest.mark.asyncio
