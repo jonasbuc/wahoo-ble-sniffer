@@ -9,8 +9,8 @@ import asyncio
 import logging
 import sqlite3
 import struct
+import threading
 import time
-from contextlib import closing
 from typing import Any, Dict, Optional
 
 from bleak import BleakClient, BleakScanner
@@ -39,33 +39,43 @@ class SQLiteLogger:
 
     def __init__(self, db_name: str = DB_NAME):
         self.db_name = db_name
+        self._lock = threading.Lock()
+        self._conn: Optional[sqlite3.Connection] = sqlite3.connect(
+            self.db_name, check_same_thread=False
+        )
         self._init_database()
 
     def _init_database(self) -> None:
         """Initialize the database with WAL mode and create tables."""
-        with closing(sqlite3.connect(self.db_name)) as conn:
-            # Enable WAL mode for better concurrency
-            conn.execute("PRAGMA journal_mode=WAL")
+        if not self._conn:
+            return
 
-            # Create metrics table if it doesn't exist
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS metrics (
-                    ts REAL NOT NULL,
-                    hr_bpm INTEGER,
-                    rr_ms INTEGER,
-                    power_w INTEGER,
-                    cadence_rpm REAL,
-                    speed_kph REAL
-                )
-            """)
+        # Enable WAL mode for better concurrency
+        self._conn.execute("PRAGMA journal_mode=WAL")
 
-            # Create index on timestamp for efficient queries
-            conn.execute("""
-                CREATE INDEX IF NOT EXISTS idx_metrics_ts ON metrics(ts)
-            """)
+        # Create metrics table if it doesn't exist
+        self._conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS metrics (
+                ts REAL NOT NULL,
+                hr_bpm INTEGER,
+                rr_ms INTEGER,
+                power_w INTEGER,
+                cadence_rpm REAL,
+                speed_kph REAL
+            )
+            """
+        )
 
-            conn.commit()
-            logging.info(f"Database initialized: {self.db_name}")
+        # Create index on timestamp for efficient queries
+        self._conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_metrics_ts ON metrics(ts)
+            """
+        )
+
+        self._conn.commit()
+        logging.info(f"Database initialized: {self.db_name}")
 
     def log_metric(
         self,
@@ -78,15 +88,33 @@ class SQLiteLogger:
         """Log a metric to the database."""
         timestamp = time.time()
 
-        with closing(sqlite3.connect(self.db_name)) as conn:
-            conn.execute(
+        if not self._conn:
+            self._conn = sqlite3.connect(self.db_name, check_same_thread=False)
+            self._init_database()
+
+        with self._lock:
+            self._conn.execute(
                 """
                 INSERT INTO metrics (ts, hr_bpm, rr_ms, power_w, cadence_rpm, speed_kph)
                 VALUES (?, ?, ?, ?, ?, ?)
                 """,
                 (timestamp, hr_bpm, rr_ms, power_w, cadence_rpm, speed_kph),
             )
-            conn.commit()
+            self._conn.commit()
+
+    def close(self) -> None:
+        """Close the SQLite connection."""
+        if self._conn:
+            try:
+                self._conn.commit()
+                self._conn.close()
+            except Exception:
+                pass
+            finally:
+                self._conn = None
+
+    def __del__(self) -> None:
+        self.close()
 
 
 class HeartRateParser:
