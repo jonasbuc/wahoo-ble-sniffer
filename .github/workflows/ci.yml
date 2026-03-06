@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, chore/remove-duplicates ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/pip
+            ./.wheelhouse
+          key: ${{ runner.os }}-pip-wheelhouse-${{ hashFiles('**/requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-wheelhouse-
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+      - name: Create venv and build wheelhouse
+        run: |
+          python -m venv .venv
+          . .venv/bin/activate
+          python -m pip install --upgrade pip
+          mkdir -p ./.wheelhouse
+          if [ -f requirements.txt ]; then
+            # attempt to build wheels into local wheelhouse (cached across runs)
+            pip wheel --wheel-dir=./.wheelhouse -r requirements.txt || true
+            # prefer installing from local wheelhouse; fall back to index if a wheel is missing
+            pip install --no-index --find-links=./.wheelhouse -r requirements.txt || pip install -r requirements.txt
+          fi
+          # Ensure pyarrow is available for parquet tests; prefer wheelhouse
+          pip install --no-index --find-links=./.wheelhouse pyarrow || pip install pyarrow || true
+      - name: Run tests
+        run: |
+          . .venv/bin/activate
+          .venv/bin/pytest -q
+        env:
+          PYTHONUNBUFFERED: 1
