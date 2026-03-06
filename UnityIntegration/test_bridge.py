@@ -9,7 +9,7 @@ import asyncio
 import websockets
 
 
-async def test_client():
+async def _async_test_client():
     uri = "ws://localhost:8765"
 
     print("=" * 60)
@@ -47,6 +47,17 @@ async def test_client():
         print(f"✗ Error: {e}")
 
 
+def test_client():
+    """Synchronous test shim for pytest: runs the async client in an event loop.
+
+    Keeps compatibility so pytest can execute this test without requiring
+    an asyncio plugin. The actual async implementation lives in
+    `_async_test_client` so the script can still be invoked directly.
+    """
+    import asyncio as _asyncio
+    _asyncio.run(_async_test_client())
+
+
 if __name__ == "__main__":
     print()
     print("Start the bridge first in another terminal:")
@@ -55,4 +66,6 @@ if __name__ == "__main__":
     input("Press Enter when bridge is running...")
     print()
 
-    asyncio.run(test_client())
+    # Run the async client directly when invoked as a script
+    import asyncio as _asyncio
+    _asyncio.run(_async_test_client())
