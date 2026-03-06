@@ -9,8 +9,8 @@ import asyncio
 import logging
 import sqlite3
 import struct
+import threading
 import time
-from contextlib import closing
 from typing import Any, Dict, Optional
 
 from bleak import BleakClient, BleakScanner
@@ -32,6 +32,7 @@ SCAN_TIMEOUT_SECONDS = 10
 
 # Database settings
 DB_NAME = "training.db"
+DB_RETRY_DELAY_SECONDS = 5.0
 
 
 class SQLiteLogger:
@@ -39,33 +40,51 @@ class SQLiteLogger:
 
     def __init__(self, db_name: str = DB_NAME):
         self.db_name = db_name
-        self._init_database()
+        self._lock = threading.Lock()
+        self._next_retry_after = 0.0
+        try:
+            self._conn: Optional[sqlite3.Connection] = sqlite3.connect(
+                self.db_name, check_same_thread=False
+            )
+        except sqlite3.Error as exc:
+            logging.error("Failed to open SQLite database %s: %s", self.db_name, exc)
+            self._conn = None
+            self._next_retry_after = time.time() + DB_RETRY_DELAY_SECONDS
+        else:
+            with self._lock:
+                self._init_database()
 
     def _init_database(self) -> None:
         """Initialize the database with WAL mode and create tables."""
-        with closing(sqlite3.connect(self.db_name)) as conn:
-            # Enable WAL mode for better concurrency
-            conn.execute("PRAGMA journal_mode=WAL")
+        if not self._conn:
+            return
 
-            # Create metrics table if it doesn't exist
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS metrics (
-                    ts REAL NOT NULL,
-                    hr_bpm INTEGER,
-                    rr_ms INTEGER,
-                    power_w INTEGER,
-                    cadence_rpm REAL,
-                    speed_kph REAL
-                )
-            """)
+        # Enable WAL mode for better concurrency
+        self._conn.execute("PRAGMA journal_mode=WAL")
 
-            # Create index on timestamp for efficient queries
-            conn.execute("""
-                CREATE INDEX IF NOT EXISTS idx_metrics_ts ON metrics(ts)
-            """)
+        # Create metrics table if it doesn't exist
+        self._conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS metrics (
+                ts REAL NOT NULL,
+                hr_bpm INTEGER,
+                rr_ms INTEGER,
+                power_w INTEGER,
+                cadence_rpm REAL,
+                speed_kph REAL
+            )
+            """
+        )
 
-            conn.commit()
-            logging.info(f"Database initialized: {self.db_name}")
+        # Create index on timestamp for efficient queries
+        self._conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_metrics_ts ON metrics(ts)
+            """
+        )
+
+        self._conn.commit()
+        logging.info("Database initialized: %s", self.db_name)
 
     def log_metric(
         self,
@@ -78,15 +97,74 @@ class SQLiteLogger:
         """Log a metric to the database."""
         timestamp = time.time()
 
-        with closing(sqlite3.connect(self.db_name)) as conn:
-            conn.execute(
-                """
-                INSERT INTO metrics (ts, hr_bpm, rr_ms, power_w, cadence_rpm, speed_kph)
-                VALUES (?, ?, ?, ?, ?, ?)
-                """,
-                (timestamp, hr_bpm, rr_ms, power_w, cadence_rpm, speed_kph),
-            )
-            conn.commit()
+        with self._lock:
+            if not self._conn:
+                if timestamp < self._next_retry_after:
+                    logging.debug(
+                        "Skipping SQLite reconnect attempt until %.3f (now %.3f)",
+                        self._next_retry_after,
+                        timestamp,
+                    )
+                    return
+                try:
+                    self._conn = sqlite3.connect(self.db_name, check_same_thread=False)
+                    logging.debug(
+                        "Successfully reconnected to SQLite database %s", self.db_name
+                    )
+                    self._init_database()
+                    self._next_retry_after = 0.0
+                except sqlite3.Error as exc:
+                    logging.error(
+                        "Failed to reopen SQLite database %s: %s", self.db_name, exc
+                    )
+                    self._conn = None
+                    self._next_retry_after = timestamp + DB_RETRY_DELAY_SECONDS
+                    return
+
+            try:
+                self._conn.execute(
+                    """
+                    INSERT INTO metrics (ts, hr_bpm, rr_ms, power_w, cadence_rpm, speed_kph)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (timestamp, hr_bpm, rr_ms, power_w, cadence_rpm, speed_kph),
+                )
+                self._conn.commit()
+            except sqlite3.Error as exc:
+                logging.error("Failed to write metric to %s: %s", self.db_name, exc)
+                try:
+                    self._conn.rollback()
+                    self._conn.close()
+                except sqlite3.Error:
+                    pass
+                finally:
+                    self._conn = None
+                self._next_retry_after = timestamp + DB_RETRY_DELAY_SECONDS
+
+    def close(self) -> None:
+        """Close the SQLite connection. Use explicitly or via a context manager."""
+        with self._lock:
+            if self._conn:
+                try:
+                    self._conn.commit()
+                    self._conn.close()
+                except sqlite3.Error as exc:
+                    logging.warning(
+                        "Error closing SQLite connection %s: %s", self.db_name, exc
+                    )
+                finally:
+                    self._conn = None
+
+    def __enter__(self) -> "SQLiteLogger":
+        return self
+
+    def __exit__(
+        self,
+        exc_type: Optional[type],
+        exc_val: Optional[BaseException],
+        exc_tb: Optional[Any],
+    ) -> None:
+        self.close()
 
 
 class HeartRateParser:
