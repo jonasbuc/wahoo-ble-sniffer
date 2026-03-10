@@ -260,11 +260,13 @@ def flush_parquet_parts(out_dir, part_rows=10000):
             PARQUET_BUFFERS[(sid, stream_id)] = []
 
 
-def watch_sessions(logs_root: str, out_db: str, out_parquet_dir: Optional[str] = None, stop_event: Optional[threading.Event] = None, sqlite_batch_size: int = 0, parquet_rows: int = 10000):
 def watch_sessions(
-    logs_root, out_db, out_parquet_dir=None,
-    stop_event: threading.Event = None,
-    sqlite_batch_size=0, parquet_rows=10000
+    logs_root: str,
+    out_db: str,
+    out_parquet_dir: Optional[str] = None,
+    stop_event: Optional[threading.Event] = None,
+    sqlite_batch_size: int = 0,
+    parquet_rows: int = 10000,
 ):
     conn = init_db(out_db)
     seen = set()
