@@ -33,7 +33,10 @@ async def run(uri: str):
                             try:
                                 ts, power, cadence, speed, hr = struct.unpack("dfffi", message[:24])
                                 tstr = time.strftime("%H:%M:%S", time.localtime(ts))
-                                print(f"WS-TAIL BIN ts={ts:.3f} ({tstr}) P={power:.1f} C={cadence:.1f} S={speed:.1f} HR={int(hr)}")
+                                print(
+                                    f"WS-TAIL BIN ts={ts:.3f} ({tstr})"
+                                    f" P={power:.1f} C={cadence:.1f} S={speed:.1f} HR={int(hr)}"
+                                )
                             except Exception as e:
                                 print("WS-TAIL BIN parse error:", e)
                         else:

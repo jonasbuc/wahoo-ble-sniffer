@@ -1,12 +1,8 @@
-import os
 import struct
-import tempfile
 import zlib
 from pathlib import Path
 
-import pytest
-
-from UnityIntegration.python.collector_tail import FileTail, HEADER_SIZE, crc32
+from UnityIntegration.python.collector_tail import FileTail, HEADER_SIZE
 
 
 def make_header(payload: bytes, version: int = 1, stream_id: int = 1) -> bytes:
@@ -98,7 +94,7 @@ def test_tail_once_payload_crc_mismatch_skips_chunk(tmp_path):
 
 def test_tail_once_variable_records(tmp_path):
     # construct two variable records: seq,u32; unity_t f32; jlen u32; json bytes
-    recs = []
+
     def pack_var(seq, unity_t, js):
         jb = js.encode('utf8')
         return struct.pack('<IfI', seq, unity_t, len(jb)) + jb

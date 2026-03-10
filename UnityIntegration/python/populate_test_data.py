@@ -5,7 +5,6 @@ Usage: . .venv/bin/activate && python UnityIntegration/python/populate_test_data
 """
 import time
 import struct
-import sqlite3
 import os
 import sys
 
@@ -15,7 +14,7 @@ _REPO_ROOT = os.path.abspath(os.path.join(_SCRIPT_DIR, '..', '..'))
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
-from UnityIntegration.python import collector_tail as ct
+from UnityIntegration.python import collector_tail as ct  # noqa: E402 (we modify sys.path above)
 
 
 def make_headpose_rec(seq, unity_t=0.0, px=0.1, py=0.2, pz=0.3, qx=0.0, qy=0.0, qz=0.0, qw=1.0):

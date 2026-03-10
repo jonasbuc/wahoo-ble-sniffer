@@ -31,7 +31,8 @@ def build_header(stream_id, session_id, chunk_seq, record_count, payload_bytes):
     # reserved zero
     # compute header crc with crc fields zero
     hdr_copy = bytearray(hdr)
-    for i in range(28,36): hdr_copy[i] = 0
+    for i in range(28, 36):
+        hdr_copy[i] = 0
     header_crc = crc32(hdr_copy)
     # write payload crc later
     return hdr, header_crc
@@ -52,7 +53,7 @@ def write_vrsf_file(path, stream_id, session_id, records_bytes_list):
 
 def make_headpose_record(seq, t):
     # seq u32, t f32, px,py,pz f32, qx,qy,qz,qw f32
-    return struct.pack('<I f f f f f f f f', seq, t, 1.0,2.0,3.0, 0.0,0.0,0.0,1.0)
+    return struct.pack('<I f f f f f f f f', seq, t, 1.0, 2.0, 3.0, 0.0, 0.0, 0.0, 1.0)
 
 
 def make_bike_record(seq, t):
@@ -76,23 +77,25 @@ def main():
     sid = 999999
     sd = os.path.join(logs, f'session_{sid}')
     os.makedirs(sd, exist_ok=True)
-    manifest = { 'session_id': sid, 'started_unix_ms': int(time.time()*1000), 'files': ['headpose.vrsf','bike.vrsf','hr.vrsf','events.vrsf'] }
-    open(os.path.join(sd,'manifest.json'),'w').write(json.dumps(manifest))
+    manifest = {'session_id': sid, 'started_unix_ms': int(
+        time.time()*1000), 'files': ['headpose.vrsf', 'bike.vrsf', 'hr.vrsf', 'events.vrsf']}
+    open(os.path.join(sd, 'manifest.json'), 'w').write(json.dumps(manifest))
 
     # write some records
     head_recs = [make_headpose_record(i, 0.01*i) for i in range(10)]
-    write_vrsf_file(os.path.join(sd,'headpose.vrsf'), 1, sid, head_recs)
+    write_vrsf_file(os.path.join(sd, 'headpose.vrsf'), 1, sid, head_recs)
     bike_recs = [make_bike_record(i, 0.02*i) for i in range(5)]
-    write_vrsf_file(os.path.join(sd,'bike.vrsf'), 2, sid, bike_recs)
+    write_vrsf_file(os.path.join(sd, 'bike.vrsf'), 2, sid, bike_recs)
     hr_recs = [make_hr_record(i, 0.05*i) for i in range(3)]
-    write_vrsf_file(os.path.join(sd,'hr.vrsf'), 3, sid, hr_recs)
-    ev_recs = [make_event_record(i, 0.1*i, {'evt':'test','i':i}) for i in range(4)]
-    write_vrsf_file(os.path.join(sd,'events.vrsf'), 4, sid, ev_recs)
+    write_vrsf_file(os.path.join(sd, 'hr.vrsf'), 3, sid, hr_recs)
+    ev_recs = [make_event_record(i, 0.1*i, {'evt': 'test', 'i': i}) for i in range(4)]
+    write_vrsf_file(os.path.join(sd, 'events.vrsf'), 4, sid, ev_recs)
 
     out_db = os.path.join(tmp, 'collector_out', 'vrs.sqlite')
     os.makedirs(os.path.dirname(out_db), exist_ok=True)
     stop_event = threading.Event()
-    t = threading.Thread(target=watch_sessions, args=(logs, out_db, os.path.join(tmp,'collector_out'), stop_event), daemon=True)
+    t = threading.Thread(target=watch_sessions, args=(
+        logs, out_db, os.path.join(tmp, 'collector_out'), stop_event), daemon=True)
     t.start()
     # let collector run briefly
     time.sleep(2.0)
@@ -114,9 +117,10 @@ def main():
 
     if HAVE_PYARROW:
         # flush any remaining parquet buffers
-        flush_parquet_parts(os.path.join(tmp,'collector_out'))
+        flush_parquet_parts(os.path.join(tmp, 'collector_out'))
 
     print('Test dir:', tmp)
+
 
 if __name__ == '__main__':
     main()
