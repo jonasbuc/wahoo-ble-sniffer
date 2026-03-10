@@ -44,3 +44,15 @@ jobs:
           .venv/bin/pytest -q
         env:
           PYTHONUNBUFFERED: 1
+
+      - name: Type check (mypy)
+        run: |
+          # Activate the venv created earlier and ensure mypy is available
+          . .venv/bin/activate
+          python -m pip install --upgrade pip
+          python -m pip install mypy
+          # Limit type checking to the UnityIntegration package to avoid
+          # failing on large untyped scripts at the repo root.
+          python -m mypy UnityIntegration --ignore-missing-imports
+        env:
+          PYTHONUNBUFFERED: 1
