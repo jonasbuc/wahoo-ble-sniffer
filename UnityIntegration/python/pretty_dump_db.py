@@ -9,9 +9,11 @@ import sys
 
 _p = Path(__file__).parent / 'db' / 'pretty_dump_db.py'
 spec = util.spec_from_file_location('pretty_dump_db', str(_p))
-mod = util.module_from_spec(spec)
+if spec is None or spec.loader is None:
+    raise RuntimeError(f'Unable to load module at {_p}')
+mod = util.module_from_spec(spec)  # type: ignore[arg-type]
 sys.modules['pretty_dump_db'] = mod
-spec.loader.exec_module(mod)
+spec.loader.exec_module(mod)  # type: ignore[attr-defined]
 
 main = mod.main
 

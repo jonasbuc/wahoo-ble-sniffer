@@ -12,6 +12,7 @@ import asyncio
 import sys
 import time
 import logging
+from typing import Optional
 
 try:
     from bleak import BleakClient, BleakScanner
@@ -34,7 +35,7 @@ async def list_devices(scan_time: float = 5.0):
         print(d.address, d.name)
 
 
-async def connect_and_subscribe(address: str, timeout: float = None):
+async def connect_and_subscribe(address: str, timeout: Optional[float] = None):
     print(f"Attempting connection to {address}...")
 
     def hr_handler(sender, data: bytes):
@@ -130,7 +131,7 @@ async def connect_and_subscribe(address: str, timeout: float = None):
             raise
 
 
-async def connect_with_retry(address: str, timeout: float = None, attempts: int = 2, base_backoff: float = 1.0):
+async def connect_with_retry(address: str, timeout: Optional[float] = None, attempts: int = 2, base_backoff: float = 1.0):
     """Attempt to connect up to `attempts` times with exponential backoff.
 
     If BleakDeviceNotFoundError is raised it is propagated immediately (not retried).
