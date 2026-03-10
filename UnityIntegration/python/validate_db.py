@@ -9,9 +9,11 @@ import sys
 
 _p = Path(__file__).parent / 'db' / 'validate_db.py'
 spec = util.spec_from_file_location('validate_db', str(_p))
-mod = util.module_from_spec(spec)
+if spec is None or spec.loader is None:
+    raise RuntimeError(f'Unable to load module at {_p}')
+mod = util.module_from_spec(spec)  # type: ignore[arg-type]
 sys.modules['validate_db'] = mod
-spec.loader.exec_module(mod)
+spec.loader.exec_module(mod)  # type: ignore[attr-defined]
 
 # re-export helper functions
 validate_headpose = mod.validate_headpose
