@@ -9,8 +9,6 @@ if an address is supplied.
 """
 import argparse
 import asyncio
-import sys
-import time
 import logging
 
 try:

@@ -11,7 +11,6 @@ Usage:
 from __future__ import annotations
 import sqlite3
 import csv
-import os
 from pathlib import Path
 from typing import Iterable, Tuple, List, Any
 
