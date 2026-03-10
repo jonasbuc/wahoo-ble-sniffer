@@ -24,7 +24,10 @@ DATADIR = BASE / "collector_out" / "parquet"
 OUTDIR = BASE / "analysis" / "figs"
 OUTDIR.mkdir(parents=True, exist_ok=True)
 
+
 # Helper to read parquet safely
+
+
 def read_parquet(name):
     path = DATADIR / f"{name}.parquet"
     if not path.exists():
@@ -36,6 +39,7 @@ def read_parquet(name):
         print("read_parquet failed for", path, e)
         return pd.DataFrame()
 
+
 # Load datasets
 bike = read_parquet("bike_readable")
 hr = read_parquet("hr_readable")
@@ -43,7 +47,10 @@ headpose = read_parquet("headpose_readable")
 sessions = read_parquet("sessions_readable")
 events = read_parquet("events_readable")
 
+
 # Ensure timestamp column `ts` exists and is datetime for each
+
+
 def ensure_ts(df):
     if df is None or df.empty:
         return df
@@ -66,6 +73,8 @@ def ensure_ts(df):
                     continue
     return df
 
+
+# ensure_ts conversions
 bike = ensure_ts(bike)
 hr = ensure_ts(hr)
 headpose = ensure_ts(headpose)
@@ -73,6 +82,8 @@ sessions = ensure_ts(sessions)
 events = ensure_ts(events)
 
 # Utility to save figures with tight layout
+
+
 def savefig(name, fig=None):
     out = OUTDIR / name
     if fig is None:
@@ -84,6 +95,7 @@ def savefig(name, fig=None):
         fig.savefig(out)
         plt.close(fig)
     print("Wrote", out)
+
 
 # 1) HR time series + distribution
 if not hr.empty:
@@ -98,14 +110,14 @@ if not hr.empty:
         hr_col = candidates[0] if candidates else None
 
     if hr_col:
-        plt.figure(figsize=(12,3))
+        plt.figure(figsize=(12, 3))
         plt.plot(df['ts'], df[hr_col], marker='.', ms=3, lw=0.5)
         plt.title('Heart rate over time')
         plt.xlabel('time')
         plt.ylabel('BPM')
         savefig('hr_timeseries.png')
 
-        plt.figure(figsize=(6,4))
+        plt.figure(figsize=(6, 4))
         sns.histplot(df[hr_col].dropna(), bins=40, kde=True)
         plt.title('HR distribution')
         savefig('hr_distribution.png')
@@ -130,7 +142,7 @@ if not bike.empty:
     if c_col:
         b[c_col] = pd.to_numeric(b[c_col], errors='coerce')
     if p_col and c_col and not b[[p_col, c_col]].dropna().empty:
-        plt.figure(figsize=(6,5))
+        plt.figure(figsize=(6, 5))
         sns.scatterplot(data=b, x=c_col, y=p_col, alpha=0.6)
         plt.title('Power vs Cadence')
         plt.xlabel('Cadence (rpm)')
@@ -148,12 +160,12 @@ if not bike.empty:
 
     # histograms
     if p_col:
-        plt.figure(figsize=(5,3))
+        plt.figure(figsize=(5, 3))
         sns.histplot(b[p_col].dropna(), bins=40)
         plt.title('Power distribution')
         savefig('power_distribution.png')
     if c_col:
-        plt.figure(figsize=(5,3))
+        plt.figure(figsize=(5, 3))
         sns.histplot(b[c_col].dropna(), bins=40)
         plt.title('Cadence distribution')
         savefig('cadence_distribution.png')
@@ -166,7 +178,7 @@ for name, df in [('headpose', headpose), ('bike', bike), ('hr', hr)]:
     if len(ts) < 2:
         continue
     diffs = ts.diff().dt.total_seconds().dropna()
-    plt.figure(figsize=(6,3))
+    plt.figure(figsize=(6, 3))
     sns.histplot(diffs, bins=60)
     plt.title(f'Sampling gaps (s) - {name}')
     plt.xlabel('seconds')
@@ -192,7 +204,7 @@ if not sessions.empty:
         s['duration_s'] = (s['end'] - s['start']).dt.total_seconds()
         s_plot = s.dropna(subset=['duration_s'])
         if not s_plot.empty:
-            plt.figure(figsize=(8,3))
+            plt.figure(figsize=(8, 3))
             sns.barplot(x='session_id', y='duration_s', data=s_plot)
             plt.xticks(rotation=45)
             plt.ylabel('Duration (s)')
@@ -231,7 +243,7 @@ if not events.empty:
     e = events.copy()
     if 'event_type' in e.columns:
         counts = e['event_type'].value_counts()
-        plt.figure(figsize=(6,3))
+        plt.figure(figsize=(6, 3))
         sns.barplot(x=counts.index, y=counts.values)
         plt.xticks(rotation=45)
         plt.title('Event counts')
@@ -246,7 +258,7 @@ if 'session_id' in sessions.columns:
 elif 'session_id' in hr.columns:
     session_ids = hr['session_id'].dropna().unique()
 
-if session_ids is None or len(session_ids)==0:
+if session_ids is None or len(session_ids) == 0:
     # fallback: single implicit session from min/max ts
     session_ids = [None]
 
@@ -259,21 +271,31 @@ for sid in session_ids:
         hr_sel = hr[hr.get('session_id') == sid] if not hr.empty and 'session_id' in hr.columns else hr
         bike_sel = bike[bike.get('session_id') == sid] if not bike.empty and 'session_id' in bike.columns else bike
     # times
-    min_ts = pd.concat([df['ts'] for df in [hr_sel, bike_sel] if not (df is None or df.empty)]).min() if any([(not df.empty) for df in [hr_sel, bike_sel]]) else pd.NaT
-    max_ts = pd.concat([df['ts'] for df in [hr_sel, bike_sel] if not (df is None or df.empty)]).max() if any([(not df.empty) for df in [hr_sel, bike_sel]]) else pd.NaT
+    # compute min/max across available streams for the session
+    ts_series = [df['ts'] for df in [hr_sel, bike_sel] if not (df is None or df.empty)]
+    if ts_series:
+        min_ts = pd.concat(ts_series).min()
+        max_ts = pd.concat(ts_series).max()
+    else:
+        min_ts = pd.NaT
+        max_ts = pd.NaT
     row['start'] = min_ts
     row['end'] = max_ts
     row['duration_s'] = (max_ts - min_ts).total_seconds() if pd.notna(min_ts) and pd.notna(max_ts) else None
     # hr stats
     if not hr_sel.empty:
-        hr_vals = hr_sel[[c for c in hr_sel.columns if 'hr' in c.lower() or 'bpm' in c.lower()]].select_dtypes(include=[np.number])
+        hr_vals = hr_sel[
+            [c for c in hr_sel.columns if 'hr' in c.lower() or 'bpm' in c.lower()]
+        ].select_dtypes(include=[np.number])
         if not hr_vals.empty:
             row['hr_mean'] = hr_vals.mean().mean()
             row['hr_median'] = hr_vals.median().median()
             row['hr_samples'] = len(hr_sel)
     # bike stats
     if not bike_sel.empty:
-        pcol = [c for c in bike_sel.columns if 'power' in c.lower() or 'watts' in c.lower()]
+        pcol = [
+            c for c in bike_sel.columns if 'power' in c.lower() or 'watts' in c.lower()
+        ]
         ccol = [c for c in bike_sel.columns if 'cadence' in c.lower()]
         if pcol:
             row['power_mean'] = pd.to_numeric(bike_sel[pcol[0]], errors='coerce').mean()

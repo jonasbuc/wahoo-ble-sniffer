@@ -13,11 +13,14 @@ OUTDIR = BASE / 'analysis' / 'figs'
 OUTDIR.mkdir(parents=True, exist_ok=True)
 
 # read
+
+
 def read(name):
     p = DATADIR / f"{name}.parquet"
     if not p.exists():
         return pd.DataFrame()
     return pd.read_parquet(p)
+
 
 sessions = read('sessions_readable')
 hr = read('hr_readable')
@@ -34,7 +37,7 @@ for df in [sessions, hr, bike]:
 if not hr.empty:
     hr['bpm'] = pd.to_numeric(hr.get('bpm', hr.get('hr_bpm', None)), errors='coerce')
     groups = hr.groupby('session_id') if 'session_id' in hr.columns else [('all', hr)]
-    plt.figure(figsize=(10,4))
+    plt.figure(figsize=(10, 4))
     for sid, g in groups:
         g = g.sort_values('ts').dropna(subset=['ts', 'bpm'])
         if g.empty:
@@ -54,9 +57,9 @@ if not hr.empty:
     # rolling average for a selected session (first)
     first = next(iter(groups))[1] if hasattr(groups, '__iter__') else None
     if first is not None and not first.empty:
-        g = first.sort_values('ts').dropna(subset=['ts','bpm']).set_index('ts')
+        g = first.sort_values('ts').dropna(subset=['ts', 'bpm']).set_index('ts')
         roll = g['bpm'].rolling('30s').mean()
-        plt.figure(figsize=(10,3))
+        plt.figure(figsize=(10, 3))
         plt.plot(g.index, g['bpm'], alpha=0.4, label='raw')
         plt.plot(roll.index, roll.values, color='red', label='30s rolling')
         plt.title('HR rolling (30s)')
@@ -66,12 +69,17 @@ if not hr.empty:
         plt.close()
         print('Wrote', OUTDIR / 'hr_rolling_30s.png')
 
+
 # Power boxplots per session
 if not bike.empty:
-    bike['power_w'] = pd.to_numeric(bike.get('power_w', bike.get('power', None)), errors='coerce')
-    bike['cadence_rpm'] = pd.to_numeric(bike.get('cadence_rpm', bike.get('cadence', None)), errors='coerce')
+    bike['power_w'] = pd.to_numeric(
+        bike.get('power_w', bike.get('power', None)), errors='coerce'
+    )
+    bike['cadence_rpm'] = pd.to_numeric(
+        bike.get('cadence_rpm', bike.get('cadence', None)), errors='coerce'
+    )
     if 'session_id' in bike.columns:
-        plt.figure(figsize=(8,4))
+        plt.figure(figsize=(8, 4))
         sns.boxplot(x='session_id', y='power_w', data=bike.dropna(subset=['power_w']))
         plt.title('Power boxplot by session')
         plt.tight_layout()
@@ -80,14 +88,14 @@ if not bike.empty:
         print('Wrote', OUTDIR / 'power_boxplot_by_session.png')
 
     # regression power ~ cadence (global)
-    good = bike.dropna(subset=['power_w','cadence_rpm'])
+    good = bike.dropna(subset=['power_w', 'cadence_rpm'])
     if len(good) >= 10:
         X = good['cadence_rpm'].to_numpy()
         y = good['power_w'].to_numpy()
         # simple linear fit y = a*x + b
         slope, intercept = np.polyfit(X, y, 1)
         # scatter + fitted line
-        plt.figure(figsize=(6,5))
+        plt.figure(figsize=(6, 5))
         sns.scatterplot(x='cadence_rpm', y='power_w', data=good, alpha=0.5)
         xs = np.linspace(good['cadence_rpm'].min(), good['cadence_rpm'].max(), 100)
         ys = intercept + slope * xs
