@@ -5,7 +5,6 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
-import numpy as np
 
 sns.set(style='whitegrid')
 BASE = Path('.')
@@ -37,12 +36,12 @@ if not hr.empty:
     groups = hr.groupby('session_id') if 'session_id' in hr.columns else [('all', hr)]
     plt.figure(figsize=(10,4))
     for sid, g in groups:
-        g = g.sort_values('ts').dropna(subset=['ts','bpm'])
+        g = g.sort_values('ts').dropna(subset=['ts', 'bpm'])
         if g.empty:
             continue
-    # resample to 1s for overlay (select numeric column to avoid string columns)
-    g = g.set_index('ts')[['bpm']].resample('1s').mean().interpolate()
-    plt.plot(g.index, g['bpm'], alpha=0.6, label=str(sid))
+        # resample to 1s for overlay (select numeric column to avoid string columns)
+        g = g.set_index('ts')[['bpm']].resample('1s').mean().interpolate()
+        plt.plot(g.index, g['bpm'], alpha=0.6, label=str(sid))
     plt.legend()
     plt.title('Per-session HR overlay (1s resampled)')
     plt.xlabel('time')
