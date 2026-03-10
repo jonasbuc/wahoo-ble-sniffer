@@ -1,9 +1,6 @@
 import struct
 import zlib
-import tempfile
 from pathlib import Path
-import sqlite3
-import time
 
 from UnityIntegration.python.collector_tail import FileTail, init_db
 
@@ -95,10 +92,8 @@ def test_collector_end_to_end(tmp_path):
         recv_ns, parsed = ft.tail_once()
         assert recv_ns is not None
         if ft.variable:
-            n = ct_insert = 0
             # insert_events_batch expects list of tuples (seq, unity_t, js)
             cur = conn.cursor()
-            # convert parsed entries to tuples as returned by tail_once
             inserted = 0
             from UnityIntegration.python.collector_tail import insert_events_batch, insert_records_batch
             inserted = insert_events_batch(conn, session_id, recv_ns, parsed)
@@ -122,8 +117,10 @@ def test_collector_end_to_end(tmp_path):
 
     # create readable views and assert they exist
     # import module by path to avoid package issues
-    import importlib.util, sys
-    spec = importlib.util.spec_from_file_location('create_readable_views', str(Path('UnityIntegration/python/db/create_readable_views.py')))
+    import importlib.util
+    import sys
+    spec = importlib.util.spec_from_file_location('create_readable_views', str(
+        Path('UnityIntegration/python/db/create_readable_views.py')))
     mod = importlib.util.module_from_spec(spec)
     sys.modules['create_readable_views'] = mod
     spec.loader.exec_module(mod)

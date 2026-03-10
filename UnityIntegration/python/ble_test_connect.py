@@ -210,7 +210,10 @@ def main():
                     except Exception as e:
                         print("Retry after name-based discovery failed:", e)
                 else:
-                    print(f"Device with address {args.address} was not found and no device matching name '{args.name}' was discovered.")
+                    print(
+                        f"Device with address {args.address} was not found and "
+                        f"no device matching name '{args.name}' was discovered."
+                    )
             else:
                 print(f"Device with address {args.address} was not found")
 

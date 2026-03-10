@@ -3,7 +3,6 @@ import struct
 import time
 import threading
 import json
-import tempfile
 import sqlite3
 from UnityIntegration.python.collector_tail import watch_sessions, init_db
 
@@ -24,7 +23,8 @@ def build_header(stream_id, session_id, chunk_seq, record_count, payload_bytes):
     hdr[20:24] = (record_count).to_bytes(4, 'little')
     hdr[24:28] = (payload_bytes).to_bytes(4, 'little')
     hdr_copy = bytearray(hdr)
-    for i in range(28,36): hdr_copy[i] = 0
+    for i in range(28, 36):
+        hdr_copy[i] = 0
     header_crc = crc32(hdr_copy)
     return hdr, header_crc
 
@@ -74,14 +74,14 @@ def test_recv_ts_ns_consistent_across_streams(tmp_path):
     sid = 1111
     sd = os.path.join(logs, f'session_{sid}')
     os.makedirs(sd, exist_ok=True)
-    manifest = {'session_id': sid, 'started_unix_ms': int(time.time()*1000), 'files': ['headpose.vrsf','bike.vrsf']}
-    open(os.path.join(sd,'manifest.json'),'w').write(json.dumps(manifest))
+    manifest = {'session_id': sid, 'started_unix_ms': int(time.time()*1000), 'files': ['headpose.vrsf', 'bike.vrsf']}
+    open(os.path.join(sd, 'manifest.json'), 'w').write(json.dumps(manifest))
 
     # Write one chunk per file so they will be processed and recv_ts_ns captured per chunk
     head_recs = [make_headpose_record(1, 0.01)]
-    write_vrsf_file(os.path.join(sd,'headpose.vrsf'), 1, sid, head_recs)
+    write_vrsf_file(os.path.join(sd, 'headpose.vrsf'), 1, sid, head_recs)
     bike_recs = [make_bike_record(1, 0.02)]
-    write_vrsf_file(os.path.join(sd,'bike.vrsf'), 2, sid, bike_recs)
+    write_vrsf_file(os.path.join(sd, 'bike.vrsf'), 2, sid, bike_recs)
 
     out_db = os.path.join(tmp, 'collector_out', 'vrs.sqlite')
     os.makedirs(os.path.dirname(out_db), exist_ok=True)

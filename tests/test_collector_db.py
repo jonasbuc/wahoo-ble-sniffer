@@ -65,7 +65,7 @@ def test_insert_events_batch(tmp_path):
 
     sid = 555
     recv_ts_ns = int(time.time() * 1e9)
-    evs = [(1, 0.1, '{"a":1}'), (2, 0.2, '{"b":2}'), (3, 0.3, '{"c":3}')] 
+    evs = [(1, 0.1, '{"a":1}'), (2, 0.2, '{"b":2}'), (3, 0.3, '{"c":3}')]
 
     n = ct.insert_events_batch(conn, sid, recv_ts_ns, evs)
     assert n == 3

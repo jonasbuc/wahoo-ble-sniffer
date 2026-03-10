@@ -1,8 +1,4 @@
 import struct
-import sqlite3
-import tempfile
-import os
-import math
 from pathlib import Path
 
 from UnityIntegration.python import collector_tail as ct
@@ -65,7 +61,8 @@ def test_headpose_quaternion_norm_and_nan(tmp_path):
     c, probs = vdb.validate_headpose(conn)
     assert c == 3
     # expect at least one quaternion-norm problem and one non-float problem
-    assert any('quaternion norm' in p or 'quaternion norm off' in p or 'quaternion' in p for p in probs) or any('non-float' in p for p in probs)
+    assert any('quaternion norm' in p or 'quaternion norm off' in p or 'quaternion' in p for p in probs) or any(
+        'non-float' in p for p in probs)
     conn.close()
 
 
@@ -101,7 +98,7 @@ def test_events_invalid_json_and_long_string(tmp_path):
     conn = ct.init_db(str(db))
     good = (1, 0.1, '{"evt":"ok"}')
     bad = (2, 0.2, 'not json { this is bad')
-    long_js = json_str = '{"a": "' + ('x' * 10000) + '"}'
+    long_js = '{"a": "' + ('x' * 10000) + '"}'
     ct.insert_events_batch(conn, 11, 555, [good, bad, (3, 0.3, long_js)])
     c, probs = vdb.validate_events(conn)
     assert c == 3

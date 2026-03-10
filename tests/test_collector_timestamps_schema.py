@@ -1,5 +1,3 @@
-import time
-import sqlite3
 from UnityIntegration.python import collector_tail as ct
 
 
@@ -9,10 +7,6 @@ def test_recv_ts_ns_precision(tmp_path):
     sid = 10
     # choose a specific recv timestamp in nanoseconds
     recv_ts_ns = 123456789012345678
-    recs = [
-        # seq 1 record
-        b'\x01\x00\x00\x00' + (123.0).to_bytes(4, 'little', signed=False) if False else None
-    ]
     # craft a proper headpose record using struct to avoid endianness mistakes
     import struct
     rec = struct.pack('<I8f', 1, 0.5, 0.1, 0.2, 0.3, 0.0, 0.0, 0.0, 1.0)

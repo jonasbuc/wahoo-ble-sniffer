@@ -3,9 +3,6 @@ import struct
 import time
 import threading
 import json
-import tempfile
-import sqlite3
-import glob
 import pytest
 from UnityIntegration.python import collector_tail as ct
 
@@ -26,7 +23,8 @@ def build_header(stream_id, session_id, chunk_seq, record_count, payload_bytes):
     hdr[20:24] = (record_count).to_bytes(4, 'little')
     hdr[24:28] = (payload_bytes).to_bytes(4, 'little')
     hdr_copy = bytearray(hdr)
-    for i in range(28,36): hdr_copy[i] = 0
+    for i in range(28, 36):
+        hdr_copy[i] = 0
     header_crc = crc32(hdr_copy)
     return hdr, header_crc
 
@@ -67,19 +65,20 @@ def test_parquet_buffering_param(tmp_path, num_head, num_events, parquet_rows):
     sid = 333
     sd = os.path.join(logs, f'session_{sid}')
     os.makedirs(sd, exist_ok=True)
-    manifest = {'session_id': sid, 'started_unix_ms': int(time.time()*1000), 'files': ['headpose.vrsf','events.vrsf']}
-    open(os.path.join(sd,'manifest.json'),'w').write(json.dumps(manifest))
+    manifest = {'session_id': sid, 'started_unix_ms': int(time.time()*1000), 'files': ['headpose.vrsf', 'events.vrsf']}
+    open(os.path.join(sd, 'manifest.json'), 'w').write(json.dumps(manifest))
 
     head_recs = [make_headpose_record(i, 0.01*i) for i in range(num_head)]
-    write_vrsf_file(os.path.join(sd,'headpose.vrsf'), 1, sid, head_recs)
-    ev_recs = [make_event_record(i, 0.1*i, {'evt':'p','i':i}) for i in range(num_events)]
-    write_vrsf_file(os.path.join(sd,'events.vrsf'), 4, sid, ev_recs)
+    write_vrsf_file(os.path.join(sd, 'headpose.vrsf'), 1, sid, head_recs)
+    ev_recs = [make_event_record(i, 0.1*i, {'evt': 'p', 'i': i}) for i in range(num_events)]
+    write_vrsf_file(os.path.join(sd, 'events.vrsf'), 4, sid, ev_recs)
 
     out_db = os.path.join(tmp, 'collector_out', 'vrs.sqlite')
     out_parquet = os.path.join(tmp, 'collector_out')
     os.makedirs(os.path.dirname(out_db), exist_ok=True)
     stop_event = threading.Event()
-    t = threading.Thread(target=ct.watch_sessions, args=(logs, out_db, out_parquet, stop_event, 0, parquet_rows), daemon=True)
+    t = threading.Thread(target=ct.watch_sessions, args=(
+        logs, out_db, out_parquet, stop_event, 0, parquet_rows), daemon=True)
     t.start()
     time.sleep(1.0)
     stop_event.set()
