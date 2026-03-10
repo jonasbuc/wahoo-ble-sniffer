@@ -135,9 +135,9 @@ class MockWahooBridge:
                         except Exception:
                             self.clients.discard(client)
                         try:
-                            _, power, cadence, speed, hr = struct.unpack("dfffi", message[:24])
+                            *_, hr = struct.unpack("dfffi", message[:24])
                         except struct.error:
-                            power = cadence = speed = hr = 0
+                            hr = 0
                 else:
                     try:
                         websockets.broadcast(self.clients, json.dumps(message))

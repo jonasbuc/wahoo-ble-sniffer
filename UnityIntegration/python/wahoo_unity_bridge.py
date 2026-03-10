@@ -52,8 +52,6 @@ class MockCyclingData:
     def get_binary_frame(self):
         now = time.time()
         elapsed = now - self.time_offset
-        cycle_time = elapsed % (self.cycle_duration + self.stop_duration)
-        is_stopped = cycle_time > self.cycle_duration
         # We only care about heart rate now. Keep other fields zero for
         # compatibility with existing binary protocol (dfffi) but populate
         # only the HR value.
@@ -179,12 +177,12 @@ class WahooBridgeServer:
                         last_log = now
                         try:
                             if len(message) >= 24:
-                                    ts, power, cadence, speed, hr = struct.unpack(
-                                        "dfffi", message[:24]
-                                    )
-                                    # We only publish heart-rate now; other fields are
-                                    # zero for compatibility. Log HR for quick inspection.
-                                    LOG.info("HR:%dbpm", hr)
+                                _ts, _power, _cadence, _speed, hr = struct.unpack(
+                                    "dfffi", message[:24]
+                                )
+                                # We only publish heart-rate now; other fields are
+                                # zero for compatibility. Log HR for quick inspection.
+                                LOG.info("HR:%dbpm", hr)
                         except struct.error:
                             LOG.debug("Could not parse broadcast frame for logging")
 
@@ -306,8 +304,8 @@ class WahooBridgeServer:
             except Exception:
                 LOG.debug("Failed to broadcast UDP event: %s", data)
 
-
     # --- BLE helpers ---
+
     async def _start_ble(self):
         """Scan and connect to a BLE device that exposes Heart Rate measurement.
 
@@ -405,7 +403,8 @@ class WahooBridgeServer:
                                 char_uuids.append(getattr(ch, "uuid", str(ch)).lower())
                             except Exception:
                                 pass
-                    LOG.debug("Discovered characteristic UUIDs on %s: %s", getattr(target, "address", target), char_uuids)
+                    LOG.debug("Discovered characteristic UUIDs on %s: %s",
+                              getattr(target, "address", target), char_uuids)
 
                     if HR_UUID in char_uuids:
                         try:

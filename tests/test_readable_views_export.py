@@ -29,7 +29,7 @@ def test_export_creates_csv_files():
 
 def test_parquet_optional_if_pyarrow_available():
     try:
-        import pyarrow  # type: ignore
+        import pyarrow  # type: ignore  # noqa: F401
     except Exception:
         import pytest
 

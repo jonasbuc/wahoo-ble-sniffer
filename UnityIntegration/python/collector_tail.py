@@ -26,15 +26,19 @@ except Exception:
 HEADER_FMT = "<4s B B H Q I I I I I"  # 4 +1+1+2+8+4+4+4+4+4 = 36? but we read 40 bytes; we will parse manually
 HEADER_SIZE = 40
 
+
 def read_u32_le(b, off):
     return struct.unpack_from('<I', b, off)[0]
+
 
 def read_u64_le(b, off):
     return struct.unpack_from('<Q', b, off)[0]
 
+
 def crc32(data):
     import zlib
     return zlib.crc32(data) & 0xffffffff
+
 
 class FileTail:
     def __init__(self, path, stream_id, session_id, rec_size=None, variable=False):
@@ -48,7 +52,10 @@ class FileTail:
         self.last_seq = None
 
     def tail_once(self):
-        """Read the next complete chunk if present. Return (recv_ts_ns, list_of_parsed_records) or (None, None) if nothing to process."""
+        """Read the next complete chunk if present.
+
+        Return (recv_ts_ns, list_of_parsed_records) or (None, None) if nothing to process.
+        """
         if not os.path.exists(self.path):
             return None, None
         size = os.path.getsize(self.path)
@@ -65,8 +72,6 @@ class FileTail:
                 print('Bad magic in', self.path)
                 self.offset += 1
                 return None, None
-            version = hdr[4]
-            stream_id = hdr[5]
             payload_bytes = read_u32_le(hdr, 24)
             header_crc = read_u32_le(hdr, 28)
             payload_crc = read_u32_le(hdr, 32)
@@ -77,7 +82,8 @@ class FileTail:
 
             # verify header crc
             hdr_copy = bytearray(hdr)
-            for i in range(28,36): hdr_copy[i] = 0
+            for i in range(28, 36):
+                hdr_copy[i] = 0
             if crc32(hdr_copy) != header_crc:
                 print('Header CRC mismatch', self.path)
                 self.offset += 1
@@ -123,15 +129,40 @@ def init_db(path):
     cur.execute('PRAGMA journal_mode=WAL;')
     cur.execute('PRAGMA synchronous=NORMAL;')
     cur.execute('PRAGMA temp_store=MEMORY;')
-    cur.execute('''CREATE TABLE IF NOT EXISTS sessions(session_id INTEGER PRIMARY KEY, started_unix_ms INTEGER, session_dir TEXT)''')
-    cur.execute('''CREATE TABLE IF NOT EXISTS headpose(session_id INTEGER, recv_ts_ns INTEGER, seq INTEGER, unity_t REAL, px REAL, py REAL, pz REAL, qx REAL, qy REAL, qz REAL, qw REAL)''')
-    cur.execute('''CREATE INDEX IF NOT EXISTS idx_headpose_sid ON headpose(session_id, recv_ts_ns)''')
-    cur.execute('''CREATE TABLE IF NOT EXISTS bike(session_id INTEGER, recv_ts_ns INTEGER, seq INTEGER, unity_t REAL, speed REAL, steering REAL, brake_front INTEGER, brake_rear INTEGER)''')
-    cur.execute('''CREATE INDEX IF NOT EXISTS idx_bike_sid ON bike(session_id, recv_ts_ns)''')
-    cur.execute('''CREATE TABLE IF NOT EXISTS hr(session_id INTEGER, recv_ts_ns INTEGER, seq INTEGER, unity_t REAL, hr_bpm REAL)''')
-    cur.execute('''CREATE INDEX IF NOT EXISTS idx_hr_sid ON hr(session_id, recv_ts_ns)''')
-    cur.execute('''CREATE TABLE IF NOT EXISTS events(session_id INTEGER, recv_ts_ns INTEGER, seq INTEGER, unity_t REAL, json TEXT)''')
-    cur.execute('''CREATE INDEX IF NOT EXISTS idx_events_sid ON events(session_id, recv_ts_ns)''')
+    cur.execute(
+        'CREATE TABLE IF NOT EXISTS sessions'
+        '(session_id INTEGER PRIMARY KEY, started_unix_ms INTEGER, session_dir TEXT)'
+    )
+    cur.execute(
+        'CREATE TABLE IF NOT EXISTS headpose'
+        '(session_id INTEGER, recv_ts_ns INTEGER, seq INTEGER, unity_t REAL,'
+        ' px REAL, py REAL, pz REAL, qx REAL, qy REAL, qz REAL, qw REAL)'
+    )
+    cur.execute(
+        'CREATE INDEX IF NOT EXISTS idx_headpose_sid ON headpose(session_id, recv_ts_ns)'
+    )
+    cur.execute(
+        'CREATE TABLE IF NOT EXISTS bike'
+        '(session_id INTEGER, recv_ts_ns INTEGER, seq INTEGER, unity_t REAL,'
+        ' speed REAL, steering REAL, brake_front INTEGER, brake_rear INTEGER)'
+    )
+    cur.execute(
+        'CREATE INDEX IF NOT EXISTS idx_bike_sid ON bike(session_id, recv_ts_ns)'
+    )
+    cur.execute(
+        'CREATE TABLE IF NOT EXISTS hr'
+        '(session_id INTEGER, recv_ts_ns INTEGER, seq INTEGER, unity_t REAL, hr_bpm REAL)'
+    )
+    cur.execute(
+        'CREATE INDEX IF NOT EXISTS idx_hr_sid ON hr(session_id, recv_ts_ns)'
+    )
+    cur.execute(
+        'CREATE TABLE IF NOT EXISTS events'
+        '(session_id INTEGER, recv_ts_ns INTEGER, seq INTEGER, unity_t REAL, json TEXT)'
+    )
+    cur.execute(
+        'CREATE INDEX IF NOT EXISTS idx_events_sid ON events(session_id, recv_ts_ns)'
+    )
     conn.commit()
     return conn
 
@@ -152,8 +183,11 @@ def insert_records_batch(conn, stream_id, session_id, recv_ts_ns, recs):
             qy = struct.unpack_from('<f', rec, 24)[0]
             qz = struct.unpack_from('<f', rec, 28)[0]
             qw = struct.unpack_from('<f', rec, 32)[0]
-            rows.append((session_id, recv_ts_ns, seq, unity_t, px,py,pz,qx,qy,qz,qw))
-        cur.executemany('INSERT INTO headpose(session_id, recv_ts_ns, seq, unity_t, px,py,pz,qx,qy,qz,qw) VALUES(?,?,?,?,?,?,?,?,?,?,?)', rows)
+            rows.append((session_id, recv_ts_ns, seq, unity_t, px, py, pz, qx, qy, qz, qw))
+        cur.executemany(
+            'INSERT INTO headpose'
+            '(session_id, recv_ts_ns, seq, unity_t, px,py,pz,qx,qy,qz,qw)'
+            ' VALUES(?,?,?,?,?,?,?,?,?,?,?)', rows)
         return len(rows)
     elif stream_id == 2:
         rows = []
@@ -165,7 +199,10 @@ def insert_records_batch(conn, stream_id, session_id, recv_ts_ns, recs):
             bf = rec[16]
             br = rec[17]
             rows.append((session_id, recv_ts_ns, seq, unity_t, speed, steering, bf, br))
-        cur.executemany('INSERT INTO bike(session_id, recv_ts_ns, seq, unity_t, speed, steering, brake_front, brake_rear) VALUES(?,?,?,?,?,?,?,?)', rows)
+        cur.executemany(
+            'INSERT INTO bike'
+            '(session_id, recv_ts_ns, seq, unity_t, speed, steering, brake_front, brake_rear)'
+            ' VALUES(?,?,?,?,?,?,?,?)', rows)
         return len(rows)
     elif stream_id == 3:
         rows = []
@@ -194,6 +231,7 @@ PARQUET_BUFFERS = defaultdict(list)
 PARQUET_PART_COUNTER = defaultdict(int)
 PARQUET_LOCK = threading.Lock()
 
+
 def flush_parquet_parts(out_dir, part_rows=10000):
     if not HAVE_PYARROW:
         return
@@ -221,24 +259,30 @@ def flush_parquet_parts(out_dir, part_rows=10000):
             PARQUET_BUFFERS[(sid, stream_id)] = []
 
 
-def watch_sessions(logs_root, out_db, out_parquet_dir=None, stop_event: threading.Event=None, sqlite_batch_size=0, parquet_rows=10000):
+def watch_sessions(
+    logs_root, out_db, out_parquet_dir=None,
+    stop_event: threading.Event = None,
+    sqlite_batch_size=0, parquet_rows=10000
+):
     conn = init_db(out_db)
     seen = set()
     tails = []
 
     def scan_once():
-        nonlocal tails
         for d in sorted(glob.glob(os.path.join(logs_root, 'session_*'))):
-            if d in seen: continue
+            if d in seen:
+                continue
             manifest = os.path.join(d, 'manifest.json')
-            if not os.path.exists(manifest): continue
-            with open(manifest,'r') as f: m = json.load(f)
+            if not os.path.exists(manifest):
+                continue
+            with open(manifest, 'r') as f:
+                m = json.load(f)
             sid = m.get('session_id')
             # create tails
-            tails.append(FileTail(os.path.join(d,'headpose.vrsf'), 1, sid, rec_size=36, variable=False))
-            tails.append(FileTail(os.path.join(d,'bike.vrsf'), 2, sid, rec_size=20, variable=False))
-            tails.append(FileTail(os.path.join(d,'hr.vrsf'), 3, sid, rec_size=12, variable=False))
-            tails.append(FileTail(os.path.join(d,'events.vrsf'), 4, sid, variable=True))
+            tails.append(FileTail(os.path.join(d, 'headpose.vrsf'), 1, sid, rec_size=36, variable=False))
+            tails.append(FileTail(os.path.join(d, 'bike.vrsf'), 2, sid, rec_size=20, variable=False))
+            tails.append(FileTail(os.path.join(d, 'hr.vrsf'), 3, sid, rec_size=12, variable=False))
+            tails.append(FileTail(os.path.join(d, 'events.vrsf'), 4, sid, variable=True))
             seen.add(d)
 
     print('Collector: watching', logs_root)
@@ -287,7 +331,11 @@ def watch_sessions(logs_root, out_db, out_parquet_dir=None, stop_event: threadin
                             qy = struct.unpack_from('<f', rec, 24)[0]
                             qz = struct.unpack_from('<f', rec, 28)[0]
                             qw = struct.unpack_from('<f', rec, 32)[0]
-                            PARQUET_BUFFERS[key].append({'session_id': sid, 'recv_ts_ns': recv_ts_ns, 'seq': seq, 'unity_t': unity_t, 'px': px, 'py': py, 'pz': pz, 'qx': qx, 'qy': qy, 'qz': qz, 'qw': qw})
+                            PARQUET_BUFFERS[key].append({
+                                'session_id': sid, 'recv_ts_ns': recv_ts_ns, 'seq': seq,
+                                'unity_t': unity_t, 'px': px, 'py': py, 'pz': pz,
+                                'qx': qx, 'qy': qy, 'qz': qz, 'qw': qw,
+                            })
                     elif t.stream_id == 2:
                         for rec in parsed:
                             seq = struct.unpack_from('<I', rec, 0)[0]
@@ -296,16 +344,26 @@ def watch_sessions(logs_root, out_db, out_parquet_dir=None, stop_event: threadin
                             steering = struct.unpack_from('<f', rec, 12)[0]
                             bf = rec[16]
                             br = rec[17]
-                            PARQUET_BUFFERS[key].append({'session_id': sid, 'recv_ts_ns': recv_ts_ns, 'seq': seq, 'unity_t': unity_t, 'speed': speed, 'steering': steering, 'brake_front': bf, 'brake_rear': br})
+                            PARQUET_BUFFERS[key].append({
+                                'session_id': sid, 'recv_ts_ns': recv_ts_ns, 'seq': seq,
+                                'unity_t': unity_t, 'speed': speed, 'steering': steering,
+                                'brake_front': bf, 'brake_rear': br,
+                            })
                     elif t.stream_id == 3:
                         for rec in parsed:
                             seq = struct.unpack_from('<I', rec, 0)[0]
                             unity_t = struct.unpack_from('<f', rec, 4)[0]
                             hr_bpm = struct.unpack_from('<f', rec, 8)[0]
-                            PARQUET_BUFFERS[key].append({'session_id': sid, 'recv_ts_ns': recv_ts_ns, 'seq': seq, 'unity_t': unity_t, 'hr_bpm': hr_bpm})
+                            PARQUET_BUFFERS[key].append({
+                                'session_id': sid, 'recv_ts_ns': recv_ts_ns,
+                                'seq': seq, 'unity_t': unity_t, 'hr_bpm': hr_bpm,
+                            })
                     elif t.stream_id == 4:
                         for (seq, unity_t, js) in parsed:
-                            PARQUET_BUFFERS[key].append({'session_id': sid, 'recv_ts_ns': recv_ts_ns, 'seq': seq, 'unity_t': unity_t, 'json': js})
+                            PARQUET_BUFFERS[key].append({
+                                'session_id': sid, 'recv_ts_ns': recv_ts_ns,
+                                'seq': seq, 'unity_t': unity_t, 'json': js,
+                            })
 
             # commit behavior: commit per chunk (sqlite_batch_size==0), otherwise commit when pending >= batch size
             if sqlite_batch_size <= 0:
@@ -334,7 +392,6 @@ def watch_sessions(logs_root, out_db, out_parquet_dir=None, stop_event: threadin
 
         time.sleep(0.1)
 
-    
     # finalize: commit any pending inserts and flush parquet
     try:
         if pending_inserts > 0:
@@ -343,15 +400,20 @@ def watch_sessions(logs_root, out_db, out_parquet_dir=None, stop_event: threadin
         pass
     if out_parquet_dir and HAVE_PYARROW:
         flush_parquet_parts(out_parquet_dir, part_rows=parquet_rows)
+
+
 def main():
     p = argparse.ArgumentParser()
     p.add_argument('--logs', default='Logs')
     p.add_argument('--out', default='collector_out/vrs.sqlite')
-    p.add_argument('--sqlite-batch-size', type=int, default=0, help='If >0, commit DB every N records; 0 means commit per chunk')
+    p.add_argument('--sqlite-batch-size', type=int, default=0,
+                   help='If >0, commit DB every N records; 0 means commit per chunk')
     p.add_argument('--parquet-rows', type=int, default=10000, help='Max rows per parquet part file')
     args = p.parse_args()
     os.makedirs(os.path.dirname(args.out), exist_ok=True)
-    watch_sessions(args.logs, args.out, out_parquet_dir=os.path.dirname(args.out), sqlite_batch_size=args.sqlite_batch_size, parquet_rows=args.parquet_rows)
+    watch_sessions(args.logs, args.out, out_parquet_dir=os.path.dirname(args.out),
+                   sqlite_batch_size=args.sqlite_batch_size, parquet_rows=args.parquet_rows)
+
 
 if __name__ == '__main__':
     main()

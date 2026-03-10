@@ -274,7 +274,11 @@ class WahooBridgeGUI:
                 start_rel = max_start
 
         # Collect visible points as (t_rel, hr)
-        visible = [((t - self.start_time), v) for (t, v) in self.hr_history if (t - self.start_time) >= start_rel and (t - self.start_time) <= (start_rel + self.graph_seconds)]
+        visible = [
+            ((t - self.start_time), v) for (t, v) in self.hr_history
+            if (t - self.start_time) >= start_rel
+            and (t - self.start_time) <= (start_rel + self.graph_seconds)
+        ]
         if not visible:
             return
 
