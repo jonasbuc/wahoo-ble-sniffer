@@ -9,3 +9,6 @@ mypy>=1.9.0
 
 # Optional for parquet output in collector tests
 pyarrow>=10.0.0
+
+# Coverage tool used by CI
+coverage>=7.2.0
