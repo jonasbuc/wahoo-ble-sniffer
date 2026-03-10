@@ -129,7 +129,12 @@ async def connect_and_subscribe(address: str, timeout: Optional[float] = None):
             raise
 
 
-async def connect_with_retry(address: str, timeout: Optional[float] = None, attempts: int = 2, base_backoff: float = 1.0):
+async def connect_with_retry(
+    address: str,
+    timeout: Optional[float] = None,
+    attempts: int = 2,
+    base_backoff: float = 1.0,
+):
     """Attempt to connect up to `attempts` times with exponential backoff.
 
     If BleakDeviceNotFoundError is raised it is propagated immediately (not retried).
