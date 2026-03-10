@@ -28,7 +28,7 @@ def float_ok(x):
 
 def validate_headpose(conn):
     cur = conn.cursor()
-    cur.execute('SELECT session_id, seq, px,py,pz, qx,qy,qz,qw FROM headpose')
+    cur.execute('SELECT session_id, seq, px, py, pz, qx, qy, qz, qw FROM headpose')
     problems = []
     count = 0
     for row in cur.fetchall():
@@ -55,7 +55,7 @@ def validate_bike(conn):
             problems.append(f'bike invalid speed {speed} session {sid} seq {seq}')
         if not float_ok(steering):
             problems.append(f'bike invalid steering {steering} session {sid} seq {seq}')
-        if bf not in (0,1) or br not in (0,1):
+        if bf not in (0, 1) or br not in (0, 1):
             problems.append(f'bike brake flags not 0/1 bf={bf} br={br} session {sid} seq {seq}')
     return count, problems
 
