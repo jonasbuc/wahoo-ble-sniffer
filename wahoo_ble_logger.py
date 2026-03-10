@@ -11,7 +11,7 @@ import sqlite3
 import struct
 import threading
 import time
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Callable, Awaitable, cast, Type
 
 from bleak import BleakClient, BleakScanner
 from bleak.backends.device import BLEDevice
@@ -192,7 +192,7 @@ class HeartRateParser:
             bpm = struct.unpack_from("<H", data, 1)[0]
             offset = 3
 
-        result = {"bpm": bpm}
+        result: Dict[str, Any] = {"bpm": bpm}
 
         # Check for RR-Interval presence (bit 4)
         has_rr = (flags & 0x10) != 0
@@ -517,7 +517,7 @@ class WahooDevice:
             logging.info(f"Connected to {self.device.name}")
 
             # List all services and characteristics for debugging
-            if self.debug or "KICKR" in self.device.name:
+            if self.debug or (self.device.name and "KICKR" in self.device.name):
                 logging.info(
                     f"Available services and characteristics for {self.device.name}:"
                 )
@@ -529,8 +529,11 @@ class WahooDevice:
                         )
 
             # Subscribe to notifications
+            # Bleak's callback typing can vary by version; cast to a compatible
+            # callable type for mypy while preserving runtime behavior.
             await self.client.start_notify(
-                self.characteristic_uuid, self.notification_handler
+                self.characteristic_uuid,
+                cast(Callable[[Any, bytearray], Awaitable[None]], self.notification_handler),
             )
 
             logging.info(f"Subscribed to notifications from {self.device.name}")
@@ -679,7 +682,7 @@ async def main_async(
     if kickr_device:
         # Try to determine which characteristic to use
         kickr_char_uuid = INDOOR_BIKE_DATA_UUID
-        kickr_parser = FTMSIndoorBikeParser
+        kickr_parser: Type[Any] = FTMSIndoorBikeParser
 
         # Quick check to see if device has Cycling Power instead of FTMS
         try:
@@ -714,8 +717,8 @@ async def main_async(
         logging.info("Shutting down...")
     finally:
         # Clean shutdown
-        for device in devices_list:
-            await device.stop()
+        for wd in devices_list:
+            await wd.stop()
 
 
 def main() -> None:
