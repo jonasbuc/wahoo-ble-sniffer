@@ -27,11 +27,14 @@ jobs:
 
     - name: Type check (mypy)
       run: |
+        # Ensure mypy is installed (some runners may not expose the mypy script)
+        python -m pip install --upgrade pip
+        python -m pip install mypy
         # Limit type checking to the UnityIntegration package to avoid checking
         # untyped top-level scripts (like wahoo_ble_logger.py) that are not
         # currently fully annotated. We still use --ignore-missing-imports
         # to tolerate optional C-extension or platform-specific modules.
-        mypy UnityIntegration --ignore-missing-imports
+        python -m mypy UnityIntegration --ignore-missing-imports
 
     - name: Run tests with coverage
       run: |
