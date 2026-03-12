@@ -18,7 +18,7 @@ if not sessions_p.exists():
 
 s = pd.read_parquet(sessions_p)
 # ensure timestamps
-for col in ['session_start','session_end']:
+for col in ['session_start', 'session_end']:
     if col in s.columns:
         s[col] = pd.to_datetime(s[col], errors='coerce')
 
@@ -33,10 +33,15 @@ for _, row in s.iterrows():
     bike_count = bike_power_mean = bike_cadence_mean = None
     try:
         hr = pd.read_parquet(hr_p)
-        hr['recv_ts'] = pd.to_datetime(hr['recv_ts'], errors='coerce') if 'recv_ts' in hr.columns else pd.to_datetime(hr['recv_ts_iso'], errors='coerce')
+        if 'recv_ts' in hr.columns:
+            hr['recv_ts'] = pd.to_datetime(hr['recv_ts'], errors='coerce')
+        elif 'recv_ts_iso' in hr.columns:
+            hr['recv_ts'] = pd.to_datetime(hr['recv_ts_iso'], errors='coerce')
         hr_sel = hr[hr.get('session_id') == sid] if 'session_id' in hr.columns else hr
         if not hr_sel.empty:
-            hr_mean = hr_sel[[c for c in hr_sel.columns if 'hr' in c.lower() or 'bpm' in c.lower()]].select_dtypes(include=[np.number]).mean().mean()
+            cols = [c for c in hr_sel.columns if 'hr' in c.lower() or 'bpm' in c.lower()]
+            if cols:
+                hr_mean = hr_sel[cols].select_dtypes(include=[np.number]).mean().mean()
             hr_count = len(hr_sel)
     except Exception:
         pass

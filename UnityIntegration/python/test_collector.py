@@ -9,7 +9,7 @@ import threading
 import sqlite3
 import json
 import tempfile
-from collector_tail import flush_parquet_parts, watch_sessions, HAVE_PYARROW
+from UnityIntegration.python.collector_tail import flush_parquet_parts, watch_sessions, HAVE_PYARROW
 import zlib
 
 

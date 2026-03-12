@@ -12,8 +12,6 @@ Run: .venv/bin/python analysis/generate_mock_data.py
 """
 from pathlib import Path
 import numpy as np
-import pandas as pd
-from datetime import datetime, timedelta
 import argparse
 
 OUT = Path("collector_out") / "parquet"
