@@ -152,6 +152,24 @@ for row in cursor.fetchall():
 - **Close other apps**: Close Wahoo Fitness, Zwift, etc.
 - Windows 10/11 includes built-in Bluetooth LE support.
 - If using WSL2, Bluetooth passthrough may not work—run natively in Windows.
+### Windows (recommended steps)
+
+- Use the included PowerShell starter to launch the GUI and bridge together:
+
+  1. Open PowerShell (recommended: Run as Administrator)
+  2. From the repository root run:
+
+     ```powershell
+     .\UnityIntegration\START_WAHOO_BRIDGE.ps1
+     ```
+
+  The script prefers the repository virtualenv at `./.venv` if present. It will start the GUI monitor and the bridge with the `--live` flag.
+
+- You can also double-click `UnityIntegration\START_WAHOO_BRIDGE.bat` to start both the GUI and bridge in separate windows.
+
+Notes:
+- Make sure to run `UnityIntegration\INSTALL.bat` first to create the `.venv` and install dependencies on Windows.
+- If running headless or as a service, consider using Task Scheduler or NSSM to manage the bridge process.
 
 ### Linux
 
