@@ -68,6 +68,52 @@ namespace VrsLogging
             try { eventsWriter?.Dispose(); } catch { }
         }
 
+        /// <summary>
+        /// Stop current writers and start a new session with the given id.
+        /// This allows creating a new test subject/session at runtime without restarting Unity.
+        /// </summary>
+        public void StartNewSession(ulong newSessionId, string subjectLabel = null)
+        {
+            try
+            {
+                // Stop current writers to flush files
+                StopWriters();
+
+                // reset sequence counters
+                headSeq = bikeSeq = hrSeq = eventSeq = 0;
+
+                // set new session id and directory
+                sessionId = newSessionId;
+                sessionDir = Path.Combine(logBasePath, $"session_{sessionId}");
+                Directory.CreateDirectory(sessionDir);
+
+                // recreate writers
+                headWriter = new VrsFileWriterFixed(Path.Combine(sessionDir, "headpose.vrsf"), VrsFormats.StreamHeadpose, sessionId, VrsFormats.HeadposeRecordSize);
+                bikeWriter = new VrsFileWriterFixed(Path.Combine(sessionDir, "bike.vrsf"), VrsFormats.StreamBike, sessionId, VrsFormats.BikeRecordSize);
+                hrWriter = new VrsFileWriterFixed(Path.Combine(sessionDir, "hr.vrsf"), VrsFormats.StreamHr, sessionId, VrsFormats.HrRecordSize);
+                eventsWriter = new VrsFileWriterEvents(Path.Combine(sessionDir, "events.vrsf"), VrsFormats.StreamEvents, sessionId);
+
+                // write manifest including optional subject label
+                var manifest = new
+                {
+                    session_id = sessionId,
+                    started_unix_ms = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+                    files = new[] { "headpose.vrsf", "bike.vrsf", "hr.vrsf", "events.vrsf" },
+                    record_sizes = new { headpose = VrsFormats.HeadposeRecordSize, bike = VrsFormats.BikeRecordSize, hr = VrsFormats.HrRecordSize },
+                    expected_hz = new { headpose = headHz, bike = bikeHz },
+                    subject = subjectLabel
+                };
+                var json = JsonUtility.ToJson(manifest);
+                File.WriteAllText(Path.Combine(sessionDir, "manifest.json"), json);
+
+                Debug.Log($"[VrsSessionLogger] Started new session {sessionId} (subject={subjectLabel}) at {sessionDir}");
+            }
+            catch (Exception ex)
+            {
+                Debug.LogError($"StartNewSession error: {ex}");
+            }
+        }
+
         void Update()
         {
             float dt = Time.deltaTime;

@@ -187,5 +187,45 @@ namespace VrsLogging
             var json = JsonUtility.ToJson(manifest);
             File.WriteAllText(Path.Combine(sessionDir, "manifest.json"), json);
         }
+
+        /// <summary>
+        /// Start a new runtime session (create new session directory, reset writers and seq counters).
+        /// Call this from UI when a new test subject is registered.
+        /// </summary>
+        public void StartNewSession(ulong newSessionId, string subjectLabel = null)
+        {
+            try
+            {
+                StopWriters();
+                headSeq = bikeSeq = hrSeq = eventSeq = 0;
+
+                sessionId = newSessionId;
+                sessionDir = Path.Combine(logBasePath, $"session_{sessionId}");
+                Directory.CreateDirectory(sessionDir);
+
+                headWriter = new VrsFileWriterFixed(Path.Combine(sessionDir, "headpose.vrsf"), VrsFormats.StreamHeadpose, sessionId, VrsFormats.HeadposeRecordSize);
+                bikeWriter = new VrsFileWriterFixed(Path.Combine(sessionDir, "bike.vrsf"), VrsFormats.StreamBike, sessionId, VrsFormats.BikeRecordSize);
+                hrWriter = new VrsFileWriterFixed(Path.Combine(sessionDir, "hr.vrsf"), VrsFormats.StreamHr, sessionId, VrsFormats.HrRecordSize);
+                eventsWriter = new VrsFileWriterEvents(Path.Combine(sessionDir, "events.vrsf"), VrsFormats.StreamEvents, sessionId);
+
+                var manifest = new
+                {
+                    session_id = sessionId,
+                    started_unix_ms = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+                    files = new[] { "headpose.vrsf", "bike.vrsf", "hr.vrsf", "events.vrsf" },
+                    record_sizes = new { headpose = VrsFormats.HeadposeRecordSize, bike = VrsFormats.BikeRecordSize, hr = VrsFormats.HrRecordSize },
+                    expected_hz = new { headpose = headHz, bike = bikeHz },
+                    subject = subjectLabel
+                };
+                var json = JsonUtility.ToJson(manifest);
+                File.WriteAllText(Path.Combine(sessionDir, "manifest.json"), json);
+
+                Debug.Log($"[VrsSessionLogger] Started new session {sessionId} (subject={subjectLabel}) at {sessionDir}");
+            }
+            catch (Exception ex)
+            {
+                Debug.LogError($"StartNewSession error: {ex}");
+            }
+        }
     }
 }
