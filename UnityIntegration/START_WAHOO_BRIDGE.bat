@@ -53,14 +53,12 @@ echo.
 echo ════════════════════════════════════════════════════════════
 echo.
 
-REM Start bridge
-REM Also start the GUI in a separate window so users get the monitor automatically
-REM Start bridge
-REM Start the GUI in a separate window so users get the monitor automatically
-start "Wahoo Bridge GUI" "%PYCMD%" "%~dp0python\wahoo_bridge_gui.py"
+REM Start bridge and GUI
+REM Start the GUI in a separate window so users get the monitor automatically (pass --live)
+start "Wahoo Bridge GUI" "%PYCMD%" "%~dp0python\wahoo_bridge_gui.py" --live
 
-REM Start canonical bridge (runs in this window)
-"%PYCMD%" "%~dp0python\wahoo_unity_bridge.py"
+REM Start canonical bridge (runs in this window) with --live
+"%PYCMD%" "%~dp0python\wahoo_unity_bridge.py" --live
 
 echo.
 echo Bridge stopped.
