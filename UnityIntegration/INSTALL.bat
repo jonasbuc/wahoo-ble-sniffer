@@ -69,6 +69,7 @@ echo Next steps:
 echo 1. Go to UnityIntegration folder
 echo 2. Double-click START_WAHOO_BRIDGE.bat (recommended) to start the GUI and bridge together
 echo    - The script starts both the GUI monitor and the bridge with the --live flag
+echo    - Or open PowerShell and run: .\START_WAHOO_BRIDGE.ps1
 echo 3. Start Unity and connect!
 echo.
 echo Happy cycling! :)
