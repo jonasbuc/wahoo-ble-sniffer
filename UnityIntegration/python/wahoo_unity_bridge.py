@@ -364,6 +364,23 @@ class WahooBridgeServer:
                 async with BleakClient(target) as client:
                     LOG.info("Connected to BLE device %s", getattr(target, "address", target))
 
+                    disconnected_event = asyncio.Event()
+
+                    # set a disconnected callback if supported by this bleak client
+                    try:
+                        set_disc = getattr(client, "set_disconnected_callback", None)
+                        if callable(set_disc):
+                            def _on_disc(_client):
+                                LOG.warning("BLE device disconnected callback fired for %s", getattr(target, "address", target))
+                                try:
+                                    disconnected_event.set()
+                                except Exception:
+                                    pass
+
+                            set_disc(_on_disc)
+                    except Exception:
+                        LOG.debug("Failed to set disconnected callback on client")
+
                     def hr_handler(sender, data: bytes):
                         try:
                             flags = data[0]
@@ -406,15 +423,36 @@ class WahooBridgeServer:
                     LOG.debug("Discovered characteristic UUIDs on %s: %s",
                               getattr(target, "address", target), char_uuids)
 
+                    # battery characteristic for periodic keepalive reads
+                    BAT_UUID = "00002a19-0000-1000-8000-00805f9b34fb"
+
                     if HR_UUID in char_uuids:
                         try:
                             await client.start_notify(HR_UUID, hr_handler)
                             LOG.info("Subscribed to HR notifications on %s", getattr(target, "address", target))
                             # Reset attempt counter after a successful subscription
                             attempt = 0
-                            # Keep the client alive until cancelled or an exception occurs
-                            while True:
+
+                            # Keep the client alive until disconnected or cancelled.
+                            # Use disconnected_event (set by callback) or client.is_connected as indicators.
+                            keepalive_interval = 15.0
+                            last_keep = 0.0
+                            while client.is_connected and not disconnected_event.is_set():
+                                # periodic keepalive read (battery level) to avoid supervision timeouts
+                                now_ts = asyncio.get_event_loop().time()
+                                if BAT_UUID in char_uuids and (now_ts - last_keep) >= keepalive_interval:
+                                    try:
+                                        # some devices support reading battery level; ignore result
+                                        _ = await client.read_gatt_char(BAT_UUID)
+                                        LOG.debug("Performed keepalive battery read")
+                                    except Exception:
+                                        LOG.debug("Keepalive read failed (ignored)")
+                                    last_keep = now_ts
+
                                 await asyncio.sleep(1.0)
+
+                            if disconnected_event.is_set():
+                                LOG.info("Detected disconnection via callback for %s", getattr(target, "address", target))
                         finally:
                             try:
                                 await client.stop_notify(HR_UUID)

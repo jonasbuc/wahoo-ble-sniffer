@@ -39,8 +39,13 @@ echo ""
 echo "════════════════════════════════════════════════════════════"
 echo ""
 
-# Start bridge (moved into python/ folder)
-$PYTHON python/wahoo_unity_bridge.py
+# Start GUI in a new Terminal window and run the bridge in this window
+# Use osascript to spawn a new Terminal tab/window that runs the GUI with --live
+GUI_CMD="cd \"$(dirname "$0")\"; \"$PYTHON\" python/wahoo_bridge_gui.py --live"
+osascript -e "tell application \"Terminal\" to do script \"$GUI_CMD\""
+
+# Start canonical bridge (runs in this window) with --live
+"$PYTHON" python/wahoo_unity_bridge.py --live
 
 echo ""
 echo "Bridge stopped."
