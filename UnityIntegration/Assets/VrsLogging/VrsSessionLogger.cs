@@ -1,6 +1,7 @@
 using System;
 using System.Buffers;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.IO;
 using System.Text;
 using UnityEngine;
@@ -186,6 +187,75 @@ namespace VrsLogging
             };
             var json = JsonUtility.ToJson(manifest);
             File.WriteAllText(Path.Combine(sessionDir, "manifest.json"), json);
+        }
+
+        /// <summary>
+        /// Stop the current session writers and mark session end in manifest.
+        /// </summary>
+        public void StopSession()
+        {
+            try
+            {
+                // dispose writers (flush)
+                StopWriters();
+
+                // update manifest with end time
+                try
+                {
+                    var manifestPath = Path.Combine(sessionDir, "manifest.json");
+                    if (File.Exists(manifestPath))
+                    {
+                        var text = File.ReadAllText(manifestPath);
+                        // simple approach: append ended_unix_ms to file as separate file
+                        var endInfo = new { ended_unix_ms = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() };
+                        File.WriteAllText(Path.Combine(sessionDir, "manifest_end.json"), JsonUtility.ToJson(endInfo));
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Debug.LogWarning($"StopSession: failed to write manifest_end: {ex}");
+                }
+
+                Debug.Log($"[VrsSessionLogger] Stopped session {sessionId} at {sessionDir}");
+            }
+            catch (Exception ex)
+            {
+                Debug.LogError($"StopSession error: {ex}");
+            }
+        }
+
+        /// <summary>
+        /// Generate a display id like PREFIX-001 using a simple counter file stored under logBasePath.
+        /// </summary>
+        private string GetNextDisplayId(string prefix)
+        {
+            try
+            {
+                var safe = string.IsNullOrWhiteSpace(prefix) ? "SUBJ" : prefix.Trim().ToUpper().Replace(' ', '_');
+                var countersPath = Path.Combine(logBasePath, "subject_counters.txt");
+                var map = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+                if (File.Exists(countersPath))
+                {
+                    foreach (var ln in File.ReadAllLines(countersPath))
+                    {
+                        var parts = ln.Split(':');
+                        if (parts.Length == 2 && int.TryParse(parts[1], out var v)) map[parts[0]] = v;
+                    }
+                }
+                if (!map.ContainsKey(safe)) map[safe] = 0;
+                map[safe] = map[safe] + 1;
+                // write back
+                using (var fw = File.CreateText(countersPath))
+                {
+                    foreach (var kv in map) fw.WriteLine($"{kv.Key}:{kv.Value}");
+                }
+                return $"{safe}-{map[safe]:D3}";
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"GetNextDisplayId failed: {ex}");
+                return $"SUBJ-{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}";
+            }
         }
 
         /// <summary>
