@@ -26,12 +26,13 @@ if (Test-Path $venvPy) {
     Write-Host "Virtualenv not found, falling back to system Python"
 }
 
-Write-Host "Starting Wahoo Bridge GUI (new window)..."
-Start-Process -FilePath $python -ArgumentList "UnityIntegration\python\wahoo_bridge_gui.py", "--live" -WorkingDirectory $repoRoot
-
-Start-Sleep -Milliseconds 400
 
 Write-Host "Starting Wahoo Bridge (new window)..."
 Start-Process -FilePath $python -ArgumentList "UnityIntegration\python\wahoo_unity_bridge.py", "--live" -WorkingDirectory $repoRoot
+
+Start-Sleep -Seconds 1
+
+Write-Host "Starting Wahoo Bridge GUI (new window)..."
+Start-Process -FilePath $python -ArgumentList "UnityIntegration\python\wahoo_bridge_gui.py", "--live" -WorkingDirectory $repoRoot
 
 Write-Host "Bridge and GUI started. Use Task Manager or the Terminal windows to view output."

@@ -39,12 +39,13 @@ echo ""
 echo "════════════════════════════════════════════════════════════"
 echo ""
 
-# Start GUI in a new Terminal window and run the bridge in this window
-# Use osascript to spawn a new Terminal tab/window that runs the GUI with --live
-GUI_CMD="cd \"$(dirname "$0")\"; \"$PYTHON\" python/wahoo_bridge_gui.py --live"
-osascript -e "tell application \"Terminal\" to do script \"$GUI_CMD\""
+# Start the bridge first, then launch the GUI monitor
+# We'll run the bridge in this window and spawn the GUI in a new Terminal window
 
-# Start canonical bridge (runs in this window) with --live
+# Spawn GUI in a new Terminal window after a short delay so the bridge has time to start
+osascript -e 'tell application "Terminal" to do script "sleep 2; cd \"'"$(dirname "$0")'\"; \"'"$PYTHON"'\" python/wahoo_bridge_gui.py --live"'
+
+# Start canonical bridge in the current window (foreground)
 "$PYTHON" python/wahoo_unity_bridge.py --live
 
 echo ""
