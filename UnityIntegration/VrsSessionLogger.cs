@@ -31,6 +31,9 @@ namespace VrsLogging
         float headAcc = 0f;
         float bikeAcc = 0f;
 
+    // lock for session history updates
+    private readonly object sessionHistoryLock = new object();
+
         public float LastHr { get; private set; } = 0f;
 
         public string SessionDir => sessionDir;
@@ -73,7 +76,7 @@ namespace VrsLogging
         /// Stop current writers and start a new session with the given id.
         /// This allows creating a new test subject/session at runtime without restarting Unity.
         /// </summary>
-        public void StartNewSession(ulong newSessionId, string subjectLabel = null)
+        public void StartNewSession(ulong newSessionId, string displayId = null, string subjectLabel = null)
         {
             try
             {
@@ -83,9 +86,10 @@ namespace VrsLogging
                 // reset sequence counters
                 headSeq = bikeSeq = hrSeq = eventSeq = 0;
 
-                // set new session id and directory
+                // set new session id and directory (use displayId if provided)
                 sessionId = newSessionId;
-                sessionDir = Path.Combine(logBasePath, $"session_{sessionId}");
+                var dirName = string.IsNullOrEmpty(displayId) ? sessionId.ToString() : displayId;
+                sessionDir = Path.Combine(logBasePath, $"session_{dirName}");
                 Directory.CreateDirectory(sessionDir);
 
                 // recreate writers
@@ -94,10 +98,11 @@ namespace VrsLogging
                 hrWriter = new VrsFileWriterFixed(Path.Combine(sessionDir, "hr.vrsf"), VrsFormats.StreamHr, sessionId, VrsFormats.HrRecordSize);
                 eventsWriter = new VrsFileWriterEvents(Path.Combine(sessionDir, "events.vrsf"), VrsFormats.StreamEvents, sessionId);
 
-                // write manifest including optional subject label
+                // write manifest including optional subject label and display id
                 var manifest = new
                 {
                     session_id = sessionId,
+                    display_id = displayId,
                     started_unix_ms = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
                     files = new[] { "headpose.vrsf", "bike.vrsf", "hr.vrsf", "events.vrsf" },
                     record_sizes = new { headpose = VrsFormats.HeadposeRecordSize, bike = VrsFormats.BikeRecordSize, hr = VrsFormats.HrRecordSize },
@@ -106,6 +111,9 @@ namespace VrsLogging
                 };
                 var json = JsonUtility.ToJson(manifest);
                 File.WriteAllText(Path.Combine(sessionDir, "manifest.json"), json);
+
+                // append to session history
+                AppendSessionHistoryEntry(displayId, sessionId, subjectLabel, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), sessionDir);
 
                 Debug.Log($"[VrsSessionLogger] Started new session {sessionId} (subject={subjectLabel}) at {sessionDir}");
             }
@@ -247,6 +255,8 @@ namespace VrsLogging
                     {
                         var endInfo = new { ended_unix_ms = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() };
                         File.WriteAllText(Path.Combine(sessionDir, "manifest_end.json"), JsonUtility.ToJson(endInfo));
+                        // update history
+                        MarkSessionEndedInHistory(sessionId, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
                     }
                 }
                 catch (Exception ex)
@@ -261,7 +271,76 @@ namespace VrsLogging
             }
         }
 
-        private string GetNextDisplayId(string prefix)
+        [Serializable]
+        private class SessionHistoryEntry
+        {
+            public string display_id;
+            public ulong session_id;
+            public string subject;
+            public long started_unix_ms;
+            public long ended_unix_ms;
+            public string dir;
+        }
+
+        private void AppendSessionHistoryEntry(string displayId, ulong sessId, string subject, long startedUnixMs, string dir)
+        {
+            try
+            {
+                var historyPath = Path.Combine(logBasePath, "sessions_history.ndjson");
+                var e = new SessionHistoryEntry
+                {
+                    display_id = displayId,
+                    session_id = sessId,
+                    subject = subject,
+                    started_unix_ms = startedUnixMs,
+                    ended_unix_ms = 0,
+                    dir = dir
+                };
+                var json = JsonUtility.ToJson(e);
+                lock (sessionHistoryLock)
+                {
+                    File.AppendAllText(historyPath, json + "\n");
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"AppendSessionHistoryEntry failed: {ex}");
+            }
+        }
+
+        private void MarkSessionEndedInHistory(ulong sessId, long endedUnixMs)
+        {
+            try
+            {
+                var historyPath = Path.Combine(logBasePath, "sessions_history.ndjson");
+                if (!File.Exists(historyPath)) return;
+                lock (sessionHistoryLock)
+                {
+                    var lines = File.ReadAllLines(historyPath);
+                    bool changed = false;
+                    for (int i = lines.Length - 1; i >= 0; i--)
+                    {
+                        var ln = lines[i];
+                        if (string.IsNullOrWhiteSpace(ln)) continue;
+                        var entry = JsonUtility.FromJson<SessionHistoryEntry>(ln);
+                        if (entry != null && entry.session_id == sessId && entry.ended_unix_ms == 0)
+                        {
+                            entry.ended_unix_ms = endedUnixMs;
+                            lines[i] = JsonUtility.ToJson(entry);
+                            changed = true;
+                            break;
+                        }
+                    }
+                    if (changed) File.WriteAllLines(historyPath, lines);
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"MarkSessionEndedInHistory failed: {ex}");
+            }
+        }
+
+    public string GetNextDisplayId(string prefix)
         {
             try
             {

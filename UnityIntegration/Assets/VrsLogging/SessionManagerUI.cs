@@ -1,6 +1,8 @@
 using UnityEngine;
 using UnityEngine.UI;
 using System;
+using System.IO;
+using System.Collections.Generic;
 
 namespace VrsLogging
 {
@@ -15,21 +17,24 @@ namespace VrsLogging
         public Button newSessionButton;
         public Button stopSessionButton;
         public Text currentSessionLabel;
+        // UI for session history
+        public Transform historyContainer; // assign a Vertical Layout Group container
+        public GameObject rowPrefab; // assign a prefab that has SessionHistoryRow component
 
         private string currentDisplayId = null;
 
-        void Start()
+        [Serializable]
+        private class HistoryEntry
         {
-            if (newSessionButton != null)
-            {
-                newSessionButton.onClick.AddListener(OnNewSessionClicked);
-            }
-            if (stopSessionButton != null)
-            {
-                stopSessionButton.onClick.AddListener(OnStopSessionClicked);
-                stopSessionButton.interactable = false;
-            }
+            public string display_id;
+            public ulong session_id;
+            public string subject;
+            public long started_unix_ms;
+            public long ended_unix_ms;
+            public string dir;
         }
+
+        
 
         public void OnNewSessionClicked()
         {
@@ -42,10 +47,11 @@ namespace VrsLogging
             // create display id using prefix and auto-increment, then start session
             string subject = subjectInput != null ? subjectInput.text : "SUBJ";
             // ask logger to compute display id and start session - logger will create session dir using display id
-            string displayId = logger != null ? logger.GetType().GetMethod("GetNextDisplayId", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance).Invoke(logger, new object[] { subject }) as string : null;
+            string displayId = logger != null ? logger.GetNextDisplayId(subject) : null;
             if (string.IsNullOrEmpty(displayId)) displayId = subject + "-" + DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
             ulong sid = (ulong)DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-            logger.StartNewSession(sid, subject);
+            // pass displayId and subjectLabel to StartNewSession
+            logger.StartNewSession(sid, displayId, subject);
             currentDisplayId = displayId;
             if (currentSessionLabel != null) currentSessionLabel.text = $"Session: {displayId}";
             if (stopSessionButton != null) stopSessionButton.interactable = true;
@@ -62,6 +68,8 @@ namespace VrsLogging
             }
 
             Debug.Log($"SessionManagerUI: started session {sid} subject='{subject}'");
+            // refresh history UI
+            LoadHistory();
         }
 
         public void OnStopSessionClicked()
@@ -77,10 +85,96 @@ namespace VrsLogging
                 if (currentSessionLabel != null) currentSessionLabel.text = "Session: (stopped)";
                 if (stopSessionButton != null) stopSessionButton.interactable = false;
                 Debug.Log("SessionManagerUI: stopped session");
+                // refresh history UI
+                LoadHistory();
             }
             catch (Exception ex)
             {
                 Debug.LogWarning($"OnStopSessionClicked failed: {ex}");
+            }
+        }
+
+        void Awake()
+        {
+            // initial load of history will occur in Start after listeners wired
+        }
+
+        void Start()
+        {
+            // wire existing listeners as before
+            if (newSessionButton != null)
+            {
+                newSessionButton.onClick.AddListener(OnNewSessionClicked);
+            }
+            if (stopSessionButton != null)
+            {
+                stopSessionButton.onClick.AddListener(OnStopSessionClicked);
+                stopSessionButton.interactable = false;
+            }
+
+            // initial load of history
+            LoadHistory();
+        }
+
+        /// <summary>
+        /// Load sessions_history.ndjson from logger.logBasePath and populate the UI container.
+        /// </summary>
+        public void LoadHistory()
+        {
+            if (logger == null || historyContainer == null || rowPrefab == null) return;
+            try
+            {
+                var historyPath = Path.Combine(logger.logBasePath, "sessions_history.ndjson");
+                // clear existing
+                for (int i = historyContainer.childCount - 1; i >= 0; i--) DestroyImmediate(historyContainer.GetChild(i).gameObject);
+                if (!File.Exists(historyPath)) return;
+                var lines = File.ReadAllLines(historyPath);
+                var list = new List<HistoryEntry>();
+                foreach (var ln in lines)
+                {
+                    if (string.IsNullOrWhiteSpace(ln)) continue;
+                    try
+                    {
+                        var e = JsonUtility.FromJson<HistoryEntry>(ln);
+                        if (e != null) list.Add(e);
+                    }
+                    catch { }
+                }
+
+                // populate UI (most recent last -> show recent at top)
+                for (int i = list.Count - 1; i >= 0; i--)
+                {
+                    var e = list[i];
+                    var go = Instantiate(rowPrefab, historyContainer);
+                    var row = go.GetComponent<SessionHistoryRow>();
+                    if (row == null)
+                    {
+                        // try to find text components directly as fallback
+                        var t = go.GetComponentInChildren<Text>();
+                        if (t != null) t.text = $"{e.display_id} / {e.subject}";
+                        continue;
+                    }
+
+                    row.Setup(e.display_id, e.subject, e.session_id, e.started_unix_ms, e.ended_unix_ms, e.dir,
+                        // resume callback: start a new session for same display id (Option A)
+                        () => {
+                            ulong nsid = (ulong)DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+                            logger.StartNewSession(nsid, e.display_id, e.subject);
+                            // log subject_start event
+                            var payload = new { event_type = "subject_start", session_id = nsid, subject = e.subject, display_id = e.display_id, started_unix_ms = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() };
+                            try { logger.LogEvent(payload); } catch { }
+                            LoadHistory();
+                        },
+                        // stop callback: stop current session
+                        () => { logger.StopSession(); LoadHistory(); },
+                        // open folder callback
+                        () => { try { Application.OpenURL(e.dir); } catch { } }
+                    );
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"LoadHistory failed: {ex}");
             }
         }
     }

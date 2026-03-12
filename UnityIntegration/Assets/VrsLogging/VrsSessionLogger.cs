@@ -27,6 +27,9 @@ namespace VrsLogging
         uint hrSeq = 0;
         uint eventSeq = 0;
 
+    // lock for session history file updates
+    private readonly object sessionHistoryLock = new object();
+
         string sessionDir;
         float headAcc = 0f;
         float bikeAcc = 0f;
@@ -209,6 +212,8 @@ namespace VrsLogging
                         // simple approach: append ended_unix_ms to file as separate file
                         var endInfo = new { ended_unix_ms = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() };
                         File.WriteAllText(Path.Combine(sessionDir, "manifest_end.json"), JsonUtility.ToJson(endInfo));
+                        // update history
+                        MarkSessionEndedInHistory(sessionId, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
                     }
                 }
                 catch (Exception ex)
@@ -224,10 +229,11 @@ namespace VrsLogging
             }
         }
 
-        /// <summary>
-        /// Generate a display id like PREFIX-001 using a simple counter file stored under logBasePath.
-        /// </summary>
-        private string GetNextDisplayId(string prefix)
+    /// <summary>
+    /// Generate a display id like PREFIX-001 using a simple counter file stored under logBasePath.
+    /// This is public so UI code can obtain the next display id without reflection.
+    /// </summary>
+    public string GetNextDisplayId(string prefix)
         {
             try
             {
@@ -258,11 +264,81 @@ namespace VrsLogging
             }
         }
 
+        // Simple NDJSON session history to record start/stop events. Each line is a JSON object.
+        [Serializable]
+        private class SessionHistoryEntry
+        {
+            public string display_id;
+            public ulong session_id;
+            public string subject;
+            public long started_unix_ms;
+            public long ended_unix_ms;
+            public string dir;
+        }
+
+        private void AppendSessionHistoryEntry(string displayId, ulong sessId, string subject, long startedUnixMs, string dir)
+        {
+            try
+            {
+                var historyPath = Path.Combine(logBasePath, "sessions_history.ndjson");
+                var e = new SessionHistoryEntry
+                {
+                    display_id = displayId,
+                    session_id = sessId,
+                    subject = subject,
+                    started_unix_ms = startedUnixMs,
+                    ended_unix_ms = 0,
+                    dir = dir
+                };
+                var json = JsonUtility.ToJson(e);
+                lock (sessionHistoryLock)
+                {
+                    File.AppendAllText(historyPath, json + "\n");
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"AppendSessionHistoryEntry failed: {ex}");
+            }
+        }
+
+        private void MarkSessionEndedInHistory(ulong sessId, long endedUnixMs)
+        {
+            try
+            {
+                var historyPath = Path.Combine(logBasePath, "sessions_history.ndjson");
+                if (!File.Exists(historyPath)) return;
+                lock (sessionHistoryLock)
+                {
+                    var lines = File.ReadAllLines(historyPath);
+                    bool changed = false;
+                    for (int i = lines.Length - 1; i >= 0; i--)
+                    {
+                        var ln = lines[i];
+                        if (string.IsNullOrWhiteSpace(ln)) continue;
+                        var entry = JsonUtility.FromJson<SessionHistoryEntry>(ln);
+                        if (entry != null && entry.session_id == sessId && entry.ended_unix_ms == 0)
+                        {
+                            entry.ended_unix_ms = endedUnixMs;
+                            lines[i] = JsonUtility.ToJson(entry);
+                            changed = true;
+                            break; // update the most recent matching open session
+                        }
+                    }
+                    if (changed) File.WriteAllLines(historyPath, lines);
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"MarkSessionEndedInHistory failed: {ex}");
+            }
+        }
+
         /// <summary>
         /// Start a new runtime session (create new session directory, reset writers and seq counters).
         /// Call this from UI when a new test subject is registered.
         /// </summary>
-        public void StartNewSession(ulong newSessionId, string subjectLabel = null)
+        public void StartNewSession(ulong newSessionId, string displayId = null, string subjectLabel = null)
         {
             try
             {
@@ -270,7 +346,8 @@ namespace VrsLogging
                 headSeq = bikeSeq = hrSeq = eventSeq = 0;
 
                 sessionId = newSessionId;
-                sessionDir = Path.Combine(logBasePath, $"session_{sessionId}");
+                var dirName = string.IsNullOrEmpty(displayId) ? sessionId.ToString() : displayId;
+                sessionDir = Path.Combine(logBasePath, $"session_{dirName}");
                 Directory.CreateDirectory(sessionDir);
 
                 headWriter = new VrsFileWriterFixed(Path.Combine(sessionDir, "headpose.vrsf"), VrsFormats.StreamHeadpose, sessionId, VrsFormats.HeadposeRecordSize);
@@ -281,6 +358,7 @@ namespace VrsLogging
                 var manifest = new
                 {
                     session_id = sessionId,
+                    display_id = displayId,
                     started_unix_ms = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
                     files = new[] { "headpose.vrsf", "bike.vrsf", "hr.vrsf", "events.vrsf" },
                     record_sizes = new { headpose = VrsFormats.HeadposeRecordSize, bike = VrsFormats.BikeRecordSize, hr = VrsFormats.HrRecordSize },
@@ -289,6 +367,9 @@ namespace VrsLogging
                 };
                 var json = JsonUtility.ToJson(manifest);
                 File.WriteAllText(Path.Combine(sessionDir, "manifest.json"), json);
+
+                // append to session history
+                AppendSessionHistoryEntry(displayId, sessionId, subjectLabel, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), sessionDir);
 
                 Debug.Log($"[VrsSessionLogger] Started new session {sessionId} (subject={subjectLabel}) at {sessionDir}");
             }
