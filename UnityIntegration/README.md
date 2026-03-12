@@ -62,22 +62,24 @@ pip install bleak websockets
 6. Add the `VRBikeController` component to your bike
 7. Assign the WahooDataReceiver reference in the Inspector
 
-### Step 4: Start the Bridge
+### Step 4: Start the Bridge (recommended)
 
-Make sure your trainer/sensor is on and you're pedaling (it wakes up when pedaling starts).
+Make sure your trainer/sensor is on and you're pedaling (many devices wake up when pedaling starts).
 
-**macOS users:** If devices were previously paired in System Settings, unpair them first:
-```
-System Settings → Bluetooth → [Device] → Forget Device
-```
+Preferred: use the provided start scripts which launch the bridge and, optionally, the GUI monitor.
 
-Run the Python bridge:
+- On macOS: double-click `UnityIntegration/START_WAHOO_BRIDGE.command` — this will spawn two Terminal windows: the GUI (in a new window) and the bridge (in the current window). Both processes receive the `--live` flag by default.
+- On Windows: double-click `UnityIntegration/START_WAHOO_BRIDGE.bat` — the GUI opens in its own window and the bridge runs in the main window; both are started with the `--live` flag.
+
+If you prefer to run the bridge directly from the terminal, you can still run:
 
 ```bash
-python python/wahoo_unity_bridge.py
+# from the repository root
+python python/wahoo_unity_bridge.py --live
 ```
 
 You should see:
+
 ```
 Scanning for trainer/sensor...
 Found trainer at C7:52:A1:6F:EB:57

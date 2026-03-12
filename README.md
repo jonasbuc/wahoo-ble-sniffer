@@ -93,6 +93,21 @@ View raw BLE packets and parsing details:
 python wahoo_ble_logger.py --debug
 ```
 
+### Starting the bridge + GUI (UnityIntegration)
+
+The repository provides convenience start scripts that launch the Python bridge and the optional GUI monitor together.
+
+- macOS: `UnityIntegration/START_WAHOO_BRIDGE.command` — double-click to open two Terminal windows; the GUI runs in a new window and the bridge runs in the original window. Both are started with the `--live` flag by default.
+- Windows: `UnityIntegration/START_WAHOO_BRIDGE.bat` — double-click to launch the GUI in a new window and the bridge in the current window; both are started with the `--live` flag.
+
+If you prefer to run manually, run the bridge from the repo root with:
+
+```bash
+python "UnityIntegration/python/wahoo_unity_bridge.py" --live
+```
+
+The `--live` flag activates the live WebSocket server and the keepalive/reconnect behavior used for Unity integration and runtime testing.
+
 ### Stop the logger
 
 Press `Ctrl+C` to gracefully shut down and disconnect from devices.
