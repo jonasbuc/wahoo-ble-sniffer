@@ -6,72 +6,43 @@ Log live BLE data from Wahoo TICKR heart rate monitors and KICKR trainers, strea
 
 ```
 .
-├── wahoo_ble_logger.py            # Standalone BLE logger → SQLite (Python + Bleak)
+├── python/                        # Standalone BLE logger (Python + Bleak)
+│   ├── wahoo_ble_logger.py        #   Main logger → SQLite
+│   ├── find_wahoo_devices.py      #   Scan for Wahoo devices
+│   └── quick_find.py              #   Quick BLE device check
 │
 ├── UnityIntegration/              # Unity ↔ Python bridge & C# scripts
-│   ├── python/                    #   Python bridge, mock server, GUI, collector
-│   │   ├── wahoo_unity_bridge.py  #     WebSocket bridge (BLE → Unity, production)
-│   │   ├── mock_wahoo_bridge.py   #     Mock WebSocket server (testing w/o hardware)
-│   │   ├── wahoo_bridge_gui.py    #     Tkinter status monitor + live HR graph
-│   │   ├── collector_tail.py      #     VRSF binary tail → SQLite + Parquet
-│   │   └── db/                    #     DB utilities
-│   │       ├── create_readable_views.py  #   Creates *_readable SQLite VIEWs
-│   │       ├── export_readable_views.py  #   Export views → CSV + Parquet
-│   │       ├── pretty_dump_db.py         #   Human-readable DB dump
-│   │       ├── validate_db.py            #   Sanity-check values & quaternion norms
-│   │       └── SQL_CHEATSHEET.md         #   Useful SQL queries
-│   │
-│   ├── unity/                     #   Unity C# controllers (attach to GameObjects)
-│   │   ├── WahooBLEManager.cs     #     Direct BLE ↔ Unity (Shatalmic plugin)
-│   │   ├── WahooDataReceiver.cs   #     WebSocket client (receives bridge data)
-│   │   ├── WahooDataReceiver_Optimized.cs  # Optimised variant with binary protocol
-│   │   ├── BikeMovementController.cs  #   Moves bike GameObject from speed data
-│   │   └── VRBikeController.cs    #     VR bike with Rigidbody physics + audio
-│   │
-│   ├── Assets/VrsLogging/         #   VRSF session-logging C# library
-│   │   ├── VrsSessionLogger.cs    #     Orchestrates all stream writers per session
-│   │   ├── VrsFormats.cs          #     Binary record layouts + chunk-header writer
-│   │   ├── VrsCrc32.cs            #     CRC32 (IEEE 802.3 / zlib compatible)
-│   │   ├── VrsFileWriterFixed.cs  #     Background thread writer (fixed-size streams)
-│   │   ├── VrsFileWriterEvents.cs #     Background thread writer (variable events)
-│   │   ├── SessionManagerUI.cs    #     Unity UI for session create/stop
-│   │   └── SessionHistoryRow.cs   #     History list-row prefab component
-│   │
-│   ├── UnityClient/               #   WahooWsClient.cs — low-level WebSocket client
-│   ├── starters/                  #   One-click launchers (.command / .bat / .ps1)
+│   ├── python/                    #   Bridge, mock server, GUI, collector
+│   │   ├── wahoo_unity_bridge.py  #     WebSocket bridge (BLE → Unity)
+│   │   ├── mock_wahoo_bridge.py   #     Mock server for testing without hardware
+│   │   ├── wahoo_bridge_gui.py    #     Tkinter GUI monitor
+│   │   ├── collector_tail.py      #     VRSF binary collector → SQLite/Parquet
+│   │   └── db/                    #     DB utilities (views, export, validation)
+│   ├── unity/                     #   Unity C# controllers
+│   ├── Assets/VrsLogging/         #   VRS session-logging C# scripts
+│   ├── UnityClient/               #   WahooWsClient.cs WebSocket client
+│   ├── starters/                  #   One-click start scripts (.command/.bat/.ps1)
 │   ├── scripts/                   #   Shell helpers (capture logs, check port, …)
-│   └── docs/                      #   All guides and references
-│       ├── QUICKSTART.md          #     5-min setup (C# Option A or Python Option B)
-│       ├── OVERSIGT.md            #     High-level overview (Danish)
-│       ├── UNITY_SETUP_GUIDE.md   #     Scene setup + BikeMovementController guide
-│       ├── README_VRS.md          #     VRSF binary format + collector guide
-│       ├── README_CSHARP.md       #     Full C# BLE setup guide
-│       ├── SESSION_HISTORY.md     #     Session history UI wiring guide
-│       ├── VERIFICATION.md        #     What is tested and verified working
-│       └── START_HER.md           #     Danish quick-start entry point
+│   └── docs/                      #   Guides (QUICKSTART, OVERSIGT, UNITY_SETUP, …)
 │
-├── WahooBleLoggerCSharp/          # C# BLE logger — .NET 8 alternative to Python
-│   ├── Program.cs                 #   Main app (scan → connect → log to SQLite)
-│   └── WahooBleLogger.csproj      #   NuGet: InTheHand.BluetoothLE + Sqlite
+├── WahooBleLoggerCSharp/          # C# BLE logger (.NET 8 + InTheHand.BluetoothLE)
 │
-├── analysis/                      # Post-session data exploration
-│   ├── quick_analysis.ipynb       #   Jupyter notebook — overview plots
-│   ├── run_quick_plots.py         #   Write PNGs to analysis/figs/
-│   ├── run_more_plots.py          #   Per-session HR overlays, power boxplots
-│   ├── generate_mock_data.py      #   Generate realistic mock Parquet sessions
-│   └── recompute_summary.py       #   Recompute session_summary.csv from Parquet
+├── analysis/                      # Data analysis notebooks & plot scripts
+│   ├── quick_analysis.ipynb       #   Jupyter notebook with overview plots
+│   ├── run_quick_plots.py         #   Programmatic plot generation
+│   └── generate_mock_data.py      #   Generate realistic mock Parquet data
 │
 ├── tests/                         # pytest suite (36 tests)
 │                                  #   BLE parsing, SQLite, VRSF format, collector,
 │                                  #   Parquet export, mock integration, end-to-end
 ├── docs/                          # Top-level docs
 │   └── PAIRING_HELP.md            #   macOS BLE pairing troubleshooting
-│
 ├── collector_out/                  # Generated test data (Parquet + SQLite)
+│
 ├── pyproject.toml                 # Build config, dependencies, pytest settings
-├── requirements.txt               # pip install dependencies (used by CI)
+├── requirements.txt               # pip dependencies (used by CI)
 ├── .flake8                        # Linter config
-└── Blu Sniffer.sln                # .NET solution file (WahooBleLoggerCSharp)
+└── Blu Sniffer.sln                # .NET solution (WahooBleLoggerCSharp)
 ```
 
 ## Quick Start
@@ -92,7 +63,7 @@ pip install -r requirements.txt
 ### 2. Run the BLE logger (standalone)
 
 ```bash
-python wahoo_ble_logger.py
+python python/wahoo_ble_logger.py
 ```
 
 This will auto-discover Wahoo devices, connect, and log heart rate / power / cadence / speed to `training.db` (SQLite).
@@ -100,8 +71,8 @@ This will auto-discover Wahoo devices, connect, and log heart rate / power / cad
 Options:
 
 ```bash
-python wahoo_ble_logger.py --debug                             # Show raw BLE packets
-python wahoo_ble_logger.py --tickr-address AA:BB:CC:DD:EE:FF   # Connect to a specific device
+python python/wahoo_ble_logger.py --debug                             # Show raw BLE packets
+python python/wahoo_ble_logger.py --tickr-address AA:BB:CC:DD:EE:FF   # Connect to a specific device
 ```
 
 ### 3. Run the Unity bridge
@@ -161,18 +132,17 @@ Tests cover BLE parsing, SQLite logging, VRSF binary format, collector DB, parqu
 
 ## Unity Integration
 
-See [`UnityIntegration/README.md`](UnityIntegration/README.md) for the full Unity setup guide, or jump directly to [`UnityIntegration/docs/QUICKSTART.md`](UnityIntegration/docs/QUICKSTART.md) for a 5-minute setup.
+See [`UnityIntegration/README.md`](UnityIntegration/README.md) for the full Unity setup guide.
 
 **Key C# scripts:**
 
-| Script                           | Location                               | Purpose                                          |
-|----------------------------------|----------------------------------------|--------------------------------------------------|
-| `WahooDataReceiver.cs`           | `UnityIntegration/unity/`              | Receives WebSocket data in Unity                 |
-| `BikeMovementController.cs`      | `UnityIntegration/unity/`              | Translates speed data to bike movement           |
-| `VRBikeController.cs`            | `UnityIntegration/unity/`              | VR bike with Rigidbody physics + audio           |
-| `WahooWsClient.cs`               | `UnityIntegration/UnityClient/`        | Low-level WebSocket client                       |
-| `WahooBLEManager.cs`             | `UnityIntegration/unity/`              | Direct BLE in Unity (no Python required)         |
-| `VrsSessionLogger.cs`            | `UnityIntegration/Assets/VrsLogging/`  | Binary session logging (VRSF format)             |
+| Script                       | Location                              | Purpose                                  |
+|------------------------------|---------------------------------------|------------------------------------------|
+| `WahooDataReceiver.cs`       | `UnityIntegration/unity/`             | Receives WebSocket data in Unity         |
+| `BikeMovementController.cs`  | `UnityIntegration/unity/`             | Translates sensor data to bike movement  |
+| `VRBikeController.cs`        | `UnityIntegration/unity/`             | VR-specific bike controller              |
+| `WahooWsClient.cs`           | `UnityIntegration/UnityClient/`       | Low-level WebSocket client               |
+| `VrsSessionLogger.cs`        | `UnityIntegration/Assets/VrsLogging/` | Binary session logging (VRSF format)     |
 
 ## Analysis
 
@@ -242,27 +212,6 @@ Two GitHub Actions workflows run on push to `main`:
 
 - **`ci.yml`** — Installs dependencies, runs pytest, runs mypy on `UnityIntegration/`
 - **`python-app.yml`** — Editable install, flake8 lint, pytest with coverage
-
-## Code Documentation
-
-Every source file in this repository has been annotated with comprehensive inline comments, docstrings, and XML `<summary>` tags.  Key areas documented per file:
-
-| File | Key comments added |
-|------|--------------------|
-| `wahoo_ble_logger.py` | Module docstring, HR byte-layout (bit-0 flag), FTMS flags table |
-| `wahoo_unity_bridge.py` | Architecture diagram, BLE modes, wire format table, keepalive |
-| `mock_wahoo_bridge.py` | Wire format, TCP_NODELAY, broadcast algorithm |
-| `collector_tail.py` | VRSF 40-byte header layout, stream record offsets, WAL rationale |
-| `wahoo_bridge_gui.py` | Graph coordinate math (X/Y mapping), pan/zoom algorithm |
-| `db/*.py` | Timestamp conversion steps, quaternion norm formula |
-| `WahooBLEManager.cs` | Android API-31 permission block, byte-layout of FTMS/CP packets |
-| `BikeMovementController.cs` | km/h → m/s formula, 3 movement method variants |
-| `VRBikeController.cs` | Wheel rotation derivation, audio pitch-from-cadence |
-| `VrsFormats.cs` | Full 40-byte VRSF header layout, all 4 stream record layouts |
-| `VrsCrc32.cs` | IEEE 802.3 polynomial, lookup-table precomputation |
-| `VrsFileWriterFixed.cs` | CRC order (5 steps), ArrayPool ownership, drain cap |
-| `VrsSessionLogger.cs` | Accumulator pattern, NDJSON history, display ID counter |
-| `WahooBleLoggerCSharp/Program.cs` | HR bit-0 flag, FTMS field-by-field, DBNull vs SQL NULL |
 
 ## License
 
