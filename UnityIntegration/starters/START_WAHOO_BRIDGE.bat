@@ -13,7 +13,7 @@ echo.
 
 REM Check if Python is installed
 REM Prefer repository virtualenv (created by INSTALL.bat) if present
-set "REPO_ROOT=%~dp0.."
+set "REPO_ROOT=%~dp0..\.."
 set "VENV_PY=%REPO_ROOT%\.venv\Scripts\python.exe"
 set "PYCMD=python"
 if exist "%VENV_PY%" (
@@ -55,11 +55,11 @@ echo.
 
 REM Start bridge first, then GUI
 REM Start canonical bridge in a new window so it runs independently
-start "Wahoo Bridge" "%PYCMD%" "%~dp0python\wahoo_unity_bridge.py" --live
+start "Wahoo Bridge" "%PYCMD%" "%~dp0..\python\wahoo_unity_bridge.py" --live
 
 REM Give the bridge a moment to initialize, then start the GUI monitor in a separate window
 timeout /t 2 /nobreak >nul
-start "Wahoo Bridge GUI" "%PYCMD%" "%~dp0python\wahoo_bridge_gui.py" --live
+start "Wahoo Bridge GUI" "%PYCMD%" "%~dp0..\python\wahoo_bridge_gui.py" --live
 
 echo.
 echo Bridge stopped.

@@ -27,4 +27,5 @@ dev = [
 ]
 
 [tool.setuptools.packages.find]
-where = ["UnityIntegration"]
+where = ["."]
+include = ["UnityIntegration*"]

@@ -13,7 +13,7 @@ echo ""
 
 # Find Python in virtual environment
 # Find Python in virtual environment
-PYTHON="../.venv/bin/python"
+PYTHON="../../.venv/bin/python"
 
 if [ ! -f "$PYTHON" ]; then
     echo "WARNING: Virtual environment not found!"
@@ -38,8 +38,8 @@ echo ""
 echo "════════════════════════════════════════════════════════════"
 echo ""
 
-# Start mock bridge (moved into python/ folder)
-$PYTHON python/mock_wahoo_bridge.py
+# Start mock bridge (moved into ../python/ folder)
+$PYTHON ../python/mock_wahoo_bridge.py
 
 echo ""
 echo "Mock bridge stopped."

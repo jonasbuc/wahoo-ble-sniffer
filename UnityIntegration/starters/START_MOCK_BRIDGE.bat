@@ -13,7 +13,7 @@ echo.
 
 REM Check if Python is installed
 REM Prefer repository virtualenv (created by INSTALL.bat) if present
-set "REPO_ROOT=%~dp0.."
+set "REPO_ROOT=%~dp0..\.."
 set "VENV_PY=%REPO_ROOT%\.venv\Scripts\python.exe"
 set "PYCMD=python"
 if exist "%VENV_PY%" (
@@ -54,7 +54,7 @@ echo ═════════════════════════
 echo.
 
 REM Start mock bridge (canonical copy)
-"%PYCMD%" "%~dp0python\mock_wahoo_bridge.py"
+"%PYCMD%" "%~dp0..\python\mock_wahoo_bridge.py"
 
 echo.
 echo Mock bridge stopped.

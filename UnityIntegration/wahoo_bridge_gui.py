@@ -1,1 +1,0 @@
-python/wahoo_bridge_gui.py

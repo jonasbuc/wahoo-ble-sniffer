@@ -27,8 +27,8 @@ namespace VrsLogging
         uint hrSeq = 0;
         uint eventSeq = 0;
 
-    // lock for session history file updates
-    private readonly object sessionHistoryLock = new object();
+    // lock for session history file updates (single lock shared across instances)
+    private static readonly object sessionHistoryLock = new object();
 
         string sessionDir;
         float headAcc = 0f;

@@ -15,7 +15,7 @@ This script will:
 Set-StrictMode -Version Latest
 
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Definition
-$repoRoot = Resolve-Path (Join-Path $scriptDir "..")
+$repoRoot = Resolve-Path (Join-Path $scriptDir "..\..")
 $venvPy = Join-Path $repoRoot ".venv\Scripts\python.exe"
 
 if (Test-Path $venvPy) {

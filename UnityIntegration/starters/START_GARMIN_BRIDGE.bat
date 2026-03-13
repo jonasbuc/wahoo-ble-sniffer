@@ -24,7 +24,7 @@ if %errorlevel% neq 0 (
 )
 
 REM Check if venv exists
-if not exist "..\\.venv" (
+if not exist "..\..\..\.venv" (
     echo ERROR: Python environment not installed!
     echo.
     echo Please run INSTALL.bat first
@@ -34,7 +34,7 @@ if not exist "..\\.venv" (
 )
 
 REM Activate venv
-call ..\\.venv\\Scripts\\activate.bat
+call ..\..\..\.venv\Scripts\activate.bat
 
 REM Check dependencies
 echo Checking dependencies...
@@ -67,7 +67,7 @@ echo ===============================================================
 echo.
 
 REM Start the bridge
- python python\wahoo_unity_bridge.py
+ python ..\python\wahoo_unity_bridge.py
 
 REM Keep window open on error
 if %errorlevel% neq 0 (

@@ -5,11 +5,11 @@
 cd "$(dirname "$0")"
 
 # Find Python
-PYTHON="../.venv/bin/python"
+PYTHON="../../.venv/bin/python"
 
 if [ ! -f "$PYTHON" ]; then
     PYTHON="python3"
 fi
 
-# Launch GUI (use canonical python/ copy)
-$PYTHON python/wahoo_bridge_gui.py
+# Launch GUI (use canonical ../python/ copy)
+$PYTHON ../python/wahoo_bridge_gui.py

@@ -12,7 +12,7 @@ echo "Starting Python bridge..."
 echo ""
 
 # Find Python in virtual environment
-PYTHON="../.venv/bin/python"
+PYTHON="../../.venv/bin/python"
 
 if [ ! -f "$PYTHON" ]; then
     echo "WARNING: Virtual environment not found!"
@@ -42,11 +42,14 @@ echo ""
 # Start the bridge first, then launch the GUI monitor
 # We'll run the bridge in this window and spawn the GUI in a new Terminal window
 
-# Spawn GUI in a new Terminal window after a short delay so the bridge has time to start
-osascript -e 'tell application "Terminal" to do script "sleep 2; cd \"'"$(dirname "$0")'\"; \"'"$PYTHON"'\" python/wahoo_bridge_gui.py --live"'
+# Spawn GUI in a new Terminal window after waiting for the bridge port (8765)
+# Replace the fixed sleep with a small TCP poll loop (30s max) so the GUI only
+# launches after the bridge begins listening. This avoids racey startup.
+GUI_CMD="for i in {1..30}; do nc -z 127.0.0.1 8765 >/dev/null 2>&1 && break || sleep 1; done; cd '$(dirname "$0")'; '$PYTHON' ../python/wahoo_bridge_gui.py --live"
+osascript -e "tell application \"Terminal\" to do script \"$GUI_CMD\""
 
 # Start canonical bridge in the current window (foreground)
-"$PYTHON" python/wahoo_unity_bridge.py --live
+"$PYTHON" ../python/wahoo_unity_bridge.py --live
 
 echo ""
 echo "Bridge stopped."

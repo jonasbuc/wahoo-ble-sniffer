@@ -23,7 +23,7 @@ if ! command -v python3 &> /dev/null; then
 fi
 
 # Check if venv exists
-if [ ! -d "../.venv" ]; then
+if [ ! -d "../../.venv" ]; then
     echo "❌ ERROR: Python environment not installed!"
     echo ""
     echo "Please run INSTALL.command first"
@@ -33,7 +33,7 @@ if [ ! -d "../.venv" ]; then
 fi
 
 # Activate venv
-source ../.venv/bin/activate
+source ../../.venv/bin/activate
 
 # Check dependencies
 echo "🔍 Checking dependencies..."
@@ -65,7 +65,7 @@ echo "════════════════════════�
 echo ""
 
 # Start the bridge
-python3 python/wahoo_unity_bridge.py
+python3 ../python/wahoo_unity_bridge.py
 
 # Keep terminal open on error
 if [ $? -ne 0 ]; then

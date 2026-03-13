@@ -13,4 +13,4 @@ if %errorlevel% neq 0 (
 )
 
 REM Launch GUI (use canonical python/ copy)
-python python\wahoo_bridge_gui.py
+python ..\python\wahoo_bridge_gui.py
