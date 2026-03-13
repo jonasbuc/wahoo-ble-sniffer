@@ -168,7 +168,7 @@ public class CyclingData
 → Se `README.md` troubleshooting sektion
 
 **Generelle BLE issues?**
-→ Se `../PAIRING_HELP.md` i parent directory
+→ Se `../../docs/PAIRING_HELP.md` i parent directory
 
 ## 🎓 Læringssti
 

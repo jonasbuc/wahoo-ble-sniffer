@@ -1,7 +1,7 @@
 import concurrent.futures
 import sqlite3
 
-from wahoo_ble_logger import SQLiteLogger
+from python.wahoo_ble_logger import SQLiteLogger
 
 
 def test_sqlite_logger_reuses_single_connection(monkeypatch, tmp_path):

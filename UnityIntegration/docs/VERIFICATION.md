@@ -122,7 +122,7 @@ Når gameplay virker:
 Dette setup er baseret på **verified working code** fra parent project:
 
 ```
-../wahoo_ble_logger.py  ← 100% testet, logs til SQLite
+../../python/wahoo_ble_logger.py  ← 100% testet, logs til SQLite
     ↓ (samme BLE kode)
 wahoo_unity_bridge.py   ← Tilføjer WebSocket
     ↓ (JSON over WS)

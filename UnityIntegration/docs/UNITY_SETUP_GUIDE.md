@@ -44,7 +44,7 @@ Kopier disse 2 filer til din Unity projekt `Assets/Scripts/` mappe:
 1. **Start Python bridge:**
    ```bash
    # Test med mock data (uden hardware)
-   ./START_MOCK_BRIDGE.command
+   ./starters/START_MOCK_BRIDGE.command
    ```
 
 2. **Start Unity:**
@@ -123,7 +123,7 @@ Console burde vise:
 ✓ Connected to Wahoo bridge!
 ```
 Hvis ikke:
-- Er Python bridge startet? (START_MOCK_BRIDGE.command)
+- Er Python bridge startet? (starters/START_MOCK_BRIDGE.command)
 - Kører den på port 8765?
 
 **Check 2: Kommer data ind?**
@@ -248,7 +248,7 @@ Fra `WahooDataReceiver.CyclingData`:
 
 ## ✅ Test Checklist
 
-- [ ] Python bridge kører (START_MOCK_BRIDGE.command)
+- [ ] Python bridge kører (starters/START_MOCK_BRIDGE.command)
 - [ ] Unity Console viser "Connected to Wahoo bridge!"
 - [ ] Debug info viser Speed/Cadence/Power øverst på skærmen
 - [ ] Grøn "● Connected" status vises
@@ -261,7 +261,7 @@ Fra `WahooDataReceiver.CyclingData`:
 ## 🚀 Næste Skridt
 
 1. **Test med mock data først** - sørg for alt virker
-2. **Test med rigtig trainer/sensor** - start på cyklen og brug START_WAHOO_BRIDGE.command
+2. **Test med rigtig trainer/sensor** - start på cyklen og brug starters/START_WAHOO_BRIDGE.command
 3. **Juster speedMultiplier** til det føles naturligt
 4. **Tilføj hjul rotation** for visuel feedback
 5. **Byg din VR verden** omkring cyklen!

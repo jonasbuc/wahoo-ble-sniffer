@@ -26,7 +26,7 @@ When BLE devices are paired with macOS, they:
    - Start pedaling on the KICKR
 5. **Run the logger:**
    ```bash
-   python wahoo_ble_logger.py --show-all-devices
+   python python/wahoo_ble_logger.py --show-all-devices
    ```
 
 The devices should now appear with their actual names!
@@ -44,7 +44,7 @@ Let me know if you want me to implement Option 2.
 Even though they might use UUIDs, we can try:
 
 ```bash
-python wahoo_ble_logger.py --tickr-address F0:13:C3:FD:EA:CB --kickr-address C7:52:A1:6F:EB:57
+python python/wahoo_ble_logger.py --tickr-address F0:13:C3:FD:EA:CB --kickr-address C7:52:A1:6F:EB:57
 ```
 
 This probably won't work with current pairing, but worth a try.
