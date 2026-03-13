@@ -89,12 +89,12 @@ All metrics are stored in `training.db` (SQLite) with the following schema:
 
 ```sql
 CREATE TABLE metrics (
-    ts REAL NOT NULL,           -- Unix timestamp
-    hr_bpm INTEGER,             -- Heart rate (bpm)
-    rr_ms INTEGER,              -- RR-interval (milliseconds)
-    power_w INTEGER,            -- Power output (watts)
-    cadence_rpm REAL,           -- Cadence (rpm)
-    speed_kph REAL              -- Speed (km/h)
+    ts REAL NOT NULL,           -- Unix timestamp (fractional seconds, ms resolution)
+    hr_bpm INTEGER,             -- Heart rate (bpm) — set by TICKR notifications
+    rr_ms INTEGER,              -- RR-interval (ms between heartbeats) — set by TICKR
+    power_w INTEGER,            -- Power output (watts) — set by KICKR notifications
+    cadence_rpm REAL,           -- Cadence (rpm) — set by KICKR
+    speed_kph REAL              -- Speed (km/h) — set by KICKR
 );
 ```
 
@@ -193,6 +193,21 @@ dotnet publish -c Release -r linux-x64 --self-contained
 ```
 
 The executable will be in `bin/Release/net8.0/{runtime}/publish/`
+
+## Code Documentation
+
+`Program.cs` is fully annotated with inline comments and XML `<summary>` tags.
+Key areas documented:
+
+| Area | What is explained |
+|------|-------------------|
+| File header block | Architecture diagram, GATT UUIDs, DB schema, NuGet deps |
+| `ParseHeartRate()` | Byte-layout table: bit-0 flag (uint8 vs uint16 HR), bit-4 RR-interval, unit conversion `rr_ms = raw / 1024 × 1000` |
+| `ParseCyclingPower()` | Flags uint16 + sint16 power field; why cadence/speed are not parsed from this characteristic |
+| `ParseIndoorBikeData()` | All 7 FTMS fields with byte offsets, widths, and unit resolutions (`speed × 0.01 km/h`, `cadence × 0.5 rpm`) |
+| `LogMetric()` | Nullable-column pattern (TICKR vs KICKR rows), `DBNull.Value` vs string null, fractional-second timestamp encoding |
+| `HandleHeartRateDevice()` | 6-step reconnect loop; notification handler lifecycle |
+| `HandleTrainerDevice()` | Cycling Power → FTMS fallback; service routing logic |
 
 ## License
 

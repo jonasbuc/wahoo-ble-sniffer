@@ -75,7 +75,7 @@ If you prefer to run the bridge directly from the terminal, you can still run:
 
 ```bash
 # from the repository root
-python python/wahoo_unity_bridge.py --live
+python UnityIntegration/python/wahoo_unity_bridge.py --live
 ```
 
 You should see:
@@ -269,17 +269,53 @@ photonView.RPC("UpdateRiderPower", RpcTarget.All, wahooData.Power);
 
 ```
 UnityIntegration/
-├── wahoo_unity_bridge.py      # Python BLE to WebSocket bridge
-├── WahooDataReceiver.cs        # Unity WebSocket client
-├── VRBikeController.cs         # Example VR bike controller
-└── README.md                   # This file
+├── python/                         # Python bridge scripts
+│   ├── wahoo_unity_bridge.py       #   Production BLE → WebSocket bridge
+│   ├── mock_wahoo_bridge.py        #   Mock server (no hardware needed)
+│   ├── wahoo_bridge_gui.py         #   Tkinter status monitor + live HR graph
+│   ├── collector_tail.py           #   VRSF binary tail → SQLite + Parquet
+│   └── db/                         #   DB utilities
+│       ├── create_readable_views.py
+│       ├── export_readable_views.py
+│       ├── pretty_dump_db.py
+│       ├── validate_db.py
+│       └── SQL_CHEATSHEET.md
+│
+├── unity/                          # Unity C# controller scripts
+│   ├── WahooBLEManager.cs          #   Direct BLE (Shatalmic plugin)
+│   ├── WahooDataReceiver.cs        #   WebSocket client (bridge → Unity)
+│   ├── WahooDataReceiver_Optimized.cs
+│   ├── BikeMovementController.cs   #   Bike movement from speed data
+│   └── VRBikeController.cs         #   VR bike with Rigidbody + audio
+│
+├── Assets/VrsLogging/              # VRSF session-logging library
+│   ├── VrsSessionLogger.cs         #   Orchestrates all writers
+│   ├── VrsFormats.cs               #   Binary record layouts
+│   ├── VrsCrc32.cs                 #   CRC32 (IEEE 802.3)
+│   ├── VrsFileWriterFixed.cs       #   Fixed-size stream writer
+│   ├── VrsFileWriterEvents.cs      #   Variable events writer
+│   ├── SessionManagerUI.cs         #   Unity UI for sessions
+│   └── SessionHistoryRow.cs        #   History row prefab component
+│
+├── UnityClient/                    # WahooWsClient.cs (low-level WS)
+├── starters/                       # One-click launchers (.command/.bat/.ps1)
+├── scripts/                        # Shell helpers
+└── docs/                           # All guides
+    ├── QUICKSTART.md               #   5-min setup guide
+    ├── OVERSIGT.md                 #   High-level overview (Danish)
+    ├── UNITY_SETUP_GUIDE.md        #   Scene setup + movement guide
+    ├── README_VRS.md               #   VRSF format + collector guide
+    ├── README_CSHARP.md            #   Full C# BLE setup guide
+    ├── SESSION_HISTORY.md          #   Session history UI wiring
+    ├── VERIFICATION.md             #   What is tested and verified
+    └── START_HER.md                #   Danish entry point
 ```
 
 ## 🔗 Related Files
 
-- `../python/wahoo_ble_logger.py` - Python BLE logger with SQLite
-- `../WahooBleLoggerCSharp/` - C# BLE logger (.NET)
-- `../docs/PAIRING_HELP.md` - Bluetooth pairing troubleshooting
+- `../wahoo_ble_logger.py` — Standalone Python BLE logger with SQLite (no WebSocket)
+- `../WahooBleLoggerCSharp/` — C# BLE logger (.NET 8 — no Python required)
+- `../docs/PAIRING_HELP.md` — Bluetooth pairing troubleshooting (macOS)
 
 ## 💡 Example Use Cases
 

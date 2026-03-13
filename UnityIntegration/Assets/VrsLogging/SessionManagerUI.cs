@@ -7,8 +7,26 @@ using System.Collections.Generic;
 namespace VrsLogging
 {
     /// <summary>
-    /// Simple UI helper to start new test-subject sessions at runtime.
-    /// Attach to a Canvas and wire the InputField and Button in the inspector.
+    /// Simple UI controller for creating and stopping recording sessions.
+    ///
+    /// Workflow
+    /// --------
+    /// 1. Operator types a subject prefix into <see cref="subjectInput"/>.
+    /// 2. Clicks "New Session" → <see cref="OnNewSessionClicked"/>:
+    ///    a. Calls <c>logger.GetNextDisplayId(prefix)</c> to get e.g. "ALICE-003".
+    ///    b. Calls <c>logger.StartNewSession(sid, displayId, subject)</c> which
+    ///       creates the session directory, starts the four VRSF writers, and writes
+    ///       <c>manifest.json</c>.
+    ///    c. Logs a <c>subject_start</c> JSON event via <c>logger.LogEvent</c>.
+    ///    d. Refreshes the history list.
+    /// 3. Clicks "Stop Session" → flushes + closes writers, writes end timestamp.
+    ///
+    /// History panel
+    /// -------------
+    /// <see cref="LoadHistory"/> reads <c>sessions_history.ndjson</c> (one JSON
+    /// object per line), instantiates a <c>rowPrefab</c> per entry into
+    /// <see cref="historyContainer"/>, and wires the resume/stop/open callbacks on
+    /// the <see cref="SessionHistoryRow"/> component.
     /// </summary>
     public class SessionManagerUI : MonoBehaviour
     {

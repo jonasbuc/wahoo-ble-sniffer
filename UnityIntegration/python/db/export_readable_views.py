@@ -43,12 +43,20 @@ def write_csv(path: Path, cols: List[str], rows: Iterable[Tuple[Any, ...]]) -> N
 
 
 def try_write_parquet(path: Path, cols: List[str], rows: List[Tuple[Any, ...]]) -> bool:
+    """Try to write *rows* as a Parquet file.  Returns False if pyarrow is unavailable.
+
+    The conversion from a list-of-tuples (SQLite row format) to pyarrow's
+    columnar Table is done via a dict-of-lists transpose:
+      {col_name: [row[i] for each row]} for each column index i.
+    This avoids creating an intermediate pandas DataFrame and works with
+    pyarrow's native ``pa.table(dict)`` constructor.
+    """
     try:
         import pyarrow as pa
         import pyarrow.parquet as pq
     except Exception:
         return False
-    # convert rows (list of tuples) to dict of lists
+    # Transpose list-of-rows → dict-of-columns (pyarrow's native input format).
     data = {c: [r[i] for r in rows] for i, c in enumerate(cols)}
     table = pa.table(data)
     pq.write_table(table, str(path))

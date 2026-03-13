@@ -119,12 +119,18 @@ public class VRBikeController : MonoBehaviour
     {
         if (currentSpeedKmh < 0.1f) return;
 
-        // Calculate wheel rotation based on speed
+        // Wheel rotation formula:
+        //   speed_m/s  = speed_km/h ÷ 3.6
+        //   rev/s      = speed_m/s  ÷ circumference
+        //              = speed_m/s  ÷ (2π × wheelRadius)
+        //   deg/s      = rev/s × 360
+        //
+        // Combining: rotationSpeed = (speed_m/s / (2π × r)) × 360
         float speedMetersPerSec = currentSpeedKmh / 3.6f;
         float rotationSpeed = (speedMetersPerSec / (2f * Mathf.PI * wheelRadius)) * 360f;
         
         wheelRotation += rotationSpeed * Time.fixedDeltaTime;
-        wheelRotation = wheelRotation % 360f;
+        wheelRotation = wheelRotation % 360f;  // keep in [0, 360) to avoid float overflow
 
         if (frontWheel != null)
         {
@@ -149,9 +155,12 @@ public class VRBikeController : MonoBehaviour
                 chainAudio.Play();
             }
             
+            // Pitch scales with pedalling rate: 60 rpm → pitch 1.0 (normal speed).
+            // Clamped to [0.5, 2.0] to avoid unpleasant extremes.
             float pitchFactor = wahooBLE.Cadence / 60f;
             chainAudio.pitch = Mathf.Clamp(pitchFactor, 0.5f, 2f);
             
+            // Volume scales with power output: louder at higher effort (up to 200 W = full volume).
             float volumeFactor = Mathf.Clamp01(wahooBLE.Power / 200f);
             chainAudio.volume = Mathf.Lerp(0.3f, 1f, volumeFactor);
         }

@@ -1,7 +1,37 @@
 #!/usr/bin/env python3
 """
-Wahoo Bridge GUI - Simple status monitor with tray icon
-Shows connection status and live cycling data
+wahoo_bridge_gui.py
+===================
+Tkinter status monitor and live HR graph for the Wahoo Bridge WebSocket server.
+
+Architecture
+------------
+The GUI runs entirely on the Tkinter main thread.  A single background daemon
+thread (``ws_thread``) runs an ``asyncio`` event loop that maintains the
+WebSocket connection.  Whenever new data arrives the background thread uses
+``root.after(0, callback, ...)`` to safely schedule updates on the main
+thread — the only thread allowed to touch Tkinter widgets.
+
+  Main thread                    Background thread (daemon)
+  ─────────────────────────────  ──────────────────────────────────────────
+  Tkinter event loop             asyncio.run(websocket_client())
+  draw_graph()                   websockets.connect() → ws loop
+  update_data() / update_status()  root.after(0, ...) → schedule callbacks
+  pan / zoom via mouse events
+
+Graph features
+--------------
+- Rolling 30-second HR line chart drawn on a dark Canvas widget.
+- Trigger events (from Unity via UDP relay) are drawn as orange vertical lines.
+- Click-and-drag to pan left/right; double-click to snap back to live view.
+- X-axis shows seconds-since-GUI-start; Y-axis auto-scales ±10 BPM.
+
+Wire format (from bridge server)
+---------------------------------
+Binary frames: 24 bytes — ``struct.pack("dfffi", ts, power, cadence, speed, hr)``
+JSON frames  : ``{"power": …, "cadence": …, "speed": …, "heart_rate": …}``
+Handshake    : ``{"protocol": "wahoo-bridge/1"}`` (first JSON after connect)
+Trigger      : ``{"event": "spawn", "source": "unity", "timestamp": …}``
 """
 
 import asyncio
@@ -23,35 +53,50 @@ except ImportError:
 
 
 class WahooBridgeGUI:
+    """Main application window.
+
+    Attributes
+    ----------
+    hr_history  : deque of (epoch_seconds, bpm_int) — rolling history for the graph
+    triggers    : deque of (epoch_seconds, name_str) — events drawn as vertical markers
+    graph_seconds : width of the visible time window in seconds
+    start_time  : epoch time when the GUI launched (used as the X=0 origin)
+    pan_offset  : signed seconds added to the live window; negative = look at older data
+    bridge_protocol : protocol string received during the server handshake
+    """
+
     def __init__(self):
         self.root = tk.Tk()
         self.root.title("Wahoo Bridge Monitor")
         self.root.geometry("400x350")
         self.root.resizable(False, False)
 
-        # State
+        # ── State ─────────────────────────────────────────────────────────────
         self.connected = False
         self.heart_rate = 0
-        # Heart rate history for graph: store (timestamp, hr)
+        # Heart rate history for graph: store (epoch_seconds, bpm) pairs.
+        # maxlen=2000 keeps ~33 minutes at 1 Hz without unbounded growth.
         self.hr_history = deque(maxlen=2000)
-        # Triggers (vertical strokes) received as JSON events: store (timestamp, name)
+        # Triggers (vertical strokes) received as JSON events: store (epoch_seconds, name).
         self.triggers = deque(maxlen=500)
-        self.graph_seconds = 30.0  # show last 30 seconds on X axis
-        # GUI start time (t=0). X axis will be seconds since this moment.
+        self.graph_seconds = 30.0  # width of the visible window on the X axis (seconds)
+        # GUI start time used as the X=0 reference point for the graph.
         self.start_time = time.time()
-        # Panning state (seconds offset applied to the base visible window).
-        # pan_offset is added to the base start_rel (negative values show older data)
+        # Pan state: pan_offset is added to the base visible-window start.
+        # Negative values scroll the view into older data; 0 = follow-live.
         self.pan_offset = 0.0
-        self._pan_start_x = None
-        self._pan_start_offset = 0.0
+        self._pan_start_x = None       # X pixel position where the drag started
+        self._pan_start_offset = 0.0   # pan_offset value at drag start (restored on cancel)
 
-        # Bridge protocol reported by server (handshake)
+        # Bridge protocol label text — filled when the server handshake arrives.
         self.bridge_protocol: str | None = None
 
-        # Create UI
+        # ── Build UI & start background thread ────────────────────────────────
         self.create_widgets()
 
-        # Start WebSocket listener in background
+        # Run the asyncio WebSocket client in a background daemon thread so it
+        # doesn't block the Tkinter main loop.  Being a daemon thread means it
+        # is killed automatically when the main window closes.
         self.ws_thread = threading.Thread(target=self.run_websocket, daemon=True)
         self.ws_thread.start()
 
@@ -186,7 +231,7 @@ class WahooBridgeGUI:
             self.status_label.config(text="Not Connected", fg="red")
 
     def update_bridge_status(self, connected: bool, protocol: str | None = None):
-        """Update bridge/server handshake status shown in the status bar."""
+        """Update the bridge-protocol label in the status bar after a handshake."""
         if connected:
             text = f"Bridge: {protocol}" if protocol else "Bridge: connected"
             self.bridge_label.config(text=text, fg="green")
@@ -194,10 +239,12 @@ class WahooBridgeGUI:
             self.bridge_label.config(text="Bridge: --", fg="gray")
 
     def _add_trigger(self, name: str, timestamp: float | None = None):
-        """Add a trigger event to be shown as a vertical stroke on the graph.
+        """Record a trigger event to be displayed as an orange vertical line.
 
-        name: event name (e.g. 'spawn', 'hall_hit')
-        timestamp: absolute epoch seconds. If None, uses current time.
+        Parameters
+        ----------
+        name      : short event label shown above the marker (e.g. "spawn")
+        timestamp : absolute epoch seconds for the event; defaults to now
         """
         if timestamp is None:
             timestamp = time.time()
@@ -218,53 +265,83 @@ class WahooBridgeGUI:
 
         self.root.after(0, self.draw_graph)
 
-    # --- Panning handlers -------------------------------------------------
+    # ── Panning handlers ──────────────────────────────────────────────────────
+
     def _on_pan_start(self, event):
+        """Record the drag start position and current pan offset."""
         self._pan_start_x = event.x
         self._pan_start_offset = self.pan_offset
 
     def _on_pan_move(self, event):
+        """Update pan_offset proportionally to the horizontal drag distance.
+
+        Dragging right moves toward newer (live) data; dragging left shows
+        older data.  The offset is clamped so you cannot pan beyond the
+        oldest available history point or past live view.
+        """
         if self._pan_start_x is None:
             return
         dx = event.x - self._pan_start_x
-        # dragging right should move to newer data, so invert sign
+        # Convert pixel delta to seconds: full graph width = graph_seconds.
+        # Negate dx so dragging right (positive dx) reveals newer data.
         delta_seconds = dx / float(self.graph_width) * self.graph_seconds
         self.pan_offset = self._pan_start_offset - delta_seconds
-        # clamp pan_offset to available history
+        # Clamp within available history.
         if self.hr_history:
             latest_rel = self.hr_history[-1][0] - self.start_time
             max_pan_allowed = max(0.0, latest_rel - self.graph_seconds)
             if self.pan_offset < -max_pan_allowed:
                 self.pan_offset = -max_pan_allowed
             if self.pan_offset > 0.0:
-                self.pan_offset = 0.0
+                self.pan_offset = 0.0  # can't pan into the future
         self.root.after(0, self.draw_graph)
 
     def _on_pan_end(self, event):
+        """Clear the drag anchor when the mouse button is released."""
         self._pan_start_x = None
 
     def _on_double_click(self, event):
-        # reset pan to follow-live
+        """Snap the view back to live (reset pan_offset to 0)."""
         self.pan_offset = 0.0
         self.root.after(0, self.draw_graph)
 
     def draw_graph(self):
+        """Redraw the heart-rate graph on self.graph_canvas.
+
+        Coordinate mapping
+        ------------------
+        X axis: time in seconds relative to self.start_time (left = older, right = newer).
+          x_pixel = (t_rel - start_rel) / graph_seconds * graph_width
+
+        Y axis: BPM value, auto-scaled to (min_hr−10) … (max_hr+10), clamped to 30–220.
+          y_pixel = graph_height − (bpm − min_hr) / (max_hr − min_hr) * graph_height
+          (canvas Y=0 is the top, so subtract from graph_height to flip to BPM-up)
+
+        Trigger markers
+        ---------------
+        Orange vertical lines are drawn at the X position matching each stored
+        trigger timestamp.  A small text label is rendered just above the top of
+        the line.
+
+        All items are tagged "graph" so canvas.delete("graph") can clear only
+        the graph elements (not the static axis labels created in create_widgets).
+        """
         canvas = self.graph_canvas
-        canvas.delete("graph")
+        canvas.delete("graph")  # clear previous frame's graph items only
 
         if not self.hr_history:
             return
 
         now = time.time()
-        # seconds since GUI start
+        # Seconds elapsed since GUI start — the right edge of the live view.
         elapsed = now - self.start_time
-        # base visible window in seconds since start_time (follow-live)
+        # Base window: show the most recent graph_seconds of data (follow-live).
         base_start_rel = max(0.0, elapsed - self.graph_seconds)
 
-        # apply pan offset (negative => older data)
+        # Apply the pan offset (negative values reveal older data).
         start_rel = base_start_rel + self.pan_offset
 
-        # clamp start_rel within available history
+        # Clamp so start_rel stays within available history.
         if self.hr_history:
             latest_rel = self.hr_history[-1][0] - self.start_time
             max_start = max(0.0, latest_rel - self.graph_seconds)
@@ -273,7 +350,7 @@ class WahooBridgeGUI:
             if start_rel > max_start:
                 start_rel = max_start
 
-        # Collect visible points as (t_rel, hr)
+        # ── Collect data points that fall inside the visible window ────────
         visible = [
             ((t - self.start_time), v) for (t, v) in self.hr_history
             if (t - self.start_time) >= start_rel
@@ -283,74 +360,64 @@ class WahooBridgeGUI:
             return
 
         hrs = [v for (_, v) in visible]
+        # Dynamic Y range with ±10 BPM padding, clamped to physiological limits.
         min_hr = max(30, min(hrs) - 10)
         max_hr = min(220, max(hrs) + 10)
         if max_hr == min_hr:
-            max_hr = min_hr + 1
+            max_hr = min_hr + 1  # prevent division by zero
 
         gw = self.graph_width
         gh = self.graph_height
 
+        # ── Horizontal grid lines (every 20 BPM) ──────────────────────────
         step = 20
         first = (min_hr // step) * step
         for val in range(first, int(max_hr) + step, step):
             if val < min_hr or val > max_hr:
                 continue
+            # Flip Y: higher BPM = smaller canvas Y coordinate.
             y = gh - int((val - min_hr) / (max_hr - min_hr) * gh)
             canvas.create_line(0, y, gw, y, fill="#222222", tag="graph")
             canvas.create_text(
-                2,
-                y - 10,
-                text=str(val),
-                fill="#666666",
-                anchor="nw",
-                font=("Arial", 8),
-                tag="graph",
+                2, y - 10, text=str(val),
+                fill="#666666", anchor="nw", font=("Arial", 8), tag="graph",
             )
 
-        # Draw X-axis ticks and labels every 2 seconds (seconds since GUI start)
+        # ── X-axis ticks (every 2 seconds) ────────────────────────────────
         tick_interval = 2.0
         tick_count = int(self.graph_seconds // tick_interval)
         for i in range(tick_count + 1):
             t_tick = start_rel + i * tick_interval
+            # Map tick time to canvas X pixel.
             x_tick = int((t_tick - start_rel) / self.graph_seconds * gw)
-            # small tick line
             canvas.create_line(x_tick, gh - 8, x_tick, gh, fill="#444444", tag="graph")
-            # label seconds since GUI start
-            # Show absolute seconds since GUI start for the tick (e.g. "12s").
+            # Label shows absolute seconds-since-start so you can correlate with logs.
             label = f"{int(round(t_tick))}s"
             canvas.create_text(
-                x_tick,
-                gh - 6,
-                text=label,
-                fill="#888888",
-                anchor="n",
-                font=("Arial", 8),
-                tag="graph",
+                x_tick, gh - 6, text=label,
+                fill="#888888", anchor="n", font=("Arial", 8), tag="graph",
             )
 
-        # Draw trigger vertical lines (from self.triggers)
-        # Each trigger stored as (absolute_timestamp, name)
+        # ── Trigger vertical markers ───────────────────────────────────────
+        # Triggers are stored as (absolute_epoch_seconds, event_name).
+        # Orange line + text label above the line.
         try:
             for (ts, name) in list(self.triggers):
                 t_rel = ts - self.start_time
                 if t_rel < start_rel or t_rel > (start_rel + self.graph_seconds):
                     continue
                 x_tr = int((t_rel - start_rel) / self.graph_seconds * gw)
-                # vertical stroke and small label
                 canvas.create_line(x_tr, 0, x_tr, gh, fill="#ff8800", width=2, tag="graph")
                 canvas.create_text(
-                    x_tr + 3,
-                    2,
-                    text=str(name),
-                    fill="#ffcc88",
-                    anchor="nw",
-                    font=("Arial", 8),
-                    tag="graph",
+                    x_tr + 3, 2, text=str(name),
+                    fill="#ffcc88", anchor="nw", font=("Arial", 8), tag="graph",
                 )
         except Exception:
             pass
 
+        # ── HR line ───────────────────────────────────────────────────────
+        # Convert (t_rel, bpm) pairs to (x_pixel, y_pixel) and draw as a
+        # smoothed polyline.
         pts = []
         for t_rel, v in visible:
             x = int((t_rel - start_rel) / self.graph_seconds * gw)
@@ -358,109 +425,114 @@ class WahooBridgeGUI:
             pts.append((x, y))
 
         if len(pts) >= 2:
-            flat = []
-            for x, y in pts:
-                flat.extend([x, y])
+            # canvas.create_line expects a flat list [x1, y1, x2, y2, ...]
+            flat = [coord for pt in pts for coord in pt]
             canvas.create_line(*flat, fill="lime", width=2, tag="graph", smooth=True)
+
+        # ── Current-value dot + label ──────────────────────────────────────
         if pts:
             cur_hr = visible[-1][1]
-            cur_x = pts[-1][0]
-            cur_y = pts[-1][1]
-            canvas.create_oval(
-                cur_x - 4,
-                cur_y - 4,
-                cur_x + 4,
-                cur_y + 4,
-                fill="red",
-                outline="pink",
-                tag="graph",
-            )
+            cur_x, cur_y = pts[-1]
+            # Red dot at the tip of the line.
+            canvas.create_oval(cur_x-4, cur_y-4, cur_x+4, cur_y+4,
+                               fill="red", outline="pink", tag="graph")
+            # BPM readout in the top-right corner of the graph.
             canvas.create_text(
-                self.graph_width - 80,
-                12,
+                self.graph_width - 80, 12,
                 text=f"{cur_hr} BPM",
-                fill="white",
-                font=("Arial", 10, "bold"),
-                tag="graph",
+                fill="white", font=("Arial", 10, "bold"), tag="graph",
             )
 
-        # Update small window label to indicate what seconds range is currently shown
+        # ── Window range label below the graph ────────────────────────────
         try:
             start_i = int(round(start_rel))
-            end_i = int(round(start_rel + self.graph_seconds))
+            end_i   = int(round(start_rel + self.graph_seconds))
             self.window_label.config(text=f"Viewing: {start_i}s → {end_i}s")
         except Exception:
             self.window_label.config(text="")
 
     def run_websocket(self):
+        """Entry point for the background daemon thread.
+
+        Creates a new asyncio event loop (Tkinter already owns the main loop so
+        we can't use the default one) and blocks until the coroutine returns.
+        """
         asyncio.run(self.websocket_client())
 
     async def websocket_client(self):
+        """Continuously connect to the bridge server and process incoming frames.
+
+        Reconnects every 3 seconds on any error (bridge not started yet,
+        network interruption, etc.).
+
+        Frame handling
+        --------------
+        str  frames: JSON parsed and dispatched based on keys:
+               "protocol"      → server handshake; update bridge label
+               "event"         → trigger marker (only if source is "udp"/"unity")
+               other           → cycling data {power, cadence, speed, heart_rate}
+        bytes frames: 24-byte binary; unpacked as ``struct.unpack("dfffi", …)``
+               fields: timestamp(d), power(f), cadence(f), speed(f), hr(i)
+        """
         uri = "ws://localhost:8765"
 
         while True:
             try:
                 async with websockets.connect(uri) as websocket:
+                    # Notify the main thread that we are connected.
                     self.root.after(0, self.update_status, True)
 
                     async for message in websocket:
                         try:
                             if isinstance(message, str):
                                 data = json.loads(message)
-                                # Server handshake announcing protocol/version
+                                # ── Server handshake ──────────────────────
                                 if "protocol" in data:
                                     self.bridge_protocol = data.get("protocol")
-                                    # Update bridge status label
                                     self.root.after(0, self.update_bridge_status, True, self.bridge_protocol)
                                     continue
 
-                                # If this JSON contains an event, record it as a trigger (vertical stroke)
+                                # ── Trigger event (e.g. from Unity UDP) ───
                                 if isinstance(data, dict) and data.get("event"):
-                                    # Only add triggers originating from external sources
-                                    # (for example UDP from Unity). Mock spawn events will
-                                    # include "source":"mock" and are ignored here so
-                                    # the GUI only shows Unity-driven triggers.
+                                    # Only display triggers that originate from
+                                    # Unity/UDP — mock spawn events (source="mock")
+                                    # are filtered out to avoid clutter.
                                     src = data.get("source")
                                     if src in ("udp", "unity"):
                                         evt_name = data.get("event")
-                                        # prefer supplied timestamp, fall back to now
+                                        # Use supplied timestamp if available so
+                                        # the marker aligns with the actual event time.
                                         ts = data.get("timestamp") or data.get("time") or time.time()
-                                        # schedule adding trigger on main thread
                                         self.root.after(0, self._add_trigger, evt_name, float(ts))
 
-                                # Otherwise treat as a data JSON (spawn/events with power/hr fields)
+                                # ── Cycling data JSON ──────────────────────
                                 self.root.after(
-                                    0,
-                                    self.update_data,
+                                    0, self.update_data,
                                     data.get("power", 0),
                                     data.get("cadence", 0.0),
                                     data.get("speed", 0.0),
                                     data.get("heart_rate", 0),
                                 )
                             else:
+                                # ── Binary frame (24 bytes) ────────────────
+                                # Format: double(8) + float(4) × 3 + int32(4) = 24 bytes
                                 import struct
-
                                 if len(message) >= 24:
                                     timestamp, power, cadence, speed, hr = (
                                         struct.unpack("dfffi", message[:24])
                                     )
-                                    self.root.after(
-                                        0,
-                                        self.update_data,
-                                        power,
-                                        cadence,
-                                        speed,
-                                        hr,
-                                    )
+                                    self.root.after(0, self.update_data, power, cadence, speed, hr)
                         except Exception:
-                            # parsing errors are non-fatal; ignore and continue
+                            # Parsing errors are non-fatal; ignore the frame and continue.
                             pass
 
             except Exception:
+                # Connection lost or refused — signal disconnected and retry.
                 self.root.after(0, self.update_status, False)
                 await asyncio.sleep(3)
 
     def run(self):
+        """Start the Tkinter main loop (blocks until the window is closed)."""
         self.root.mainloop()
 
 

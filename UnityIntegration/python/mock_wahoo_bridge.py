@@ -1,13 +1,44 @@
 #!/usr/bin/env python3
 """
-Mock Wahoo Bridge - Test server for UnityIntegration
+mock_wahoo_bridge.py — Lightweight mock WebSocket bridge for testing
+=====================================================================
+Provides a self-contained WebSocket server that emits simulated cycling
+frames at ~20 Hz **without** requiring any BLE hardware.
 
-Provides a small WebSocket server that emits a simple binary frame
-(format: dfffi -> timestamp, power, cadence, speed, hr) at ~20Hz.
+Use this when:
+* Developing or testing the Unity client without a physical Wahoo device
+* Running automated tests that need a live WebSocket endpoint
+* Demonstrating the integration on machines without Bluetooth
 
-This file is intentionally lightweight and self-contained for local
-testing. It supports an optional ``spawn_interval`` which will emit
-JSON "spawn" events (used by integration tests / GUI markers).
+Wire format (same as the real bridge)
+--------------------------------------
+Each broadcast frame is a 24-byte binary struct::
+
+    struct.pack("dfffi", timestamp, power, cadence, speed, hr)
+
+    d = double  timestamp (8 bytes, Unix epoch seconds)
+    f = float   power     (4 bytes, watts — always 0.0 in this mock)
+    f = float   cadence   (4 bytes, RPM   — always 0.0 in this mock)
+    f = float   speed     (4 bytes, km/h  — always 0.0 in this mock)
+    i = int32   hr        (4 bytes, BPM)
+
+Only HR is simulated; the other three fields are kept at zero for
+binary-format compatibility with the real bridge and the Unity receiver.
+
+Optional JSON mode
+------------------
+Pass ``--no-binary`` to emit JSON dicts instead of binary frames.
+
+Optional spawn events
+---------------------
+Pass ``--spawn-interval N`` to also emit a JSON ``{"event": "spawn", ...}``
+message every N seconds.  The GUI uses these as vertical marker lines.
+
+Usage
+-----
+::
+
+    python mock_wahoo_bridge.py [--port 8765] [--no-binary] [--spawn-interval 5]
 """
 
 import argparse
@@ -25,34 +56,46 @@ LOG = logging.getLogger("mock_wahoo_bridge")
 
 
 class MockCyclingData:
-    """Simulerer cycling data med stop/start cycles"""
+    """Generates simulated cycling metrics for the mock bridge.
+
+    Heart rate oscillates around ``base_hr`` using a sine wave and
+    random noise.  All other fields (power, cadence, speed) remain at
+    zero so the binary format stays compatible with the real bridge.
+    """
 
     def __init__(self) -> None:
-        self.time_offset = time.time()
-        self.base_power = 150
-        self.base_cadence = 80
-        self.base_speed = 25.0
-        self.base_hr = 140
-        self.cycle_duration = 20  # 20 second cycles
-        self.stop_duration = 5  # 5 second stops
+        self.time_offset = time.time()   # epoch reference for elapsed-time calculations
+        self.base_power    = 150         # W  (reserved for future use)
+        self.base_cadence  = 80          # RPM (reserved for future use)
+        self.base_speed    = 25.0        # km/h (reserved for future use)
+        self.base_hr       = 140         # BPM — midpoint of the simulated HR range
+        self.cycle_duration = 20         # s — legacy field, currently unused
+        self.stop_duration  = 5          # s — legacy field, currently unused
 
     def get_current_data(self, use_binary: bool = True):
-        """Generate realistic cycling data with ride/stop cycles."""
+        """Return either a 24-byte binary frame or a JSON dict.
+
+        HR is simulated as ``base_hr ± sine_variation ± random_noise``.
+        Power, cadence, and speed are always zero in this mock.
+
+        Args:
+            use_binary: If True return bytes; if False return a dict.
+        """
         elapsed = time.time() - self.time_offset
-        # We only simulate heart-rate now. Other fields are zero but we keep
-        # the same binary format for compatibility (dfffi).
         import random
 
+        # Sine-wave variation: period ≈ 31 s, amplitude ±8 BPM
         hr_variation = math.sin(elapsed * 0.2) * 8.0
-        micro_noise = random.uniform(-2.0, 2.0)
+        micro_noise  = random.uniform(-2.0, 2.0)
         hr = max(40, int(self.base_hr + hr_variation + micro_noise))
 
-        power = 0.0
+        # Power/cadence/speed are intentionally zero — HR-only simulation
+        power   = 0.0
         cadence = 0.0
-        speed = 0.0
+        speed   = 0.0
 
         if use_binary:
-            # Binary format: dfffi (timestamp, power, cadence, speed, hr)
+            # 24-byte binary frame: d(8)+f(4)+f(4)+f(4)+i(4)
             return struct.pack(
                 "dfffi", time.time(), float(power), float(cadence), float(speed), int(hr)
             )
@@ -61,10 +104,17 @@ class MockCyclingData:
 
 
 class MockWahooBridge:
-    """Simple WebSocket server that broadcasts mock cycling frames.
+    """WebSocket server that broadcasts simulated cycling frames.
 
-    If ``spawn_interval`` is set, the bridge will also periodically
-    emit JSON spawn events to all connected clients.
+    Lifecycle:
+      1. ``start_server()`` opens the server and starts the broadcast loop.
+      2. ``broadcast_loop()`` wakes every 50 ms and sends a frame to all clients.
+      3. If ``spawn_interval`` is set, ``_spawn_loop()`` sends JSON spawn events.
+
+    Attributes:
+        clients:        Set of active WebSocket connections.
+        mock_data:      Data generator (MockCyclingData instance).
+        spawn_interval: Seconds between spawn events, or None to disable.
     """
 
     def __init__(
@@ -74,18 +124,24 @@ class MockWahooBridge:
         spawn_interval: Optional[float] = None,
     ) -> None:
         self.port = port
-        self.use_binary = use_binary
+        self.use_binary = use_binary          # True = binary frames; False = JSON
         self.mock_data = MockCyclingData()
         self.running = False
-        self.clients: Set[Any] = set()
+        self.clients: Set[Any] = set()        # All currently connected WebSocket clients
         self.spawn_interval = (
             float(spawn_interval) if spawn_interval is not None else None
         )
         self._spawn_task: Optional[asyncio.Task] = None
 
     async def register_client(self, websocket: Any) -> None:
-        """Register a client and handle incoming messages (basic echo/pong)."""
-        # Try to set TCP_NODELAY where possible (best-effort)
+        """Handle a single WebSocket client connection.
+
+        - Tries to set TCP_NODELAY for lower latency.
+        - Sends a handshake JSON message announcing the protocol.
+        - Echoes any incoming messages with a ``{"pong": True}`` reply
+          to keep the connection alive.
+        """
+        # TCP_NODELAY reduces buffering latency for small frequent frames
         try:
             sock = websocket.transport.get_extra_info("socket")
             if sock is not None:
@@ -121,7 +177,16 @@ class MockWahooBridge:
             LOG.info("Client disconnected")
 
     async def broadcast_loop(self) -> None:
-        """Broadcast mock data to connected clients at ~20Hz."""
+        """Broadcast mock data to connected clients at ~20 Hz.
+
+        Each iteration:
+          1. Call ``mock_data.get_current_data()`` to produce a frame.
+          2. Send the frame to every connected client (binary or JSON).
+          3. Log the current HR once per wall-clock second.
+          4. Sleep 50 ms (→ ~20 Hz cadence).
+
+        Clients that fail to receive a frame are silently removed.
+        """
         LOG.info("Starting broadcast loop on ws://localhost:%d", self.port)
         last_log_time = 0
         while self.running:
@@ -155,7 +220,11 @@ class MockWahooBridge:
             await asyncio.sleep(0.05)
 
     async def start_server(self) -> None:
-        """Start the WebSocket server and optional spawn loop."""
+        """Open the WebSocket server and run the broadcast loop.
+
+        Also starts the optional spawn-event loop if ``spawn_interval`` is set.
+        Cleans up the spawn task on exit.
+        """
         self.running = True
         LOG.info("Mock Wahoo Bridge starting on ws://localhost:%d", self.port)
 
@@ -174,7 +243,15 @@ class MockWahooBridge:
                     pass
 
     async def _spawn_loop(self) -> None:
-        """Periodically broadcast JSON spawn events to all connected clients."""
+        """Periodically emit JSON spawn events to all connected clients.
+
+        Each event looks like::
+
+            {"event": "spawn", "entity": "car", "id": "car_N",
+             "timestamp": <epoch>, "source": "mock"}
+
+        The GUI displays these as orange vertical marker lines on the HR graph.
+        """
         counter = 0
         while self.running and self.spawn_interval:
             await asyncio.sleep(self.spawn_interval)
@@ -194,6 +271,7 @@ class MockWahooBridge:
 
 
 def parse_args():
+    """Parse command-line arguments for the mock bridge."""
     p = argparse.ArgumentParser(prog="mock_wahoo_bridge")
     p.add_argument("--port", type=int, default=8765)
     p.add_argument(
