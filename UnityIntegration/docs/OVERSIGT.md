@@ -55,22 +55,35 @@
 UnityIntegration/
 │
 ├── 🎯 C# LØSNING (Anbefalet)
-│   ├── WahooBLEManager.cs          # BLE manager til Unity
-│   ├── VRBikeController.cs         # VR bike controller
-│   └── README_CSHARP.md            # C# guide
+│   ├── unity/WahooBLEManager.cs        # Direkte BLE i Unity
+│   ├── unity/VRBikeController.cs       # VR bike controller
+│   └── docs/README_CSHARP.md           # C# guide
 │
 ├── 🐍 PYTHON LØSNING
-│   ├── wahoo_unity_bridge.py       # Python WebSocket bridge
-│   ├── WahooDataReceiver.cs        # Unity WebSocket client
-│   └── README.md                   # WebSocket guide
+│   ├── python/wahoo_unity_bridge.py    # Python WebSocket bridge
+│   ├── unity/WahooDataReceiver.cs      # Unity WebSocket client
+│   └── README.md                       # WebSocket guide
 │
-├── 📚 DOKUMENTATION
-│   ├── QUICKSTART.md               # Hurtig start (begge options)
-│   ├── OVERSIGT.md                 # Denne fil
-│   └── package.json                # Unity package manifest
+├── � SESSION LOGGING (VRSF)
+│   ├── Assets/VrsLogging/VrsSessionLogger.cs
+│   ├── Assets/VrsLogging/VrsFormats.cs
+│   ├── python/collector_tail.py        # Tail VRSF → SQLite/Parquet
+│   └── docs/README_VRS.md              # VRSF format guide
 │
-└── 📦 DEPENDENCIES
-    └── (se README filer for specifik option)
+├── �📚 DOKUMENTATION (docs/)
+│   ├── QUICKSTART.md                   # Hurtig start (begge options)
+│   ├── OVERSIGT.md                     # Denne fil
+│   ├── UNITY_SETUP_GUIDE.md            # Scene setup guide
+│   ├── README_VRS.md                   # VRSF binary format
+│   ├── README_CSHARP.md                # C# BLE guide
+│   ├── SESSION_HISTORY.md              # Session history UI
+│   ├── VERIFICATION.md                 # Hvad er testet og virker
+│   └── START_HER.md                    # Dansk entry point
+│
+└── 📦 STARTERS
+    ├── starters/START_WAHOO_BRIDGE.command  # macOS one-click
+    ├── starters/START_WAHOO_BRIDGE.bat      # Windows one-click
+    └── starters/START_MOCK_BRIDGE.command   # Mock (ingen hardware)
 ```
 
 ## 🔌 Teknisk Sammenligning

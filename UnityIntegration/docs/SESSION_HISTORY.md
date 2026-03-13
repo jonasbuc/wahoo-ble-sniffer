@@ -1,69 +1,110 @@
-Session-historik og runtime session management (Unity)
-=====================================================
+# Session History & Runtime Session Management (Unity)
 
-Denne fil beskriver hvordan du aktiverer og bruger den nye session-historik og runtime session-start/stop i Unity.
+This guide describes how to enable and use the session history panel and
+runtime session start/stop in Unity.
 
-Kort:
-- Loggeren skriver `Logs/sessions_history.ndjson` med én JSON-per-linje: {display_id, session_id, subject, started_unix_ms, ended_unix_ms, dir}.
-- `SessionManagerUI` kan indlæse denne fil og vise rækker (Resume / Stop / Open).
-- Resume opretter en ny `session_id` for samme `display_id` (Option A — anbefalet).
+---
 
-Vigtige filer
--------------
-- `UnityIntegration/Assets/VrsLogging/VrsSessionLogger.cs` (logger + history persistence)
-- `UnityIntegration/VrsSessionLogger.cs` (kopi)
-- `UnityIntegration/Assets/VrsLogging/SessionManagerUI.cs` (UI loader og callbacks)
-- `UnityIntegration/Assets/VrsLogging/SessionHistoryRow.cs` (row controller)
-- `Logs/sessions_history.ndjson` (oprettes automatisk når en session startes)
+## Overview
 
-Opsætning i Unity Editor
-------------------------
-1) Opret container
-   - I din UI Canvas: Create Empty → navngiv `HistoryContainer`.
-   - Tilføj `Vertical Layout Group` og `Content Size Fitter` (Vertical Fit = Preferred Size).
+- `VrsSessionLogger` writes `Logs/sessions_history.ndjson` — one JSON object per
+  line: `{"display_id": 1, "session_id": "...", "subject": "...", "started_unix_ms": ..., "ended_unix_ms": ..., "dir": "..."}`.
+- `SessionManagerUI` loads this file on Start and renders one row per entry in a
+  scrollable history panel.
+- Each row has **Resume**, **Stop**, and **Open** buttons.
+- **Resume** creates a **new** `session_id` for the same `display_id` (Option A —
+  recommended for data integrity).
 
-2) Opret row-prefab
-   - Opret GameObject `HistoryRowTemplate`.
-   - Tilføj børn:
-     - `Text` (DisplayId) → bind til `SessionHistoryRow.displayIdText`
-     - `Text` (Subject) → bind til `SessionHistoryRow.subjectText`
-     - `Text` (Times) → bind til `SessionHistoryRow.timesText`
-     - `Button` (Resume) → bind til `SessionHistoryRow.resumeButton`
-     - `Button` (Stop) → bind til `SessionHistoryRow.stopButton`
-     - `Button` (Open) → bind til `SessionHistoryRow.openButton`
-   - Tilføj `SessionHistoryRow` komponent og sæt referencer.
-   - Lav prefab af template og fjern/disable template i Hierarchy.
+---
 
-3) Wire `SessionManagerUI`
-   - På det GameObject der har `SessionManagerUI` script:
-     - `logger` → træk `VrsSessionLogger` komponent
-     - `subjectInput` → InputField
-     - `newSessionButton` → Button
-     - `stopSessionButton` → Button
-     - `currentSessionLabel` → Text
-     - `historyContainer` → `HistoryContainer` fra step 1
-     - `rowPrefab` → prefab fra step 2
+## Important Files
 
-4) Test (Play mode)
-   - Tryk Play.
-   - Start en ny session via UI. Tjek `Logs/` og `sessions_history.ndjson`.
-   - Stop; `ended_unix_ms` opdateres.
-   - Resume fra historik starter en ny session (nyt session_id) for samme display_id.
+| File | Purpose |
+|------|---------|
+| `Assets/VrsLogging/VrsSessionLogger.cs` | Logger + history file persistence |
+| `Assets/VrsLogging/SessionManagerUI.cs` | UI loader and button callbacks |
+| `Assets/VrsLogging/SessionHistoryRow.cs` | Row prefab component |
+| `Logs/sessions_history.ndjson` | Created automatically when first session starts |
 
-Fejlsøgning
------------
-- NullReferenceException: sørg for at `rowPrefab` og `historyContainer` er sat i `SessionManagerUI`.
-- Hvis Open ikke virker på macOS: brug `Application.OpenURL("file://" + dir)` i callback.
-- Hvis `sessions_history.ndjson` mangler: start en session (logger opretter filen).
+---
 
-Design-note
------------
-Resume = Option A (nyt session_id for samme display_id) valgt som standard for robusthed og dataintegritet.
+## Unity Editor Setup
 
-Commit og branch
-----------------
-Ændringer er committet og pushed til branch `analysis/quick-start`.
+### 1. Create the history container
 
-Kontakt
--------
-Sig til hvis du vil have at jeg også ændrer `Application.OpenURL`-adfærden eller genererer et eksempel-prefab JSON/inspektor-skema.
+- In your UI Canvas: **Create Empty** → rename to `HistoryContainer`
+- Add **Vertical Layout Group** component
+- Add **Content Size Fitter** → set *Vertical Fit* to **Preferred Size**
+
+### 2. Create the row prefab
+
+1. Create a new GameObject `HistoryRowTemplate`
+2. Add child objects and bind them in `SessionHistoryRow`:
+   - `Text` (DisplayId) → `displayIdText`
+   - `Text` (Subject)   → `subjectText`
+   - `Text` (Times)     → `timesText`
+   - `Button` (Resume)  → `resumeButton`
+   - `Button` (Stop)    → `stopButton`
+   - `Button` (Open)    → `openButton`
+3. Add the `SessionHistoryRow` component and set all references
+4. Save as a prefab; disable or delete the template instance in the Hierarchy
+
+### 3. Wire `SessionManagerUI`
+
+On the GameObject that has the `SessionManagerUI` script, set:
+
+| Inspector field | Target |
+|-----------------|--------|
+| `logger` | Drag the `VrsSessionLogger` component |
+| `subjectInput` | InputField for session subject |
+| `newSessionButton` | Button to start a new session |
+| `stopSessionButton` | Button to stop the current session |
+| `currentSessionLabel` | Text label showing active session |
+| `historyContainer` | `HistoryContainer` from step 1 |
+| `rowPrefab` | Row prefab from step 2 |
+
+### 4. Test in Play mode
+
+1. Press **Play**
+2. Enter a subject and click **New Session** — check `Logs/` for new files and `sessions_history.ndjson`
+3. Click **Stop** — `ended_unix_ms` should be filled in `sessions_history.ndjson`
+4. Click **Resume** in the history panel — a new session with the same `display_id` starts
+
+---
+
+## NDJSON History Format
+
+Each line in `sessions_history.ndjson` is one JSON object:
+
+```json
+{"display_id": 1, "session_id": "a3f1...", "subject": "Jonas", "started_unix_ms": 1710000000000, "ended_unix_ms": 1710003600000, "dir": "Logs/session_a3f1..."}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `display_id` | int | Human-readable incrementing counter (1, 2, 3, …) |
+| `session_id` | string | UUID (hex, no dashes) — unique per recording |
+| `subject` | string | Free-text label entered in the UI |
+| `started_unix_ms` | int | Session start time (ms since epoch) |
+| `ended_unix_ms` | int | Session end time; `null` if still running |
+| `dir` | string | Relative path to the session's `.vrsf` folder |
+
+---
+
+## Design Notes
+
+- **Resume = Option A**: a new `session_id` is created for the same `display_id`.
+  This keeps every recording atomic and avoids appending to existing VRSF files,
+  which simplifies CRC validation and collector logic.
+- The display ID counter is persisted in `Logs/display_id_counter.txt` so it
+  survives application restarts.
+
+---
+
+## Troubleshooting
+
+| Symptom | Fix |
+|---------|-----|
+| `NullReferenceException` on Start | Ensure `rowPrefab` and `historyContainer` are assigned in `SessionManagerUI` |
+| **Open** button does nothing on macOS | Use `Application.OpenURL("file://" + dir)` in the callback |
+| `sessions_history.ndjson` missing | Start at least one session — the file is created on first write |

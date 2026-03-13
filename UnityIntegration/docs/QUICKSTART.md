@@ -58,7 +58,7 @@ Se `README_CSHARP.md` for detaljer.
 ### 1. Installer Python Afhængigheder
 
 ```bash
-cd "/Users/jonasbuchner/Blu Sniffer"
+# From repository root
 pip install -r requirements.txt
 ```
 
@@ -120,13 +120,6 @@ Next steps:
    - Bike Model → træk din cykel model hertil
    - Front Wheel → træk forhjul hertil
    - Rear Wheel → træk baghjul hertil
-
-### 5. Test Det!
-
-1. Sørg for Python bridge kører
-2. Tryk **Play** i Unity
-3. Begynd at træde på KICKR
-4. Se hastighedsmåleren i Unity stige! 🚀
 
 ### 5. Test Det!
 
