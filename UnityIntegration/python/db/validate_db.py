@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate contents of collector_out/vrs.sqlite for correct formatting and sensible values.
+"""Validate contents of the collector SQLite DB for correct formatting and sensible values.
 
 Checks performed:
 - headpose: px/py/pz are finite floats, quaternion norm ~1
@@ -7,16 +7,18 @@ Checks performed:
 - hr: hr_bpm in plausible range (30..220)
 - events: json column parses
 
-Usage: . .venv/bin/activate && python UnityIntegration/python/db/validate_db.py
+Usage: . .venv/bin/activate && python UnityIntegration/python/db/validate_db.py [--db PATH]
 """
-import sqlite3
-import os
-import math
+import argparse
 import json
+import math
+import os
+import sqlite3
+from pathlib import Path
 
-
-DB_PATH = os.path.join('collector_out', 'vrs.sqlite')
-
+# Default: db/ → python/ → UnityIntegration/ → repo_root/collector_out/vrs.sqlite
+_REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
+_DEFAULT_DB = str(_REPO_ROOT / "collector_out" / "vrs.sqlite")
 
 def float_ok(x):
     """Return True if *x* can be cast to a finite float (not NaN, not ±Inf)."""
@@ -103,10 +105,14 @@ def validate_events(conn):
 
 
 def main():
-    if not os.path.exists(DB_PATH):
-        print('DB not found:', DB_PATH)
+    p = argparse.ArgumentParser(description="Validate collector SQLite DB for correctness.")
+    p.add_argument("--db", default=_DEFAULT_DB, help="Path to the collector SQLite database")
+    args = p.parse_args()
+    db_path = args.db
+    if not os.path.exists(db_path):
+        print('DB not found:', db_path)
         return 2
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(db_path)
     results = []
 
     c, p = validate_headpose(conn)

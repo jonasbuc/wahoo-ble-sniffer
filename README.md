@@ -32,8 +32,10 @@ Log live BLE data from Wahoo TICKR heart rate monitors and KICKR trainers, strea
 │   ├── run_quick_plots.py         #   Programmatic plot generation
 │   └── generate_mock_data.py      #   Generate realistic mock Parquet data
 │
-├── tests/                         # pytest test suite (36 tests)
-├── docs/                          # Top-level documentation
+├── tests/                         # pytest suite (36 tests)
+│                                  #   BLE parsing, SQLite, VRSF format, collector,
+│                                  #   Parquet export, mock integration, end-to-end
+├── docs/                          # Top-level docs
 │   └── PAIRING_HELP.md            #   macOS BLE pairing troubleshooting
 ├── collector_out/                  # Generated test data (Parquet + SQLite)
 │

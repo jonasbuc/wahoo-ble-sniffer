@@ -25,8 +25,8 @@
 ### Step 1: Test Mock Data (Uden KICKR)
 
 ```bash
-cd "/Users/jonasbuchner/Blu Sniffer/UnityIntegration"
-python3 python/mock_wahoo_bridge.py
+# From repo root
+python3 UnityIntegration/python/mock_wahoo_bridge.py
 ```
 
 ### Step 2: I Unity
@@ -39,7 +39,7 @@ python3 python/mock_wahoo_bridge.py
 ### Step 3: Test Med Real KICKR
 
 ```bash
-python3 python/wahoo_unity_bridge.py
+python3 UnityIntegration/python/wahoo_unity_bridge.py
 ```
 
 (Kræver KICKR tændt + pedaling)
@@ -68,10 +68,10 @@ python3 python/wahoo_unity_bridge.py
 
 Læs i denne rækkefølge:
 
-1. **[VERIFICATION.md](VERIFICATION.md)** ← Start her! Bewis på hvad virker
+1. **[VERIFICATION.md](VERIFICATION.md)** ← Start her! Bevis på hvad virker
 2. **[QUICKSTART.md](QUICKSTART.md)** ← 5 min setup guide
-3. **[README_ANBEFALING.md](README_ANBEFALING.md)** ← Hvorfor Python bridge?
-4. **[README.md](README.md)** ← Detaljeret WebSocket guide
+3. **[OVERSIGT.md](OVERSIGT.md)** ← Alle filer og valg forklaret
+4. **[README.md](../README.md)** ← Detaljeret WebSocket guide
 5. **[README_CSHARP.md](README_CSHARP.md)** ← Hvis du vil deploye til mobile
 
 ---
@@ -101,8 +101,9 @@ Læs i denne rækkefølge:
 ## 💡 Hvad Siger Tests?
 
 ### Python Bridge:
-$ python3 -m py_compile python/wahoo_unity_bridge.py
-✅ Success - compiles without errors
+```bash
+python3 -m py_compile UnityIntegration/python/wahoo_unity_bridge.py
+# ✅ Success - compiles without errors
 ```
 
 ### Mock Server:
