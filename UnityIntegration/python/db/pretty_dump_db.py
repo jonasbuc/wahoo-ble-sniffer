@@ -3,18 +3,22 @@
 
 Usage: run inside the repo venv:
   . .venv/bin/activate
-  python UnityIntegration/python/db/pretty_dump_db.py
+  python UnityIntegration/python/db/pretty_dump_db.py [--db PATH]
 
 This script does not modify the DB. It converts columns named
 `recv_ts_ns` to milliseconds and ISO8601 strings for easier inspection,
 and converts `started_unix_ms` to ISO as well.
 """
 from __future__ import annotations
+import argparse
 import sqlite3
 import datetime
+from pathlib import Path
 from typing import Any
 
-DB = "collector_out/vrs.sqlite"
+# Default: db/ → python/ → UnityIntegration/ → repo_root/collector_out/vrs.sqlite
+_REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
+_DEFAULT_DB = str(_REPO_ROOT / "collector_out" / "vrs.sqlite")
 
 
 def ns_to_iso(ns: int) -> str:
@@ -86,16 +90,20 @@ def dump_table(cur: sqlite3.Cursor, table: str, limit: int = 50) -> None:
 
 
 def main() -> None:
-    conn = sqlite3.connect(DB)
+    p = argparse.ArgumentParser(description="Pretty-print collector SQLite DB with readable timestamps.")
+    p.add_argument("--db", default=_DEFAULT_DB, help="Path to the collector SQLite database")
+    p.add_argument("--limit", type=int, default=50, help="Max rows per table (default: 50)")
+    args = p.parse_args()
+    conn = sqlite3.connect(args.db)
     cur = conn.cursor()
     tables = [r[0] for r in cur.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name;")]
     if not tables:
-        print("No tables found in:", DB)
+        print("No tables found in:", args.db)
         return
     print("Tables:", ", ".join(tables))
     print()
     for t in tables:
-        dump_table(cur, t)
+        dump_table(cur, t, limit=args.limit)
 
 
 if __name__ == "__main__":

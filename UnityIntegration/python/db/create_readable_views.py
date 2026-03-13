@@ -7,13 +7,16 @@ the underlying raw tables.
 
 Run in repo venv:
   . .venv/bin/activate
-  python UnityIntegration/python/db/create_readable_views.py
+  python UnityIntegration/python/db/create_readable_views.py [--db PATH]
 """
 from __future__ import annotations
+import argparse
 import sqlite3
 from pathlib import Path
 
-DB = Path("collector_out/vrs.sqlite")
+# Default: db/ → python/ → UnityIntegration/ → repo_root/collector_out/vrs.sqlite
+_REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
+_DEFAULT_DB = _REPO_ROOT / "collector_out" / "vrs.sqlite"
 
 
 VIEWS = [
@@ -92,10 +95,14 @@ VIEWS = [
 
 
 def main() -> None:
-    if not DB.exists():
-        print(f"DB not found: {DB}")
+    p = argparse.ArgumentParser(description="Create readable SQLite VIEWs for the collector DB.")
+    p.add_argument("--db", default=str(_DEFAULT_DB), help="Path to the collector SQLite database")
+    args = p.parse_args()
+    db = Path(args.db)
+    if not db.exists():
+        print(f"DB not found: {db}")
         return
-    conn = sqlite3.connect(str(DB))
+    conn = sqlite3.connect(str(db))
     cur = conn.cursor()
     for name, sql in VIEWS:
         print(f"Creating view: {name}")

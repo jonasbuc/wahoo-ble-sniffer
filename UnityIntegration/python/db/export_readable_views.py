@@ -6,7 +6,7 @@ Writes one CSV per readable view into the given output directory. If
 
 Usage:
   . .venv/bin/activate
-  python UnityIntegration/python/db/export_readable_views.py --out exports/
+  python UnityIntegration/python/db/export_readable_views.py [--out exports/] [--db PATH]
 """
 from __future__ import annotations
 import sqlite3
@@ -14,7 +14,12 @@ import csv
 from pathlib import Path
 from typing import Iterable, Tuple, List, Any
 
-DB = Path("collector_out/vrs.sqlite")
+# Default: db/ → python/ → UnityIntegration/ → repo_root/collector_out/vrs.sqlite
+_REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
+_DEFAULT_DB = _REPO_ROOT / "collector_out" / "vrs.sqlite"
+_DEFAULT_EXPORTS = _REPO_ROOT / "exports"
+
+DB = _DEFAULT_DB  # backward-compat alias (used as default in export_all_views signature)
 
 DEFAULT_VIEWS = [
     "headpose_readable",
@@ -92,8 +97,8 @@ def main() -> None:
     import argparse
 
     p = argparse.ArgumentParser(description="Export readable views to CSV/Parquet")
-    p.add_argument("--out", default="exports", help="Output directory")
-    p.add_argument("--db", default=str(DB), help="Path to sqlite DB")
+    p.add_argument("--out", default=str(_DEFAULT_EXPORTS), help="Output directory")
+    p.add_argument("--db", default=str(_DEFAULT_DB), help="Path to sqlite DB")
     p.add_argument("--views", nargs="*", help="Optional list of views to export")
     args = p.parse_args()
     views = args.views if args.views else DEFAULT_VIEWS

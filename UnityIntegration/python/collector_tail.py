@@ -45,15 +45,18 @@ Usage
   python collector_tail.py --logs Logs --out collector_out/vrs.sqlite
 """
 import argparse
-import os
-import struct
-import time
-import sqlite3
-import threading
-from typing import DefaultDict, Tuple, List, Dict, Optional
-import json
 import glob
+import json
+import logging
+import os
+import sqlite3
+import struct
+import threading
+import time
+import zlib
 from collections import defaultdict
+from pathlib import Path
+from typing import DefaultDict, Dict, List, Optional, Tuple
 
 try:
     import pyarrow as pa
@@ -61,6 +64,8 @@ try:
     HAVE_PYARROW = True
 except Exception:
     HAVE_PYARROW = False
+
+LOG = logging.getLogger("collector")
 
 HEADER_FMT = "<4s B B H Q I I I I I"  # layout reference only; fields parsed manually below
 HEADER_SIZE = 40  # total bytes in the VRSF chunk header
@@ -85,7 +90,6 @@ def crc32(data):
     platforms (Python's zlib.crc32 can return a signed int on Python 2;
     masking makes the behaviour explicit).
     """
-    import zlib
     return zlib.crc32(data) & 0xffffffff
 
 
@@ -172,7 +176,7 @@ class FileTail:
             magic = hdr[0:4]
             if magic != b'VRSF':
                 # Unexpected byte at current offset; advance 1 byte and retry.
-                print('Bad magic in', self.path)
+                LOG.warning("Bad magic at offset %d in %s", self.offset, self.path)
                 self.offset += 1
                 return None, None
 
@@ -195,14 +199,14 @@ class FileTail:
             for i in range(28, 36):
                 hdr_copy[i] = 0
             if crc32(hdr_copy) != header_crc:
-                print('Header CRC mismatch', self.path)
+                LOG.warning("Header CRC mismatch at offset %d in %s", self.offset, self.path)
                 self.offset += 1  # attempt byte-level re-sync
                 return None, None
 
             # ── Payload CRC verification ──────────────────────────────────
             payload = f.read(payload_bytes)
             if crc32(payload) != payload_crc:
-                print('Payload CRC mismatch', self.path)
+                LOG.warning("Payload CRC mismatch at offset %d in %s", self.offset, self.path)
                 # Skip the entire faulty chunk so we can continue with the next.
                 self.offset += HEADER_SIZE + payload_bytes
                 return None, None
@@ -260,12 +264,13 @@ def init_db(path):
     synchronous=NORMAL : fsync only at WAL checkpoints, not on every commit.
     temp_store=MEMORY  : keep temp tables in RAM for faster query execution.
     """
-    os.makedirs(os.path.dirname(path), exist_ok=True)
+    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
     conn = sqlite3.connect(path, check_same_thread=False)
     cur = conn.cursor()
     cur.execute('PRAGMA journal_mode=WAL;')
     cur.execute('PRAGMA synchronous=NORMAL;')
     cur.execute('PRAGMA temp_store=MEMORY;')
+    cur.execute('PRAGMA cache_size=-8000;')   # ~8 MB page cache (negative = KiB)
     cur.execute(
         'CREATE TABLE IF NOT EXISTS sessions'
         '(session_id INTEGER PRIMARY KEY, started_unix_ms INTEGER, session_dir TEXT)'
@@ -359,45 +364,37 @@ def insert_records_batch(conn, stream_id, session_id, recv_ts_ns, recs):
     if not recs:
         return 0
     if stream_id == 1:
-        rows = []
-        for rec in recs:
-            seq     = struct.unpack_from('<I', rec, 0)[0]
-            unity_t = struct.unpack_from('<f', rec, 4)[0]
-            px      = struct.unpack_from('<f', rec, 8)[0]
-            py      = struct.unpack_from('<f', rec, 12)[0]
-            pz      = struct.unpack_from('<f', rec, 16)[0]
-            qx      = struct.unpack_from('<f', rec, 20)[0]
-            qy      = struct.unpack_from('<f', rec, 24)[0]
-            qz      = struct.unpack_from('<f', rec, 28)[0]
-            qw      = struct.unpack_from('<f', rec, 32)[0]
-            rows.append((session_id, recv_ts_ns, seq, unity_t, px, py, pz, qx, qy, qz, qw))
+        # struct '<Ifffffffff' = u32 + 9×f32 = 4 + 36 = 40? No: u32(4) + 9*f32(36) = 40 bytes.
+        # But headpose rec_size = 36: u32(4) + f32(4) + 3*f32(12) + 4*f32(16) = 36. ✓
+        rows = [
+            (session_id, recv_ts_ns, seq, ut, px, py, pz, qx, qy, qz, qw)
+            for seq, ut, px, py, pz, qx, qy, qz, qw
+            in (struct.unpack_from('<Ifffffffff', rec) for rec in recs)
+        ]
         cur.executemany(
             'INSERT INTO headpose'
             '(session_id, recv_ts_ns, seq, unity_t, px,py,pz,qx,qy,qz,qw)'
             ' VALUES(?,?,?,?,?,?,?,?,?,?,?)', rows)
         return len(rows)
     elif stream_id == 2:
-        rows = []
-        for rec in recs:
-            seq      = struct.unpack_from('<I', rec, 0)[0]
-            unity_t  = struct.unpack_from('<f', rec, 4)[0]
-            speed    = struct.unpack_from('<f', rec, 8)[0]
-            steering = struct.unpack_from('<f', rec, 12)[0]
-            bf = rec[16]   # brake_front — direct byte access (uint8)
-            br = rec[17]   # brake_rear
-            rows.append((session_id, recv_ts_ns, seq, unity_t, speed, steering, bf, br))
+        # bike: '<Ifff' = u32 + 3×f32 = 16 bytes; brake bytes at [16] and [17]
+        rows = [
+            (session_id, recv_ts_ns, seq, ut, speed, steering, rec[16], rec[17])
+            for (seq, ut, speed, steering), rec
+            in ((struct.unpack_from('<Ifff', rec), rec) for rec in recs)
+        ]
         cur.executemany(
             'INSERT INTO bike'
             '(session_id, recv_ts_ns, seq, unity_t, speed, steering, brake_front, brake_rear)'
             ' VALUES(?,?,?,?,?,?,?,?)', rows)
         return len(rows)
     elif stream_id == 3:
-        rows = []
-        for rec in recs:
-            seq     = struct.unpack_from('<I', rec, 0)[0]
-            unity_t = struct.unpack_from('<f', rec, 4)[0]
-            hr_bpm  = struct.unpack_from('<f', rec, 8)[0]
-            rows.append((session_id, recv_ts_ns, seq, unity_t, hr_bpm))
+        # hr: '<Iff' = u32 + 2×f32 = 12 bytes
+        rows = [
+            (session_id, recv_ts_ns, seq, ut, hr_bpm)
+            for seq, ut, hr_bpm
+            in (struct.unpack_from('<Iff', rec) for rec in recs)
+        ]
         cur.executemany('INSERT INTO hr(session_id, recv_ts_ns, seq, unity_t, hr_bpm) VALUES(?,?,?,?,?)', rows)
         return len(rows)
     # stream_id 4 is handled by insert_events_batch
@@ -471,9 +468,9 @@ def flush_parquet_parts(out_dir, part_rows=10000):
                     table = pa.Table.from_pylist(chunk)
                     pq.write_table(table, part_file)
                     PARQUET_PART_COUNTER[(sid, stream_id)] += 1
-                    print(f'Wrote parquet part: {part_file} ({len(chunk)} rows)')
+                    LOG.info("Wrote parquet part: %s (%d rows)", part_file, len(chunk))
                 except Exception as e:
-                    print('Parquet write error:', e)
+                    LOG.warning("Parquet write error: %s", e)
                     break  # leave remaining rows in the buffer for next attempt
                 rows = rows[part_rows:]
             PARQUET_BUFFERS[(sid, stream_id)] = []
@@ -542,7 +539,7 @@ def watch_sessions(
             tails.append(FileTail(os.path.join(d, 'events.vrsf'),  4, sid, variable=True))
             seen.add(d)
 
-    print('Collector: watching', logs_root)
+    LOG.info("Collector: watching %s", logs_root)
     last_print        = time.time()
     last_parquet_flush = time.time()
     counts: DefaultDict[int, int] = defaultdict(int)  # per-stream insert counter (reset every second)
@@ -568,7 +565,7 @@ def watch_sessions(
                 else:
                     inserted = insert_records_batch(conn, t.stream_id, sid, recv_ts_ns, parsed)
             except Exception as e:
-                print('DB insert error:', e)
+                LOG.error("DB insert error: %s", e)
                 inserted = 0
 
             if inserted:
@@ -642,7 +639,8 @@ def watch_sessions(
 
         # ── Heartbeat print (once per second) ─────────────────────────────
         if time.time() - last_print >= 1.0:
-            print(f"rates head={counts[1]} bike={counts[2]} hr={counts[3]} events={counts[4]}")
+            LOG.debug("rates head=%d bike=%d hr=%d events=%d",
+                      counts[1], counts[2], counts[3], counts[4])
             counts = defaultdict(int)  # reset counters for the next second
             last_print = time.time()
 
@@ -667,19 +665,35 @@ def watch_sessions(
 
 def main():
     """Entry point: parse CLI arguments and start the collector watch loop."""
+    # Resolve sensible defaults relative to the repo root (3 levels up from this file:
+    # UnityIntegration/python/collector_tail.py → repo root).
+    _here = Path(__file__).resolve().parent
+    _repo_root = _here.parent.parent   # UnityIntegration/python → UnityIntegration → repo root
+    _default_logs = str(_repo_root / "Logs")
+    _default_out  = str(_repo_root / "collector_out" / "vrs.sqlite")
+
     p = argparse.ArgumentParser(description='Tail VRSF session logs into SQLite/Parquet.')
-    p.add_argument('--logs', default='Logs',
-                   help='Root directory containing session_* subdirectories (default: Logs)')
-    p.add_argument('--out', default='collector_out/vrs.sqlite',
+    p.add_argument('--logs', default=_default_logs,
+                   help='Root directory containing session_* subdirectories')
+    p.add_argument('--out', default=_default_out,
                    help='Path for the output SQLite database file')
     p.add_argument('--sqlite-batch-size', type=int, default=0,
                    help='If >0, commit DB every N records; 0 means commit per chunk (default)')
     p.add_argument('--parquet-rows', type=int, default=10000,
                    help='Maximum rows per Parquet part file (default: 10000)')
+    p.add_argument('--verbose', action='store_true',
+                   help='Enable DEBUG logging (default: INFO)')
     args = p.parse_args()
-    os.makedirs(os.path.dirname(args.out), exist_ok=True)
+
+    logging.basicConfig(
+        level=logging.DEBUG if args.verbose else logging.INFO,
+        format='%(asctime)s %(levelname)s %(name)s %(message)s',
+    )
+
+    out_dir = os.path.dirname(os.path.abspath(args.out))
+    os.makedirs(out_dir, exist_ok=True)
     # Pass the same directory as the Parquet output so parts sit next to the DB.
-    watch_sessions(args.logs, args.out, out_parquet_dir=os.path.dirname(args.out),
+    watch_sessions(args.logs, args.out, out_parquet_dir=out_dir,
                    sqlite_batch_size=args.sqlite_batch_size, parquet_rows=args.parquet_rows)
 
 
