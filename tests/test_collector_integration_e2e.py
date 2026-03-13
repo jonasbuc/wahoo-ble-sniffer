@@ -124,9 +124,8 @@ def test_collector_end_to_end(tmp_path):
     mod = importlib.util.module_from_spec(spec)
     sys.modules['create_readable_views'] = mod
     spec.loader.exec_module(mod)
-    # ensure the create_readable_views module targets our temp DB
-    mod.DB = dbp
-    mod.main()
+    # Call the library function directly so argparse doesn't read pytest's sys.argv
+    mod.create_views(dbp)
 
     # query a readable view
     cur.execute('SELECT recv_ts_ms FROM headpose_readable LIMIT 1')

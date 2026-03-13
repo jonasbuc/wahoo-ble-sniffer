@@ -94,11 +94,9 @@ VIEWS = [
 ]
 
 
-def main() -> None:
-    p = argparse.ArgumentParser(description="Create readable SQLite VIEWs for the collector DB.")
-    p.add_argument("--db", default=str(_DEFAULT_DB), help="Path to the collector SQLite database")
-    args = p.parse_args()
-    db = Path(args.db)
+def create_views(db_path: str | Path) -> None:
+    """Create all readable VIEWs in *db_path* (callable without argparse)."""
+    db = Path(db_path)
     if not db.exists():
         print(f"DB not found: {db}")
         return
@@ -110,6 +108,13 @@ def main() -> None:
     conn.commit()
     conn.close()
     print("All views created (if not already present).")
+
+
+def main() -> None:
+    p = argparse.ArgumentParser(description="Create readable SQLite VIEWs for the collector DB.")
+    p.add_argument("--db", default=str(_DEFAULT_DB), help="Path to the collector SQLite database")
+    args = p.parse_args()
+    create_views(args.db)
 
 
 if __name__ == "__main__":

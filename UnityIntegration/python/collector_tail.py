@@ -364,12 +364,11 @@ def insert_records_batch(conn, stream_id, session_id, recv_ts_ns, recs):
     if not recs:
         return 0
     if stream_id == 1:
-        # struct '<Ifffffffff' = u32 + 9×f32 = 4 + 36 = 40? No: u32(4) + 9*f32(36) = 40 bytes.
-        # But headpose rec_size = 36: u32(4) + f32(4) + 3*f32(12) + 4*f32(16) = 36. ✓
+        # headpose: u32(4) + 8×f32(32) = 36 bytes → format '<Iffffffff'
         rows = [
             (session_id, recv_ts_ns, seq, ut, px, py, pz, qx, qy, qz, qw)
             for seq, ut, px, py, pz, qx, qy, qz, qw
-            in (struct.unpack_from('<Ifffffffff', rec) for rec in recs)
+            in (struct.unpack_from('<Iffffffff', rec) for rec in recs)
         ]
         cur.executemany(
             'INSERT INTO headpose'
