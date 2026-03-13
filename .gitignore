@@ -42,6 +42,15 @@ training.db
 
 # Logs
 *.log
+*.pid
+
+# Capture debug dirs
+wahoo_bridge_capture_*/
+
+# Coverage / test caches
+.coverage
+.mypy_cache/
+.pytest_cache/
 
 # Ignore UnityCompileCheck build artifacts
 UnityIntegration/UnityCompileCheck/bin/

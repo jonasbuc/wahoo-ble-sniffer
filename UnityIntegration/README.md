@@ -68,8 +68,8 @@ Make sure your trainer/sensor is on and you're pedaling (many devices wake up wh
 
 Preferred: use the provided start scripts which launch the bridge and, optionally, the GUI monitor.
 
-- On macOS: double-click `UnityIntegration/START_WAHOO_BRIDGE.command` — this will spawn two Terminal windows: the GUI (in a new window) and the bridge (in the current window). Both processes receive the `--live` flag by default.
-- On Windows: double-click `UnityIntegration/START_WAHOO_BRIDGE.bat` — the GUI opens in its own window and the bridge runs in the main window; both are started with the `--live` flag.
+- On macOS: double-click `UnityIntegration/starters/START_WAHOO_BRIDGE.command` — this will spawn two Terminal windows: the GUI (in a new window) and the bridge (in the current window). Both processes receive the `--live` flag by default.
+- On Windows: double-click `UnityIntegration/starters/START_WAHOO_BRIDGE.bat` — the GUI opens in its own window and the bridge runs in the main window; both are started with the `--live` flag.
 
 If you prefer to run the bridge directly from the terminal, you can still run:
 
@@ -212,7 +212,7 @@ The WebSocket sends JSON messages every time new data arrives from the cycling d
 - Make sure your sensor/trainer is powered on
 - **Start pedaling** (many devices wake up when they detect movement)
 - On macOS: unpair from System Settings if previously paired
-- Run `python quick_find.py` from parent directory to verify device is visible
+- Run `python python/quick_find.py` from parent directory to verify device is visible
 
 ### "WebSocket connection failed" in Unity
 
@@ -277,9 +277,9 @@ UnityIntegration/
 
 ## 🔗 Related Files
 
-- `../wahoo_ble_logger.py` - Python BLE logger with SQLite
+- `../python/wahoo_ble_logger.py` - Python BLE logger with SQLite
 - `../WahooBleLoggerCSharp/` - C# BLE logger (.NET)
-- `../PAIRING_HELP.md` - Bluetooth pairing troubleshooting
+- `../docs/PAIRING_HELP.md` - Bluetooth pairing troubleshooting
 
 ## 💡 Example Use Cases
 

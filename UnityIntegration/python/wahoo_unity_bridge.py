@@ -81,6 +81,9 @@ class WahooBridgeServer:
         udp_host: str = "127.0.0.1",
         udp_port: int = 5005,
         ble_address: Optional[str] = None,
+        keepalive_interval: float = 15.0,
+        base_backoff: float = 1.0,
+        max_backoff: float = 30.0,
     ):
         self.host = host
         self.port = port
@@ -95,6 +98,10 @@ class WahooBridgeServer:
         # BLE state (populated if --live and bleak is available)
         self._ble_hr: Optional[int] = None
         self._ble_task: Optional[asyncio.Task] = None
+        # Configurable parameters
+        self.keepalive_interval = keepalive_interval
+        self.base_backoff = base_backoff
+        self.max_backoff = max_backoff
 
     async def register(self, ws: Any):
         try:
@@ -319,7 +326,6 @@ class WahooBridgeServer:
 
         # Long-running BLE connect loop with reconnect/backoff
         attempt = 0
-        base_backoff = 1.0
         HR_UUID = "00002a37-0000-1000-8000-00805f9b34fb"
         while True:
             attempt += 1
@@ -469,7 +475,7 @@ class WahooBridgeServer:
                 LOG.exception("BLE connection loop error; will retry")
 
             # Exponential backoff before retrying
-            backoff = min(30.0, base_backoff * (2 ** max(0, attempt - 1)))
+            backoff = min(self.max_backoff, self.base_backoff * (2 ** max(0, attempt - 1)))
             LOG.info("Retrying BLE connect in %.1f seconds", backoff)
             try:
                 await asyncio.sleep(backoff)
@@ -509,14 +515,38 @@ def parse_args():
         default=None,
         help="Optional BLE device address/identifier to connect directly (preferable if multiple devices present)",
     )
+    p.add_argument(
+        "--keepalive-interval",
+        type=float,
+        default=15.0,
+        help="Interval (seconds) between keepalive battery reads to prevent supervision timeouts",
+    )
+    p.add_argument(
+        "--base-backoff",
+        type=float,
+        default=1.0,
+        help="Base backoff (seconds) used for exponential reconnect backoff",
+    )
+    p.add_argument(
+        "--max-backoff",
+        type=float,
+        default=30.0,
+        help="Maximum backoff (seconds) for reconnect attempts",
+    )
+    p.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Enable debug logging",
+    )
     return p.parse_args()
 
 
 def main():
-    logging.basicConfig(
-        level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s"
-    )
     args = parse_args()
+    logging.basicConfig(
+        level=logging.DEBUG if args.verbose else logging.INFO,
+        format="%(asctime)s %(levelname)s %(message)s",
+    )
 
     server = WahooBridgeServer(
         host=args.host,
@@ -524,6 +554,9 @@ def main():
         use_binary=True,
         mock=not args.live,
         ble_address=args.ble_address,
+        keepalive_interval=args.keepalive_interval,
+        base_backoff=args.base_backoff,
+        max_backoff=args.max_backoff,
     )
     try:
         asyncio.run(server.start())

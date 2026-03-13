@@ -63,7 +63,7 @@ pip install -r requirements.txt
 ### Basic usage (auto-discovery)
 
 ```bash
-python wahoo_ble_logger.py
+python python/wahoo_ble_logger.py
 ```
 
 The program will:
@@ -77,7 +77,7 @@ The program will:
 If auto-discovery doesn't work or you want to connect to specific devices:
 
 ```bash
-python wahoo_ble_logger.py --tickr-address AA:BB:CC:DD:EE:FF --kickr-address 11:22:33:44:55:66
+python python/wahoo_ble_logger.py --tickr-address AA:BB:CC:DD:EE:FF --kickr-address 11:22:33:44:55:66
 ```
 
 **Finding MAC addresses:**
@@ -90,15 +90,15 @@ python wahoo_ble_logger.py --tickr-address AA:BB:CC:DD:EE:FF --kickr-address 11:
 View raw BLE packets and parsing details:
 
 ```bash
-python wahoo_ble_logger.py --debug
+python python/wahoo_ble_logger.py --debug
 ```
 
 ### Starting the bridge + GUI (UnityIntegration)
 
 The repository provides convenience start scripts that launch the Python bridge and the optional GUI monitor together.
 
-- macOS: `UnityIntegration/START_WAHOO_BRIDGE.command` — double-click to open two Terminal windows; the GUI runs in a new window and the bridge runs in the original window. Both are started with the `--live` flag by default.
-- Windows: `UnityIntegration/START_WAHOO_BRIDGE.bat` — double-click to launch the GUI in a new window and the bridge in the current window; both are started with the `--live` flag.
+- macOS: `UnityIntegration/starters/START_WAHOO_BRIDGE.command` — double-click to open two Terminal windows; the GUI runs in a new window and the bridge runs in the original window. Both are started with the `--live` flag by default.
+- Windows: `UnityIntegration/starters/START_WAHOO_BRIDGE.bat` — double-click to launch the GUI in a new window and the bridge in the current window; both are started with the `--live` flag.
 
 If you prefer to run manually, run the bridge from the repo root with:
 
@@ -160,15 +160,15 @@ for row in cursor.fetchall():
   2. From the repository root run:
 
      ```powershell
-     .\UnityIntegration\START_WAHOO_BRIDGE.ps1
+     .\UnityIntegration\starters\START_WAHOO_BRIDGE.ps1
      ```
 
   The script prefers the repository virtualenv at `./.venv` if present. It will start the GUI monitor and the bridge with the `--live` flag.
 
-- You can also double-click `UnityIntegration\START_WAHOO_BRIDGE.bat` to start both the GUI and bridge in separate windows.
+- You can also double-click `UnityIntegration\starters\START_WAHOO_BRIDGE.bat` to start both the GUI and bridge in separate windows.
 
 Notes:
-- Make sure to run `UnityIntegration\INSTALL.bat` first to create the `.venv` and install dependencies on Windows.
+- Make sure to run `UnityIntegration\starters\INSTALL.bat` first to create the `.venv` and install dependencies on Windows.
 - If running headless or as a service, consider using Task Scheduler or NSSM to manage the bridge process.
 
 ### Linux
@@ -228,7 +228,7 @@ On Linux/macOS, you can use `screen` or `tmux`:
 
 ```bash
 screen -S wahoo
-python wahoo_ble_logger.py
+python python/wahoo_ble_logger.py
 # Press Ctrl+A, then D to detach
 # Reattach with: screen -r wahoo
 ```
@@ -252,7 +252,7 @@ The logger appends to the database. To start fresh for each workout:
 mv training.db training_backup_$(date +%Y%m%d_%H%M%S).db
 
 # Run logger (will create new database)
-python wahoo_ble_logger.py
+python python/wahoo_ble_logger.py
 ```
 
 ## Technical Details
