@@ -47,9 +47,6 @@ training.db
 # Capture debug dirs
 wahoo_bridge_capture_*/
 
-# Generated data output
-collector_out/
-
 # Coverage / test caches
 .coverage
 .mypy_cache/
