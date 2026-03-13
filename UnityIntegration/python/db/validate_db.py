@@ -19,6 +19,7 @@ DB_PATH = os.path.join('collector_out', 'vrs.sqlite')
 
 
 def float_ok(x):
+    """Return True if *x* can be cast to a finite float (not NaN, not ±Inf)."""
     try:
         v = float(x)
     except Exception:
@@ -27,6 +28,15 @@ def float_ok(x):
 
 
 def validate_headpose(conn):
+    """Check every headpose row for finite floats and a valid quaternion norm.
+
+    A unit quaternion representing a rotation must satisfy:
+      ||q|| = sqrt(qx² + qy² + qz² + qw²) ≈ 1.0
+
+    We allow ±0.1 tolerance to account for floating-point rounding in the
+    Unity writer and struct pack/unpack round-trips.  Values outside that
+    range indicate corrupted or un-normalised rotation data.
+    """
     cur = conn.cursor()
     cur.execute('SELECT session_id, seq, px, py, pz, qx, qy, qz, qw FROM headpose')
     problems = []
@@ -37,6 +47,7 @@ def validate_headpose(conn):
         if not all(float_ok(v) for v in (px, py, pz, qx, qy, qz, qw)):
             problems.append(f'headpose non-float in session {sid} seq {seq}')
             continue
+        # Quaternion norm: sqrt(qx² + qy² + qz² + qw²) should be ≈ 1.0
         norm = math.sqrt(qx*qx + qy*qy + qz*qz + qw*qw)
         if abs(norm - 1.0) > 0.1:
             problems.append(f'headpose quaternion norm off ({norm:.3f}) session {sid} seq {seq}')

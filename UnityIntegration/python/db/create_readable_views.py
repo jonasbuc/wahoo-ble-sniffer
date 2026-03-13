@@ -24,7 +24,9 @@ VIEWS = [
         SELECT
           session_id,
           recv_ts_ns,
+          -- nanoseconds → milliseconds (÷ 1 000 000) for spreadsheet-friendly timestamps
           (recv_ts_ns/1000000) AS recv_ts_ms,
+          -- nanoseconds → seconds → SQLite datetime → append "Z" for explicit UTC
           datetime(recv_ts_ns/1000000000.0, 'unixepoch') || 'Z' AS recv_ts_iso,
           seq, unity_t, px, py, pz, qx, qy, qz, qw
         FROM headpose;
@@ -66,8 +68,10 @@ VIEWS = [
           (recv_ts_ns/1000000) AS recv_ts_ms,
           datetime(recv_ts_ns/1000000000.0, 'unixepoch') || 'Z' AS recv_ts_iso,
           seq, unity_t, json,
+          -- Convenience columns extracted from the JSON payload so you can
+          -- filter/group by event name without parsing JSON in every query.
           json_extract(json, '$.evt') AS evt_name,
-          json_extract(json, '$.i') AS evt_i
+          json_extract(json, '$.i')   AS evt_i
         FROM events;
         """,
     ),
@@ -78,6 +82,7 @@ VIEWS = [
         SELECT
           session_id,
           started_unix_ms,
+          -- milliseconds → seconds → SQLite datetime (÷ 1000)
           datetime(started_unix_ms/1000.0, 'unixepoch') || 'Z' AS started_unix_iso,
           session_dir
         FROM sessions;

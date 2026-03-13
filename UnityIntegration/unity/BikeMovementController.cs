@@ -85,9 +85,10 @@ public class BikeMovementController : MonoBehaviour
         // Use the smoothed values from receiver for smooth movement
         float smoothSpeed = wahooReceiver.Speed;  // Already smoothed!
         
-        // Convert km/h to Unity units per second
-        // km/h → m/s: divide by 3.6
-        // Then multiply by your world scale
+        // Convert km/h to Unity units per second (m/s in a 1:1 world scale).
+        // Formula: speed_m/s = speed_km/h ÷ 3.6
+        // speedMultiplier lets you scale the real-world speed to the virtual
+        // world (e.g. 0.5 means the avatar moves at half the real-world pace).
         float moveSpeed = (smoothSpeed / 3.6f) * speedMultiplier;
         
         // Move forward based on speed
@@ -115,6 +116,7 @@ public class BikeMovementController : MonoBehaviour
         }
         
         // METHOD 1: Transform movement (simple, works always)
+        // Move the transform directly — no physics simulation involved.
         if (!useRigidbody && characterController == null)
         {
             // Move forward in local space
@@ -122,6 +124,7 @@ public class BikeMovementController : MonoBehaviour
         }
         
         // METHOD 2: CharacterController (if you have one)
+        // CharacterController.SimpleMove handles collision response and gravity.
         else if (characterController != null)
         {
             Vector3 moveDirection = transform.forward * speed;
@@ -129,10 +132,12 @@ public class BikeMovementController : MonoBehaviour
         }
         
         // METHOD 3: Rigidbody physics (if you have physics)
+        // Set velocity directly rather than using AddForce to match sensor speed
+        // exactly, while preserving the vertical component for gravity.
         else if (useRigidbody && rb != null)
         {
             Vector3 velocity = transform.forward * speed;
-            velocity.y = rb.velocity.y;  // Preserve gravity
+            velocity.y = rb.velocity.y;  // Preserve vertical velocity (gravity / jumping)
             rb.velocity = velocity;
         }
     }

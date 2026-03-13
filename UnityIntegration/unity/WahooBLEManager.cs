@@ -71,7 +71,12 @@ public class WahooBLEManager : MonoBehaviour
     {
         Debug.Log("[WahooBLE] Initializing...");
 
-        // Request permissions on Android
+        // Request permissions on Android (required from API level 31 / Android 12+)
+        // BLE scanning and connecting are split into separate permissions:
+        //   BLUETOOTH_SCAN    – allows scanning for nearby devices
+        //   BLUETOOTH_CONNECT – allows connecting to paired/discovered devices
+        // FineLocation is still required on older Android versions (< API 31) to
+        // receive BLE advertisement results.
         #if UNITY_ANDROID
         if (!Permission.HasUserAuthorizedPermission(Permission.FineLocation))
         {
@@ -268,13 +273,20 @@ public class WahooBLEManager : MonoBehaviour
 
         try
         {
+            // Cycling Power Measurement characteristic layout (Bluetooth SIG):
+            //   Bytes 0-1 : Flags (uint16 LE) — bitmask of optional fields present
+            //   Bytes 2-3 : Instantaneous Power (int16 LE) — always present, in Watts
+            // Additional optional fields (crank revolutions, wheel revolutions, etc.)
+            // follow bytes 3+ depending on flag bits, but we only need power here.
             ushort flags = BitConverter.ToUInt16(data, 0);
-            short power = BitConverter.ToInt16(data, 2);
+            short power  = BitConverter.ToInt16(data, 2);  // signed; negative = regeneration
 
             currentPower = power;
 
             if (enableSmoothing)
             {
+                // Exponential moving average: new = Lerp(old, current, alpha)
+                // alpha = 1 - smoothingFactor; smaller smoothingFactor → more smoothing
                 float alpha = 1f - smoothingFactor;
                 smoothedPower = Mathf.Lerp(smoothedPower, currentPower, alpha);
             }
@@ -298,15 +310,24 @@ public class WahooBLEManager : MonoBehaviour
 
         try
         {
-            byte flags = data[0];
-            bool isUint16 = (flags & 0x01) != 0;
+            // Heart Rate Measurement characteristic layout (Bluetooth SIG 0x2A37):
+            //   Byte 0   : Flags (uint8) — bitmask
+            //     Bit 0  : HR Format — 0 = uint8 value in byte 1
+            //                         1 = uint16 value in bytes 1-2
+            //     Bit 4  : RR-Interval Present (we ignore this for simplicity)
+            //   Byte 1   : Heart Rate value (uint8, or low byte of uint16)
+            //   Byte 2   : Heart Rate high byte (only present when bit 0 of flags = 1)
+            byte flags    = data[0];
+            bool isUint16 = (flags & 0x01) != 0;  // bit 0 set → 16-bit HR value
 
             if (isUint16)
             {
+                // Some high-end sensors send 16-bit values for HR > 255 bpm (rare)
                 currentHeartRate = BitConverter.ToUInt16(data, 1);
             }
             else
             {
+                // Standard 8-bit HR value (covers normal physiological range 0-255)
                 currentHeartRate = data[1];
             }
 

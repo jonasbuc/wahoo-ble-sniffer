@@ -18,15 +18,26 @@ DB = "collector_out/vrs.sqlite"
 
 
 def ns_to_iso(ns: int) -> str:
+    """Convert a nanosecond Unix timestamp to an ISO 8601 UTC string.
+
+    Steps: ns ÷ 1_000_000 → milliseconds
+           ms ÷ 1000      → seconds (float)  → datetime.utcfromtimestamp
+           append "Z"     → explicit UTC marker
+    """
     try:
-        ms = ns // 1_000_000
-        ts = datetime.datetime.utcfromtimestamp(ms / 1000.0)
+        ms = ns // 1_000_000          # nanoseconds → milliseconds (integer division)
+        ts = datetime.datetime.utcfromtimestamp(ms / 1000.0)  # ms → seconds
         return ts.isoformat() + "Z"
     except Exception:
         return "-"
 
 
 def ms_to_iso(ms: int) -> str:
+    """Convert a millisecond Unix timestamp to an ISO 8601 UTC string.
+
+    Steps: ms ÷ 1000 → seconds (float) → datetime.utcfromtimestamp
+           append "Z" → explicit UTC marker
+    """
     try:
         ts = datetime.datetime.utcfromtimestamp(ms / 1000.0)
         return ts.isoformat() + "Z"

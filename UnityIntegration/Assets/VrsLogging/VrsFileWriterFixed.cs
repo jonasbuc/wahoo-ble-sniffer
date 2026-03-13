@@ -9,12 +9,41 @@ using UnityEngine;
 
 namespace VrsLogging
 {
+    /// <summary>
+    /// Background-thread VRSF file writer for fixed-size record streams
+    /// (headpose = 36 B, bike = 20 B, hr = 12 B).
+    ///
+    /// Architecture
+    /// ------------
+    /// Producers (Unity Update/FixedUpdate callbacks) call <see cref="Enqueue"/>
+    /// with a pre-filled record byte array.  A dedicated background thread
+    /// drains the <see cref="ConcurrentQueue{T}"/> every <c>chunkIntervalMs</c>
+    /// milliseconds, bundles all dequeued records into a single VRSF chunk,
+    /// computes CRCs, and writes the chunk atomically to disk.
+    ///
+    /// CRC order (important!)
+    /// ----------------------
+    /// 1. Fill the header with PayloadCRC32 = 0 and HeaderCRC32 = 0.
+    /// 2. Copy all records into the payload region.
+    /// 3. Compute PayloadCRC32 over the payload bytes → write into header offset 32.
+    /// 4. Copy the 40-byte header, zero bytes 28-35, compute HeaderCRC32 → write into header offset 28.
+    /// The Python collector verifies in this same order.
+    ///
+    /// Memory management
+    /// -----------------
+    /// The large per-chunk buffer is rented from <see cref="ArrayPool{T}.Shared"/>
+    /// and returned in the finally block so no large allocations are kept alive.
+    /// Individual record arrays enqueued by producers are also returned to the
+    /// pool after being copied into the chunk buffer.
+    /// </summary>
     public class VrsFileWriterFixed : IDisposable
     {
         readonly string _path;
         readonly byte _streamId;
         readonly ulong _sessionId;
         readonly int _recordSize;
+        // Thread-safe queue: producers call Enqueue() from any thread;
+        // the background Run() thread drains it.
         readonly ConcurrentQueue<byte[]> _queue = new ConcurrentQueue<byte[]>();
         readonly Thread _thread;
         readonly int _chunkIntervalMs;
@@ -63,12 +92,12 @@ namespace VrsLogging
                 {
                     var batch = new List<byte[]>();
                     int drained = 0;
+                    // Drain up to 8192 records at once to bound chunk size.
                     while (_queue.TryDequeue(out var item))
                     {
                         batch.Add(item);
                         drained++;
-                        // prevent too large batches; can be tuned
-                        if (drained >= 8192) break;
+                        if (drained >= 8192) break;  // safety cap — tunable
                     }
 
                     if (batch.Count == 0)
@@ -102,15 +131,21 @@ namespace VrsLogging
 
         void WriteChunk(List<byte[]> records)
         {
-            uint recordCount = (uint)records.Count;
+            uint recordCount  = (uint)records.Count;
             uint payloadBytes = (uint)(recordCount * _recordSize);
-            int totalSize = VrsFormats.HeaderSize + (int)payloadBytes;
+            int  totalSize    = VrsFormats.HeaderSize + (int)payloadBytes;
+
+            // Rent a single contiguous buffer large enough for header + payload.
+            // Using ArrayPool avoids a heap allocation on every chunk write.
             var buffer = ArrayPool<byte>.Shared.Rent(totalSize);
             try
             {
                 var span = new Span<byte>(buffer, 0, totalSize);
-                // write header with zeros for CRCs
+
+                // Step 1: write header with both CRC fields = 0 (placeholders).
                 VrsFormats.WriteChunkHeader(span.Slice(0, VrsFormats.HeaderSize), _streamId, _sessionId, _chunkSeq++, recordCount, payloadBytes);
+
+                // Step 2: copy all fixed-size records sequentially into the payload region.
                 var payloadSpan = span.Slice(VrsFormats.HeaderSize, (int)payloadBytes);
                 int offset = 0;
                 for (int i = 0; i < records.Count; i++)
@@ -120,33 +155,33 @@ namespace VrsLogging
                     offset += _recordSize;
                 }
 
-                // compute payload crc
+                // Step 3: compute and write PayloadCRC32 (offset 32 in header).
                 uint payloadCrc = VrsCrc32.Compute(payloadSpan);
-                // write payload crc into header
                 BinaryPrimitives.WriteUInt32LittleEndian(span.Slice(32,4), payloadCrc);
 
-                // compute header crc with crc fields zeroed
-                // set header crc bytes to zero in a copy
+                // Step 4: compute HeaderCRC32 over the header with BOTH CRC fields zeroed.
+                // Must zero bytes 28-35 (HeaderCRC32 + PayloadCRC32) in a copy before
+                // computing — zeroing in a copy avoids disturbing the actual PayloadCRC32
+                // we just wrote at offset 32.
                 var headerCopy = new byte[VrsFormats.HeaderSize];
                 span.Slice(0, VrsFormats.HeaderSize).CopyTo(headerCopy);
-                // zero header_crc (offset 28..31) and payload_crc (32..35)
-                for (int i = 28; i < 36; i++) headerCopy[i] = 0;
+                for (int i = 28; i < 36; i++) headerCopy[i] = 0;  // zero both CRC fields
                 uint headerCrc = VrsCrc32.Compute(headerCopy);
                 BinaryPrimitives.WriteUInt32LittleEndian(span.Slice(28,4), headerCrc);
 
-                // now write to file
+                // Step 5: write the complete chunk (header + payload) to the file stream.
                 _fs.Write(span);
-                _totalBytes += totalSize;
+                _totalBytes   += totalSize;
                 _totalRecords += recordCount;
                 _lastChunkCount = (int)recordCount;
             }
             finally
             {
-                // return buffers and let writer manage lifecycle of record arrays
+                // Return the rented chunk buffer to the pool immediately.
                 ArrayPool<byte>.Shared.Return(buffer);
+                // Return each individual record array that was rented by the producer.
                 foreach (var r in records)
                 {
-                    // return record arrays to pool if they were rented by producer (they should be)
                     try { ArrayPool<byte>.Shared.Return(r); } catch { }
                 }
             }

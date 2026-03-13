@@ -9,6 +9,17 @@ using UnityEngine;
 
 namespace VrsLogging
 {
+    /// <summary>
+    /// Background-thread VRSF file writer for the variable-length events stream (stream 4).
+    ///
+    /// Identical architecture to <see cref="VrsFileWriterFixed"/> except:
+    /// - Records are variable length (each is a framed byte array produced by
+    ///   <c>VrsFormats.WriteEventRecord</c>).
+    /// - PayloadBytes is the sum of all record lengths rather than count × fixed_size.
+    ///
+    /// CRC order is the same as VrsFileWriterFixed:
+    ///   PayloadCRC32 first (offset 32), then HeaderCRC32 (offset 28).
+    /// </summary>
     public class VrsFileWriterEvents : IDisposable
     {
         readonly string _path;
@@ -99,14 +110,20 @@ namespace VrsLogging
         void WriteChunk(List<byte[]> records)
         {
             uint recordCount = (uint)records.Count;
+            // For variable-length events, sum the actual byte lengths.
             uint payloadBytes = 0;
             foreach (var r in records) payloadBytes += (uint)r.Length;
             int totalSize = VrsFormats.HeaderSize + (int)payloadBytes;
+
             var buffer = ArrayPool<byte>.Shared.Rent(totalSize);
             try
             {
                 var span = new Span<byte>(buffer, 0, totalSize);
+
+                // Step 1: write header (both CRC fields = 0).
                 VrsFormats.WriteChunkHeader(span.Slice(0, VrsFormats.HeaderSize), _streamId, _sessionId, _chunkSeq++, recordCount, payloadBytes);
+
+                // Step 2: concatenate variable-length event records into the payload.
                 var payloadSpan = span.Slice(VrsFormats.HeaderSize, (int)payloadBytes);
                 int offset = 0;
                 foreach (var r in records)
@@ -115,17 +132,20 @@ namespace VrsLogging
                     offset += r.Length;
                 }
 
+                // Step 3: payload CRC → header offset 32.
                 uint payloadCrc = VrsCrc32.Compute(payloadSpan);
                 BinaryPrimitives.WriteUInt32LittleEndian(span.Slice(32,4), payloadCrc);
 
+                // Step 4: header CRC (zero both CRC fields in copy, then compute) → header offset 28.
                 var headerCopy = new byte[VrsFormats.HeaderSize];
                 span.Slice(0, VrsFormats.HeaderSize).CopyTo(headerCopy);
                 for (int i = 28; i < 36; i++) headerCopy[i] = 0;
                 uint headerCrc = VrsCrc32.Compute(headerCopy);
                 BinaryPrimitives.WriteUInt32LittleEndian(span.Slice(28,4), headerCrc);
 
+                // Step 5: write to file.
                 _fs.Write(span);
-                _totalBytes += totalSize;
+                _totalBytes  += totalSize;
                 _totalEvents += recordCount;
                 _lastChunkCount = (int)recordCount;
             }

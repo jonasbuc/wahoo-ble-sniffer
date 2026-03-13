@@ -1,16 +1,47 @@
 #!/usr/bin/env python3
 """
-Authoritative Wahoo BLE → WebSocket bridge
+wahoo_unity_bridge.py — Authoritative Wahoo BLE → WebSocket bridge
+====================================================================
+This is the canonical real-time bridge for the project.  It runs a
+WebSocket server (default port 8765) that streams cycling data to any
+number of Unity clients (or other WebSocket consumers).
 
-This file is the canonical bridge implementation for the project. It runs a
-WebSocket server that broadcasts cycling frames to connected clients. By
-default it runs a mock data generator (safe for testing). If `--live` is
-specified and bleak is available, it will attempt to read BLE devices.
+Modes
+-----
+* **Mock mode** (default / ``--mock``): generates simulated HR data with a
+  sine-wave variation and random noise so the Unity scene can be tested
+  without any physical hardware.
+* **Live mode** (``--live``): scans for a Wahoo TICKR via bleak, subscribes to
+  Heart Rate GATT notifications, and forwards the real BPM to clients.
 
-Robustness features:
+Wire format
+-----------
+Every broadcast frame is a 24-byte binary struct:
+
+  ``struct.pack("dfffi", timestamp, power, cadence, speed, hr)``
+
+  +-----------+--------+-------+-------------------------------------------+
+  | Field     | Type   | Bytes | Notes                                     |
+  +===========+========+=======+===========================================+
+  | timestamp | double |   8   | Unix epoch seconds (float)                |
+  | power     | float  |   4   | Watts (0.0 when only HR is available)     |
+  | cadence   | float  |   4   | RPM  (0.0 when only HR is available)      |
+  | speed     | float  |   4   | km/h (0.0 when only HR is available)      |
+  | hr        | int32  |   4   | Heart rate in BPM                         |
+  +-----------+--------+-------+-------------------------------------------+
+
+On connection the server also sends a JSON handshake so clients know the
+protocol version and supported data modes.
+
+Robustness features
+-------------------
 - Validates binary frame length before unpacking
 - Catches struct errors and logs parse problems without crashing
-- Graceful client handling and broadcasting with cleanup
+- Graceful per-client error handling — one bad client cannot kill others
+- UDP listener for external trigger events (e.g. from Arduino or Unity)
+- Exponential reconnect backoff for BLE
+- Periodic battery keepalive reads to prevent BLE supervision timeouts
+- Ping loop to detect and evict dead WebSocket connections
 """
 
 import argparse
@@ -29,49 +60,82 @@ except Exception:
 
 LOG = logging.getLogger("wahoo_bridge")
 
-# Conditional BLE support
+# ── Optional BLE support (bleak) ─────────────────────────────────────────────
+# bleak is not a hard dependency so the bridge can run in mock mode without it.
 HAVE_BLEAK = False
 try:
     from bleak import BleakClient, BleakScanner
-
     HAVE_BLEAK = True
 except Exception:
     HAVE_BLEAK = False
 
 
 class MockCyclingData:
+    """Generates simulated cycling data for testing without hardware.
+
+    The heart rate oscillates around a ``base_hr`` value using a sine wave
+    (period ~31 s) plus small random noise, mimicking a realistic HR trace.
+    Power, cadence and speed are intentionally left at 0 because the live
+    bridge only populates HR; keeping them zero preserves binary compatibility.
+    """
+
     def __init__(self):
-        self.time_offset = time.time()
-        self.base_power = 150
-        self.base_cadence = 80
-        self.base_speed = 25.0
-        self.base_hr = 140
-        self.cycle_duration = 20
-        self.stop_duration = 5
+        self.time_offset = time.time()   # reference epoch for elapsed-time calculations
+        self.base_power = 150            # W (unused in current protocol — kept for reference)
+        self.base_cadence = 80           # RPM (unused)
+        self.base_speed = 25.0           # km/h (unused)
+        self.base_hr = 140               # BPM — centre of the simulated HR range
+        self.cycle_duration = 20         # s — period of the ride/rest cycle (legacy, unused)
+        self.stop_duration = 5           # s (legacy, unused)
 
     def get_binary_frame(self):
+        """Return a 24-byte binary frame with simulated HR data.
+
+        Format: ``struct.pack("dfffi", timestamp, power, cadence, speed, hr)``
+        Power, cadence, and speed are always 0.0 in this mock.
+        """
         now = time.time()
         elapsed = now - self.time_offset
-        # We only care about heart rate now. Keep other fields zero for
-        # compatibility with existing binary protocol (dfffi) but populate
-        # only the HR value.
         import math
         import random
 
-        # Simulate modest HR variation over time
+        # Sine-wave HR variation with period ≈ 31 s (2π / 0.2)
         hr_variation = math.sin(elapsed * 0.2) * 8.0
-        micro_noise = random.uniform(-2.0, 2.0)
+        micro_noise  = random.uniform(-2.0, 2.0)
         hr = max(40, int(self.base_hr + hr_variation + micro_noise))
 
-        power = 0.0
+        # Power / cadence / speed are zeroed — only HR is used by the live bridge
+        power   = 0.0
         cadence = 0.0
-        speed = 0.0
+        speed   = 0.0
 
-        # Binary format: dfffi (timestamp, power, cadence, speed, hr)
+        # Pack into the 24-byte wire format: d(8) f(4) f(4) f(4) i(4) = 24 bytes
         return struct.pack("dfffi", now, float(power), float(cadence), float(speed), int(hr))
 
 
 class WahooBridgeServer:
+    """WebSocket server that bridges Wahoo BLE data to Unity clients.
+
+    Lifecycle
+    ---------
+    ``start()`` is the entry point.  It:
+      1. Optionally launches a BLE background task (``_start_ble``) when
+         ``--live`` is passed and bleak is installed.
+      2. Opens the WebSocket server (``websockets.serve``).
+      3. Binds a UDP socket for external trigger events from Arduino/Unity.
+      4. Runs ``broadcast_loop`` and ``ping_loop`` concurrently.
+
+    Each Unity client that connects calls ``register()``, which:
+      - Sends a JSON handshake announcing the protocol version.
+      - Forwards any ``"event"`` JSON messages from the client to all others.
+
+    Attributes
+    ----------
+    clients     : set of open WebSocket connections
+    _ble_hr     : most-recently-received BLE heart-rate value (None until first read)
+    _ble_task   : asyncio Task for the BLE connect/reconnect loop
+    """
+
     def __init__(
         self,
         host: str = "localhost",
@@ -87,27 +151,38 @@ class WahooBridgeServer:
     ):
         self.host = host
         self.port = port
-        self.use_binary = use_binary
-        self.mock = mock
-        self.udp_host = udp_host
-        self.udp_port = udp_port
-        self.ble_address = ble_address
-        self.clients: Set[Any] = set()
+        self.use_binary = use_binary   # True = send binary frames; False = send JSON
+        self.mock = mock               # True = use MockCyclingData; False = use BLE
+        self.udp_host = udp_host       # Host to bind the UDP trigger listener on
+        self.udp_port = udp_port       # Port to bind the UDP trigger listener on
+        self.ble_address = ble_address # Optional BLE device address to connect to directly
+        self.clients: Set[Any] = set() # Active WebSocket connections
         self.running = False
-        self.mockgen = MockCyclingData()
-        # BLE state (populated if --live and bleak is available)
+        self.mockgen = MockCyclingData()   # Simulated data generator (used in mock mode)
+        # BLE state (populated by _start_ble() once a TICKR is connected)
         self._ble_hr: Optional[int] = None
         self._ble_task: Optional[asyncio.Task] = None
-        # Configurable parameters
-        self.keepalive_interval = keepalive_interval
-        self.base_backoff = base_backoff
-        self.max_backoff = max_backoff
+        # Reconnect backoff parameters for the BLE connect loop
+        self.keepalive_interval = keepalive_interval  # seconds between battery reads
+        self.base_backoff = base_backoff               # initial backoff (seconds)
+        self.max_backoff = max_backoff                 # cap on backoff (seconds)
 
     async def register(self, ws: Any):
+        """Handle a single WebSocket client for its entire lifetime.
+
+        Called by ``websockets.serve`` for every new connection.
+        Steps:
+          1. Add the websocket to the ``clients`` set.
+          2. Send a JSON handshake so the client knows the protocol.
+          3. Listen for incoming messages — JSON events are forwarded to all
+             other clients (e.g. Hall-effect trigger events from Unity).
+          4. On disconnect/error, remove the client from the set.
+        """
         try:
             self.clients.add(ws)
             LOG.info("Client connected %s", ws.remote_address)
-            # send handshake
+
+            # Handshake: tell the client which protocol variant is in use
             handshake = json.dumps(
                 {
                     "protocol": "binary" if self.use_binary else "json",
@@ -117,21 +192,20 @@ class WahooBridgeServer:
             )
             await ws.send(handshake)
 
-            # Receive messages from this client and handle them (event proxying)
+            # Receive messages from this client and proxy event JSON to all others
             async for message in ws:
                 try:
-                    # If we get JSON with an "event" field, forward it to all clients
                     if isinstance(message, str):
                         try:
                             data = json.loads(message)
                         except Exception:
                             data = None
                         if data and isinstance(data, dict) and "event" in data:
-                            # Broadcast event JSON to all connected clients
+                            # Client sent an event (e.g. spawn, hall_hit) — relay it
                             await self.broadcast_json(data, exclude=ws)
-                        # otherwise ignore
+                        # Non-event JSON is silently ignored
                     else:
-                        # Binary data from client - not expected; ignore
+                        # Binary data from clients is not expected in this direction
                         pass
                 except Exception as e:
                     LOG.debug(
@@ -140,11 +214,24 @@ class WahooBridgeServer:
         except Exception as e:
             LOG.debug("Client handling error: %s", e)
         finally:
+            # Always clean up, even if an exception occurred mid-connection
             if ws in self.clients:
                 self.clients.discard(ws)
                 LOG.info("Client disconnected %s", ws.remote_address)
 
     async def broadcast_loop(self):
+        """Continuously broadcast live data to all connected clients at ~20 Hz.
+
+        If running in *live* mode (``--live``), waits until ``_ble_hr`` is
+        populated by the BLE task before sending anything.
+
+        Each iteration:
+          1. Pack a 24-byte ``dfffi`` binary frame with the current HR value.
+          2. Send the frame to every connected client; remove any that fail.
+          3. Log the HR value once per second for monitoring.
+
+        The loop sleeps 50 ms between iterations (~20 Hz cadence).
+        """
         LOG.info("Starting broadcast loop on ws://%s:%d", self.host, self.port)
         self.running = True
         last_log = 0
@@ -152,19 +239,20 @@ class WahooBridgeServer:
             while self.running:
                 message = None
                 if self.clients:
-                    # Only broadcast real BLE-sourced measurements.
-                    # If we don't yet have BLE data, skip broadcasting until available.
+                    # In live mode, hold off until the BLE task delivers the first HR reading
                     if self._ble_hr is None:
-                        # Nothing to broadcast yet; wait a short time
                         await asyncio.sleep(0.05)
                         continue
-                    # pack timestamp + zeroed power/cadence/speed + HR
+
+                    # Build the 24-byte binary frame:
+                    # d = timestamp (8 bytes), f = power (4), f = cadence (4),
+                    # f = speed (4), i = hr int32 (4) → total 24 bytes
                     message = struct.pack(
                         "dfffi", time.time(), 0.0, 0.0, 0.0, int(self._ble_hr)
                     )
 
-                    # Broadcast with safe per-client send
                     if message is not None:
+                        # Send to every client; on any error remove the offending client
                         for c in list(self.clients):
                             try:
                                 await c.send(message)
@@ -178,7 +266,7 @@ class WahooBridgeServer:
                                 except Exception:
                                     pass
 
-                    # Log once per second
+                    # Log HR once per wall-clock second (avoids log flooding at 20 Hz)
                     now = int(time.time())
                     if now != last_log and message is not None:
                         last_log = now
@@ -187,17 +275,24 @@ class WahooBridgeServer:
                                 _ts, _power, _cadence, _speed, hr = struct.unpack(
                                     "dfffi", message[:24]
                                 )
-                                # We only publish heart-rate now; other fields are
-                                # zero for compatibility. Log HR for quick inspection.
                                 LOG.info("HR:%dbpm", hr)
                         except struct.error:
                             LOG.debug("Could not parse broadcast frame for logging")
 
+                # ~20 Hz cadence
                 await asyncio.sleep(0.05)
         except asyncio.CancelledError:
             LOG.info("Broadcast loop cancelled")
 
     async def start(self):
+        """Start the full server stack.
+
+        1. Launch the BLE task (if ``--live`` and bleak is available).
+        2. Open the WebSocket server (binds ``self.host:self.port``).
+        3. Bind a UDP socket for external trigger events.
+        4. Run ``broadcast_loop`` + ``ping_loop`` concurrently until cancelled.
+        5. On shutdown: cancel tasks, close the UDP transport.
+        """
         LOG.info(
             "Starting WahooBridgeServer (mock=%s) on %s:%d",
             self.mock,
@@ -241,7 +336,13 @@ class WahooBridgeServer:
                     pass
 
     async def broadcast_json(self, data: dict, exclude: Optional[Any] = None):
-        """Broadcast a JSON dict to all connected clients (optionally excluding the sender)."""
+        """Broadcast a JSON-serialisable dict to every connected client.
+
+        Args:
+            data:    The dict to serialise and send.
+            exclude: If provided, skip this specific websocket (used to avoid
+                     echoing a message back to the sender).
+        """
         text = json.dumps(data)
         for c in list(self.clients):
             if c is exclude:
@@ -258,27 +359,34 @@ class WahooBridgeServer:
                 except Exception:
                     pass
 
-    # --- UDP listener for external trigger events (Arduino/Unity) ---
+    # ── UDP trigger listener ─────────────────────────────────────────────────
+    # An Arduino or Unity script can send plain ASCII strings (e.g. "HALL_HIT")
+    # or JSON objects to this UDP port.  The listener normalises them into JSON
+    # event dicts and broadcasts them to all WebSocket clients.
     class _UDPProtocol(asyncio.DatagramProtocol):
+        """asyncio protocol that receives UDP datagrams and relays them as JSON events."""
+
         def __init__(self, server: "WahooBridgeServer"):
             self.server = server
 
         def datagram_received(self, data: bytes, addr: Tuple[str, int]):
+            """Called by asyncio when a UDP datagram arrives."""
             try:
                 text = data.decode("utf-8", errors="ignore").strip()
             except Exception:
                 text = ""
-            # Schedule async handling on the running loop
+            # Dispatch async handling without blocking the protocol callback
             try:
                 asyncio.create_task(self._handle(text, addr))
             except Exception:
-                # If loop not running or create_task fails, try to call broadcast directly
                 pass
 
         async def _handle(self, text: str, addr: Tuple[str, int]):
+            """Parse the raw UDP text and broadcast it as a JSON event."""
             if not text:
                 return
-            # If caller sends JSON, forward as-is
+
+            # If the sender already provided valid JSON, use it directly
             data = None
             if text.startswith("{"):
                 try:
@@ -287,22 +395,22 @@ class WahooBridgeServer:
                     data = None
 
             if data is None:
-                # Map simple ASCII trigger strings to event names
+                # Map known ASCII trigger strings to canonical event names
                 mapping = {
-                    "HALL_HIT": "hall_hit",
-                    "HIT": "hall_hit",
+                    "HALL_HIT":   "hall_hit",
+                    "HIT":        "hall_hit",
                     "SWITCH_HIT": "switch_hit",
                     "Switch HIT": "switch_hit",
                 }
-                evt = mapping.get(text, text)
+                evt = mapping.get(text, text)   # fall back to the raw string as event name
                 data = {
                     "event": evt,
-                    "raw": text,
+                    "raw":   text,
                 }
 
-            # Attach metadata
-            data.setdefault("source", "udp")
-            data.setdefault("addr", f"{addr[0]}:{addr[1]}")
+            # Attach metadata so clients can filter by source
+            data.setdefault("source",    "udp")
+            data.setdefault("addr",      f"{addr[0]}:{addr[1]}")
             data.setdefault("timestamp", time.time())
 
             try:
@@ -311,32 +419,42 @@ class WahooBridgeServer:
             except Exception:
                 LOG.debug("Failed to broadcast UDP event: %s", data)
 
-    # --- BLE helpers ---
+    # ── BLE helpers ──────────────────────────────────────────────────────────
 
     async def _start_ble(self):
-        """Scan and connect to a BLE device that exposes Heart Rate measurement.
+        """Scan for a Wahoo TICKR and stream HR notifications into ``self._ble_hr``.
 
-        This is a minimal implementation: it looks for the first device and
-        subscribes to the HR measurement characteristic (0x2A37) if present.
-        Received HR values are stored in self._ble_hr and used in broadcasts.
+        This coroutine runs for the entire server lifetime.  It:
+          1. Scans for nearby BLE devices.
+          2. Picks the device matching ``self.ble_address`` (if set) or the
+             first device whose name contains "tickr" (case-insensitive).
+          3. Connects via BleakClient and subscribes to the HR measurement
+             characteristic (UUID ``0x2A37``).
+          4. Performs periodic battery-level reads as a keepalive to prevent
+             the BLE link from timing out on macOS.
+          5. On disconnect, applies exponential backoff and retries from step 1.
+
+        ``self._ble_hr`` is updated by the ``hr_handler`` notification callback
+        and read by ``broadcast_loop`` to build outgoing frames.
         """
         if not HAVE_BLEAK:
             LOG.info("Bleak not available; live BLE mode disabled")
             return
 
-        # Long-running BLE connect loop with reconnect/backoff
+        # Attempt counter used to calculate exponential backoff delay
         attempt = 0
-        HR_UUID = "00002a37-0000-1000-8000-00805f9b34fb"
+        HR_UUID = "00002a37-0000-1000-8000-00805f9b34fb"  # Heart Rate Measurement char
         while True:
             attempt += 1
             try:
                 LOG.info("Starting BLE scan (looking for HR devices)... attempt %d", attempt)
+                # Passive BLE scan — discovers all advertising devices within range
                 devices = await BleakScanner.discover(timeout=5.0)
                 if not devices:
                     LOG.info("No BLE devices found during scan; will retry")
                     raise RuntimeError("no_devices")
 
-                # If a specific address was supplied prefer it
+                # If the user supplied a specific address, prefer it
                 target = None
                 if self.ble_address:
                     for d in devices:
@@ -344,9 +462,7 @@ class WahooBridgeServer:
                             target = d
                             break
 
-                # Restrict connections to Wahoo TICKR devices only (by name)
-                # If a ble_address was provided above it will be used; otherwise
-                # find the first device whose name contains 'tickr' (case-insensitive).
+                # Otherwise find the first device whose name contains 'tickr'
                 if target is None:
                     for d in devices:
                         try:
@@ -358,7 +474,6 @@ class WahooBridgeServer:
                             break
 
                 if target is None:
-                    # No suitable TICKR device found; do not connect to arbitrary devices.
                     LOG.info("No TICKR device found during scan; will retry")
                     raise RuntimeError("no_tickr_found")
 
@@ -388,13 +503,19 @@ class WahooBridgeServer:
                         LOG.debug("Failed to set disconnected callback on client")
 
                     def hr_handler(sender, data: bytes):
+                        """Parse a raw HR notification and update self._ble_hr.
+
+                        HR Measurement byte layout (Bluetooth spec §3.106):
+                          Byte 0 bit 0: 0 → HR is uint8 at byte 1
+                                        1 → HR is uint16 LE at bytes 1-2
+                        """
                         try:
                             flags = data[0]
-                            hr_format = flags & 0x01
+                            hr_format = flags & 0x01  # bit 0 selects uint8 vs uint16
                             if hr_format == 0:
-                                hr = data[1]
+                                hr = data[1]           # 1-byte HR value
                             else:
-                                hr = int.from_bytes(data[1:3], "little")
+                                hr = int.from_bytes(data[1:3], "little")  # 2-byte HR value
                             self._ble_hr = int(hr)
                             LOG.debug("BLE HR update: %d", hr)
                         except Exception:
@@ -436,19 +557,21 @@ class WahooBridgeServer:
                         try:
                             await client.start_notify(HR_UUID, hr_handler)
                             LOG.info("Subscribed to HR notifications on %s", getattr(target, "address", target))
-                            # Reset attempt counter after a successful subscription
+                            # Reset attempt counter so backoff starts fresh next disconnection
                             attempt = 0
 
-                            # Keep the client alive until disconnected or cancelled.
-                            # Use disconnected_event (set by callback) or client.is_connected as indicators.
+                            # Stay in this loop while the device is connected.
+                            # The loop also performs periodic battery reads (keepalive) to
+                            # prevent macOS from dropping the BLE link after ~30 s of
+                            # silence on the ATT channel.
                             keepalive_interval = 15.0
                             last_keep = 0.0
                             while client.is_connected and not disconnected_event.is_set():
-                                # periodic keepalive read (battery level) to avoid supervision timeouts
                                 now_ts = asyncio.get_event_loop().time()
                                 if BAT_UUID in char_uuids and (now_ts - last_keep) >= keepalive_interval:
                                     try:
-                                        # some devices support reading battery level; ignore result
+                                        # Battery level read (result is discarded — we only
+                                        # care about keeping the ATT connection alive)
                                         _ = await client.read_gatt_char(BAT_UUID)
                                         LOG.debug("Performed keepalive battery read")
                                     except Exception:
@@ -474,7 +597,7 @@ class WahooBridgeServer:
             except Exception:
                 LOG.exception("BLE connection loop error; will retry")
 
-            # Exponential backoff before retrying
+            # Exponential backoff: delay = min(max_backoff, base * 2^(attempt-1))
             backoff = min(self.max_backoff, self.base_backoff * (2 ** max(0, attempt - 1)))
             LOG.info("Retrying BLE connect in %.1f seconds", backoff)
             try:
@@ -484,7 +607,11 @@ class WahooBridgeServer:
                 break
 
     async def ping_loop(self):
-        """Periodically ping clients to detect dead connections."""
+        """Send WebSocket pings every 10 s to detect and remove dead connections.
+
+        If a client doesn't respond to a ping within 5 s it is considered dead,
+        removed from ``self.clients``, and its connection is forcibly closed.
+        """
         while True:
             await asyncio.sleep(10)
             for c in list(self.clients):
@@ -504,6 +631,7 @@ class WahooBridgeServer:
 
 
 def parse_args():
+    """Parse command-line arguments for the bridge server."""
     p = argparse.ArgumentParser()
     p.add_argument("--port", type=int, default=8765)
     p.add_argument("--host", default="localhost")
@@ -542,6 +670,7 @@ def parse_args():
 
 
 def main():
+    """Entry point: parse args, configure logging, and run the async server."""
     args = parse_args()
     logging.basicConfig(
         level=logging.DEBUG if args.verbose else logging.INFO,

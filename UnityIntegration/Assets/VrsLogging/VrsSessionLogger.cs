@@ -8,6 +8,46 @@ using UnityEngine;
 
 namespace VrsLogging
 {
+    /// <summary>
+    /// Unity MonoBehaviour that orchestrates all four VRSF stream writers for a recording session.
+    ///
+    /// Streams managed
+    /// ---------------
+    ///   headpose  – VR headset position + rotation at <see cref="headHz"/> (default 120 Hz)
+    ///   bike      – speed/steering/brake data at <see cref="bikeHz"/> (default 50 Hz)
+    ///   hr        – heart rate, pushed via <see cref="LogHr"/> whenever a BLE HR packet arrives
+    ///   events    – arbitrary JSON events via <see cref="LogEvent"/>/<see cref="LogEventRaw"/>
+    ///
+    /// Sampling strategy (Update accumulator)
+    /// ----------------------------------------
+    /// Rather than using InvokeRepeating or coroutines, Update() accumulates
+    /// <c>Time.deltaTime</c> into per-stream accumulators (<c>headAcc</c>, <c>bikeAcc</c>).
+    /// When an accumulator reaches the target interval (1/Hz), a sample is taken
+    /// and the interval is subtracted.  The <c>while</c> loop (instead of <c>if</c>)
+    /// ensures catch-up if a frame takes longer than the interval.
+    ///
+    /// Memory management (ArrayPool)
+    /// ------------------------------
+    /// Every record is written into a byte array rented from
+    /// <see cref="ArrayPool{T}.Shared"/>.  The array is passed to the writer's
+    /// <c>Enqueue</c> method, which takes ownership; the writer returns it to the
+    /// pool after copying it into a VRSF chunk buffer.  On error the caller returns
+    /// it immediately in the catch block.  This approach avoids GC pressure from
+    /// per-frame heap allocations.
+    ///
+    /// Session history (NDJSON)
+    /// -------------------------
+    /// <c>sessions_history.ndjson</c> is a newline-delimited JSON file in
+    /// <see cref="logBasePath"/>.  Each line is a serialised <c>SessionHistoryEntry</c>.
+    /// The file is appended on session start and rewritten with the end timestamp on stop.
+    /// A static lock (<c>sessionHistoryLock</c>) serialises concurrent writes.
+    ///
+    /// Display ID counter
+    /// -------------------
+    /// <see cref="GetNextDisplayId"/> reads/writes a simple text file
+    /// <c>subject_counters.txt</c> (format: <c>PREFIX:N\n</c>) to assign
+    /// monotonically increasing three-digit suffixes (e.g. "ALICE-003").
+    /// </summary>
     public class VrsSessionLogger : MonoBehaviour
     {
         public string logBasePath = "Logs";
@@ -78,6 +118,8 @@ namespace VrsLogging
             headAcc += dt;
             bikeAcc += dt;
 
+            // Accumulator-based fixed-rate sampling.
+            // Using while (not if) catches up if a frame took longer than the interval.
             float headInterval = 1f / headHz;
             while (headAcc >= headInterval)
             {
@@ -95,18 +137,22 @@ namespace VrsLogging
 
         void SampleHead()
         {
-            var rt = Camera.main != null ? Camera.main.transform : this.transform;
+            var rt  = Camera.main != null ? Camera.main.transform : this.transform;
             var pos = rt.position;
             var rot = rt.rotation;
             float t = Time.time;
+
+            // Rent a buffer from the shared pool to avoid per-frame heap allocations.
             var buf = ArrayPool<byte>.Shared.Rent(VrsFormats.HeadposeRecordSize);
             try
             {
                 VrsFormats.WriteHeadposeRecord(buf.AsSpan(), headSeq++, t, new UnityEngine.Vector3(pos.x, pos.y, pos.z), rot);
+                // Transfer ownership of buf to the writer; it will return it to the pool.
                 headWriter.Enqueue(buf);
             }
             catch (Exception ex)
             {
+                // Return the buffer ourselves if Enqueue never took ownership.
                 ArrayPool<byte>.Shared.Return(buf);
                 Debug.LogError($"SampleHead error: {ex}");
             }
@@ -160,16 +206,21 @@ namespace VrsLogging
         {
             float t = Time.time;
             var utf8 = Encoding.UTF8.GetBytes(json);
-            int recSize = 4 + 4 + 4 + utf8.Length;
+            int recSize = 4 + 4 + 4 + utf8.Length;  // seq + unity_t + json_len + json bytes
+
+            // Rent a buffer large enough for the framed event record.
             var buf = ArrayPool<byte>.Shared.Rent(recSize);
             try
             {
                 int written = VrsFormats.WriteEventRecord(buf.AsSpan(), eventSeq++, t, json);
-                // copy to right-sized array for enqueue to avoid returning larger arrays to pool
+
+                // ArrayPool may return a larger buffer than requested; copy only the
+                // written bytes into a right-sized rental so the writer can return it
+                // correctly without worrying about the excess bytes.
                 var copy = ArrayPool<byte>.Shared.Rent(written);
                 Buffer.BlockCopy(buf, 0, copy, 0, written);
                 ArrayPool<byte>.Shared.Return(buf);
-                eventsWriter.Enqueue(copy);
+                eventsWriter.Enqueue(copy);  // writer takes ownership of copy
             }
             catch (Exception ex)
             {
@@ -230,8 +281,14 @@ namespace VrsLogging
         }
 
     /// <summary>
-    /// Generate a display id like PREFIX-001 using a simple counter file stored under logBasePath.
-    /// This is public so UI code can obtain the next display id without reflection.
+    /// Generate a display ID like PREFIX-001 using a simple counter file.
+    ///
+    /// The counter file (<c>subject_counters.txt</c>) stores one <c>KEY:N</c> pair
+    /// per line (e.g. <c>ALICE:3</c>).  Each call increments the counter for the
+    /// given prefix and writes the file back atomically.  The resulting ID format is
+    /// <c>PREFIX-NNN</c> (zero-padded to 3 digits).
+    ///
+    /// This is public so UI code can obtain the next display ID without reflection.
     /// </summary>
     public string GetNextDisplayId(string prefix)
         {
@@ -264,7 +321,9 @@ namespace VrsLogging
             }
         }
 
-        // Simple NDJSON session history to record start/stop events. Each line is a JSON object.
+        // Simple NDJSON session history — one JSON object per line.
+        // Appended on session start; the matching line is updated with
+        // ended_unix_ms on session stop.
         [Serializable]
         private class SessionHistoryEntry
         {
