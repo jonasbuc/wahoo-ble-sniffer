@@ -4,9 +4,8 @@
 
 ### ✅ Python Kode Kompilerer
 ```bash
-# cd into UnityIntegration and compile the canonical bridge
-cd "/Users/jonasbuchner/Blu Sniffer/UnityIntegration"
-python3 -m py_compile python/wahoo_unity_bridge.py
+# From repo root
+python3 -m py_compile UnityIntegration/python/wahoo_unity_bridge.py
 # ✓ Success - ingen syntax errors
 ```
 
@@ -37,8 +36,8 @@ Dette sender **simulerede cycling data** til Unity så du kan teste:
 
 **Start mock server:**
 ```bash
-cd "/Users/jonasbuchner/Blu Sniffer/UnityIntegration"
-python3 mock_wahoo_bridge.py
+# From repo root
+python3 UnityIntegration/python/mock_wahoo_bridge.py
 ```
 
 Du skulle se:
@@ -122,13 +121,13 @@ Når gameplay virker:
 Dette setup er baseret på **verified working code** fra parent project:
 
 ```
-../../python/wahoo_ble_logger.py  ← 100% testet, logs til SQLite
+wahoo_ble_logger.py          ← 100% testet, logs til SQLite
     ↓ (samme BLE kode)
-wahoo_unity_bridge.py   ← Tilføjer WebSocket
+UnityIntegration/python/wahoo_unity_bridge.py   ← Tilføjer WebSocket
     ↓ (JSON over WS)
-WahooDataReceiver.cs    ← Standard Unity WebSocket
+WahooDataReceiver.cs         ← Standard Unity WebSocket
     ↓
-VRBikeController.cs     ← Standard Unity physics
+VRBikeController.cs          ← Standard Unity physics
 ```
 
 **BLE delen er allerede testet** i Python logger!
@@ -140,8 +139,8 @@ VRBikeController.cs     ← Standard Unity physics
 
 Terminal:
 ```bash
-cd "/Users/jonasbuchner/Blu Sniffer/UnityIntegration"
-python3 mock_wahoo_bridge.py
+# From repo root
+python3 UnityIntegration/python/mock_wahoo_bridge.py
 ```
 
 Unity:

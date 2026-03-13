@@ -26,34 +26,32 @@ When BLE devices are paired with macOS, they:
    - Start pedaling on the KICKR
 5. **Run the logger:**
    ```bash
-   python python/wahoo_ble_logger.py --show-all-devices
+   python wahoo_ble_logger.py --show-all-devices
    ```
 
 The devices should now appear with their actual names!
 
 ### Option 2: Use CoreBluetooth (macOS Native)
 
-If unpairing doesn't work, we need to use CoreBluetooth (Apple's BLE framework) instead of Bleak. This requires:
-- Installing `pyobjc-framework-CoreBluetooth`
-- Rewriting the BLE layer to use macOS native APIs
+If unpairing doesn't work, use CoreBluetooth (Apple's native BLE framework) instead of Bleak:
 
-Let me know if you want me to implement Option 2.
+- Install `pyobjc-framework-CoreBluetooth`
+- Rewrite the BLE layer to use macOS native APIs
 
-### Option 3: Try the MAC addresses we found
+This approach bypasses the pairing system entirely but requires more setup.
 
-Even though they might use UUIDs, we can try:
+### Option 3: Try the MAC addresses directly
+
+Even though macOS may use random UUIDs, it is worth trying:
 
 ```bash
-python python/wahoo_ble_logger.py --tickr-address F0:13:C3:FD:EA:CB --kickr-address C7:52:A1:6F:EB:57
+python wahoo_ble_logger.py --tickr-address F0:13:C3:FD:EA:CB --kickr-address C7:52:A1:6F:EB:57
 ```
 
-This probably won't work with current pairing, but worth a try.
+This may not work while the devices are still paired, but costs nothing to attempt.
 
-## Next Steps
+## Recommendation
 
-**Please choose:**
-1. Unpair the devices (Option 1) - Takes 2 minutes, most likely to work
-2. I'll implement CoreBluetooth support (Option 2) - Takes 15 minutes
-3. Try something else
-
-Which would you prefer?
+**Start with Option 1 (unpair)** — it takes about 2 minutes and resolves the
+issue in the vast majority of cases.  Only consider Option 2 (CoreBluetooth) if
+Option 1 doesn't help after a fresh scan.

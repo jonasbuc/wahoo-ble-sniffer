@@ -62,8 +62,8 @@ Log live BLE data from Wahoo TICKR heart rate monitors and KICKR trainers, strea
 │   └── recompute_summary.py       #   Recompute session_summary.csv from Parquet
 │
 ├── tests/                         # pytest suite (36 tests)
-│   │                              #   BLE parsing, SQLite, VRSF format, collector,
-│   │                              #   Parquet export, mock integration, end-to-end
+│                                  #   BLE parsing, SQLite, VRSF format, collector,
+│                                  #   Parquet export, mock integration, end-to-end
 ├── docs/                          # Top-level docs
 │   └── PAIRING_HELP.md            #   macOS BLE pairing troubleshooting
 │
