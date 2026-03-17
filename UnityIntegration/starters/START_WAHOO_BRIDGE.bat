@@ -13,7 +13,9 @@ echo.
 
 REM Check if Python is installed
 REM Prefer repository virtualenv (created by INSTALL.bat) if present
-set "REPO_ROOT=%~dp0..\.."
+pushd "%~dp0..\.." >nul 2>&1
+set "REPO_ROOT=%CD%"
+popd >nul 2>&1
 set "VENV_PY=%REPO_ROOT%\.venv\Scripts\python.exe"
 set "PYCMD=python"
 if exist "%VENV_PY%" (
@@ -31,7 +33,7 @@ if %errorlevel% neq 0 (
     exit /b 1
 )
 
-REM Check if dependencies are installed
+REM Also remove the duplicate dependency-check comment
 REM Check if dependencies are installed; install via the chosen Python if missing
 "%PYCMD%" -c "import bleak, websockets" >nul 2>&1
 if %errorlevel% neq 0 (
@@ -62,5 +64,6 @@ timeout /t 2 /nobreak >nul
 start "Wahoo Bridge GUI" "%PYCMD%" "%~dp0..\python\wahoo_bridge_gui.py" --url ws://localhost:8765
 
 echo.
-echo Bridge stopped.
+echo Bridge and GUI launched in separate windows.
+echo Close those windows to stop the bridge.
 pause

@@ -13,7 +13,9 @@ echo.
 
 REM Check if Python is installed
 REM Prefer repository virtualenv (created by INSTALL.bat) if present
-set "REPO_ROOT=%~dp0..\.."
+pushd "%~dp0..\.." >nul 2>&1
+set "REPO_ROOT=%CD%"
+popd >nul 2>&1
 set "VENV_PY=%REPO_ROOT%\.venv\Scripts\python.exe"
 set "PYCMD=python"
 if exist "%VENV_PY%" (
