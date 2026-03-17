@@ -5,7 +5,6 @@ REM Double-click to open status monitor!
 cd /d "%~dp0"
 
 REM Prefer repository virtualenv if present
-set "REPO_ROOT=%~dp0..\.."
 pushd "%~dp0..\.." >nul 2>&1
 set "REPO_ROOT=%CD%"
 popd >nul 2>&1
