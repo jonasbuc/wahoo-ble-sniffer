@@ -20,7 +20,7 @@ pip install -r requirements.txt
 ## Step 2: Test uden hardware (anbefalet første gang)
 
 ```bash
-python3 UnityIntegration/python/mock_wahoo_bridge.py
+python3 UnityIntegration/python/bike_bridge.py
 ```
 
 Du ser:

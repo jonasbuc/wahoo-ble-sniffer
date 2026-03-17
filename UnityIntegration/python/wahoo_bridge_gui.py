@@ -16,7 +16,7 @@ thread — the only thread allowed to touch Tkinter widgets.
   ─────────────────────────────  ──────────────────────────────────────────
   Tkinter event loop             asyncio.run(websocket_client())
   draw_graph()                   websockets.connect() → ws loop
-  update_data() / update_status()  root.after(0, ...) → schedule callbacks
+  update_data(hr) / update_status()  root.after(0, ...) → schedule callbacks
   pan / zoom via mouse events
 
 Graph features
@@ -253,7 +253,7 @@ class WahooBridgeGUI:
         except Exception:
             pass
 
-    def update_data(self, power, cadence, speed, hr):
+    def update_data(self, hr):
         self.heart_rate = hr
         now = time.time()
         try:
@@ -508,9 +508,6 @@ class WahooBridgeGUI:
                                 # ── Cycling data JSON ──────────────────────
                                 self.root.after(
                                     0, self.update_data,
-                                    data.get("power", 0),
-                                    data.get("cadence", 0.0),
-                                    data.get("speed", 0.0),
                                     data.get("heart_rate", 0),
                                 )
                             else:
@@ -521,7 +518,7 @@ class WahooBridgeGUI:
                                     timestamp, hr = (
                                         struct.unpack("di", message[:12])
                                     )
-                                    self.root.after(0, self.update_data, 0, 0.0, 0.0, hr)
+                                    self.root.after(0, self.update_data, hr)
                         except Exception:
                             # Parsing errors are non-fatal; ignore the frame and continue.
                             pass

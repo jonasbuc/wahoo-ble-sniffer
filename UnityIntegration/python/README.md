@@ -6,8 +6,7 @@ Python scripts for the Unity ↔ BLE bridge pipeline.
 
 | File | Purpose |
 |------|---------|
-| `bike_bridge.py` | Production BLE → WebSocket bridge; streams live sensor data to Unity |
-| `mock_wahoo_bridge.py` | Mock WebSocket server; sends synthetic data so Unity can be developed without hardware |
+| `bike_bridge.py` | BLE → WebSocket bridge — mock mode (default) or live BLE (`--live`); replaces `mock_wahoo_bridge.py` |
 | `wahoo_bridge_gui.py` | Tkinter status monitor with live heart-rate graph; connects to the bridge as a WebSocket client |
 | `collector_tail.py` | Tails Unity's VRSF binary log files in real time and imports validated records into SQLite + Parquet |
 

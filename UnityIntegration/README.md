@@ -98,7 +98,7 @@ Tjek Console:
 ### Step 6: Test uden hardware (mock bridge)
 
 ```bash
-python UnityIntegration/python/mock_wahoo_bridge.py
+python UnityIntegration/python/bike_bridge.py
 ```
 
 Genererer realistiske fake sensordata på samme WebSocket interface.
@@ -214,8 +214,7 @@ WebSocket sender JSON-beskeder ved hver ny HR-opdatering:
 ```
 UnityIntegration/
 ├── python/                         # Python bridge scripts
-│   ├── bike_bridge.py       #   TICKR HR + Arduino UDP → WebSocket
-│   ├── mock_wahoo_bridge.py        #   Mock server (ingen hardware nødvendig)
+│   ├── bike_bridge.py              #   TICKR HR + Arduino UDP → WebSocket (mock + live)
 │   ├── wahoo_bridge_gui.py         #   Tkinter status monitor
 │   ├── ble_test_connect.py         #   TICKR FIT BLE forbindelsestest
 │   ├── collector_tail.py           #   VRSF binary tail → SQLite + Parquet

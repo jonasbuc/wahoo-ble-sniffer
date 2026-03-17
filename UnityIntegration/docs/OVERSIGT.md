@@ -19,8 +19,7 @@ Python-broen sender alt videre til Unity over WebSocket.
 
 | Fil | Beskrivelse |
 |-----|-------------|
-| `bike_bridge.py` | TICKR HR + Arduino UDP → WebSocket server |
-| `mock_wahoo_bridge.py` | Mock server til test uden hardware |
+| `bike_bridge.py` | TICKR HR + Arduino UDP → WebSocket server (mock + live) |
 | `wahoo_bridge_gui.py` | Tkinter GUI monitor |
 | `ble_test_connect.py` | Test af TICKR FIT BLE forbindelse |
 | `collector_tail.py` | VRSF binary → SQLite / Parquet |
@@ -52,8 +51,7 @@ Python-broen sender alt videre til Unity over WebSocket.
 UnityIntegration/
 │
 ├── 🐍 PYTHON BRIDGE
-│   ├── python/bike_bridge.py    # TICKR HR + Arduino UDP → WebSocket
-│   ├── python/mock_wahoo_bridge.py     # Mock server (ingen hardware)
+│   ├── python/bike_bridge.py           # TICKR HR + Arduino UDP → WebSocket (mock + live)
 │   ├── python/wahoo_bridge_gui.py      # GUI monitor
 │   ├── python/ble_test_connect.py      # TICKR BLE test
 │   └── python/collector_tail.py        # VRSF → SQLite/Parquet
@@ -110,7 +108,7 @@ Arduino   ──UDP──► Python Bridge                       │
 
 ## 💡 Pro Tips
 
-- **Test i Editor først** — brug mock_wahoo_bridge.py uden hardware
+- **Test i Editor først** — kør `bike_bridge.py` uden `--live` for mock-data uden hardware
 - **Brug Smoothing** — sæt smoothing factor til 0.3-0.5 for naturlig følelse
 - **Debug Overlay** — WahooDataReceiver har built-in debug display
 - **Auto-reconnect** — broen håndterer disconnects automatisk
