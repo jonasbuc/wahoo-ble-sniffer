@@ -65,7 +65,7 @@ class WahooBridgeGUI:
     bridge_protocol : protocol string received during the server handshake
     """
 
-    def __init__(self):
+    def __init__(self, url: str = "ws://localhost:8765"):
         self.root = tk.Tk()
         self.root.title("Wahoo Bridge Monitor")
         self.root.geometry("400x350")
@@ -90,8 +90,8 @@ class WahooBridgeGUI:
 
         # Bridge protocol label text — filled when the server handshake arrives.
         self.bridge_protocol: str | None = None
-        # WebSocket URL — overridable via --url CLI flag.
-        self.bridge_url: str | None = None
+        # WebSocket URL — set via constructor or --url CLI flag.
+        self.bridge_url: str = url
 
         # ── Build UI & start background thread ────────────────────────────────
         self.create_widgets()
@@ -477,7 +477,7 @@ class WahooBridgeGUI:
         bytes frames: 12-byte binary; unpacked as ``struct.unpack("di", …)``
                fields: timestamp(d), hr(i)
         """
-        uri = "ws://localhost:8765" if self.bridge_url is None else self.bridge_url
+        uri = self.bridge_url
 
         while True:
             try:
@@ -547,6 +547,5 @@ if __name__ == "__main__":
     )
     args = p.parse_args()
 
-    app = WahooBridgeGUI()
-    app.bridge_url = args.url
+    app = WahooBridgeGUI(url=args.url)
     app.run()
