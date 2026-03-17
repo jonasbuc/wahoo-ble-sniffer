@@ -8,7 +8,7 @@ USAGE
 
 This script will:
   - Prefer the repo .venv Python at ..\.venv\Scripts\python.exe
-  - Launch the GUI monitor in a new process with --live
+  - Launch the GUI monitor in a new process with --url ws://localhost:8765
   - Launch the canonical bridge in a second process with --live
 #>
 
@@ -33,6 +33,6 @@ Start-Process -FilePath $python -ArgumentList "UnityIntegration\python\bike_brid
 Start-Sleep -Seconds 1
 
 Write-Host "Starting Wahoo Bridge GUI (new window)..."
-Start-Process -FilePath $python -ArgumentList "UnityIntegration\python\wahoo_bridge_gui.py", "--live" -WorkingDirectory $repoRoot
+Start-Process -FilePath $python -ArgumentList "UnityIntegration\python\wahoo_bridge_gui.py", "--url", "ws://localhost:8765" -WorkingDirectory $repoRoot
 
 Write-Host "Bridge and GUI started. Use Task Manager or the Terminal windows to view output."

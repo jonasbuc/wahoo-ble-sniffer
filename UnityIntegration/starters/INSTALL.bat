@@ -40,7 +40,7 @@ REM Install dependencies
 echo [3/5] Installing dependencies...
 call .venv\Scripts\activate.bat
 python -m pip install --quiet --upgrade pip
-python -m pip install --quiet bleak websockets
+python -m pip install --quiet -r requirements.txt
 
 echo OK: Dependencies installed
 echo.

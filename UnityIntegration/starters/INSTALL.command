@@ -39,7 +39,7 @@ echo "[3/5] Installing dependencies..."
 source .venv/bin/activate
 
 pip install --quiet --upgrade pip
-pip install --quiet bleak websockets
+pip install --quiet -r requirements.txt
 
 echo "OK: Dependencies installed"
 echo ""

@@ -45,7 +45,7 @@ echo ""
 # Spawn GUI in a new Terminal window after waiting for the bridge port (8765)
 # Replace the fixed sleep with a small TCP poll loop (30s max) so the GUI only
 # launches after the bridge begins listening. This avoids racey startup.
-GUI_CMD="for i in {1..30}; do nc -z 127.0.0.1 8765 >/dev/null 2>&1 && break || sleep 1; done; cd '$(dirname "$0")'; '$PYTHON' ../python/wahoo_bridge_gui.py --live"
+GUI_CMD="for i in {1..30}; do nc -z 127.0.0.1 8765 >/dev/null 2>&1 && break || sleep 1; done; cd '$(dirname "$0")'; '$PYTHON' ../python/wahoo_bridge_gui.py --url ws://localhost:8765"
 osascript -e "tell application \"Terminal\" to do script \"$GUI_CMD\""
 
 # Start canonical bridge in the current window (foreground)
