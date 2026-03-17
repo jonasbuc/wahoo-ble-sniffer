@@ -725,6 +725,18 @@ def parse_args():
         action="store_true",
         help="Enable debug logging",
     )
+    p.add_argument(
+        "--no-binary",
+        action="store_true",
+        help="Emit JSON frames instead of binary frames",
+    )
+    p.add_argument(
+        "--spawn-interval",
+        type=float,
+        default=None,
+        metavar="SECONDS",
+        help="Emit a JSON spawn event every N seconds (useful for testing)",
+    )
     return p.parse_args()
 
 
@@ -739,13 +751,14 @@ def main():
     server = WahooBridgeServer(
         host=args.host,
         port=args.port,
-        use_binary=True,
+        use_binary=not args.no_binary,
         mock=not args.live,
         ble_address=args.ble_address,
         keepalive_interval=args.keepalive_interval,
         base_backoff=args.base_backoff,
         max_backoff=args.max_backoff,
         scan_timeout=args.scan_timeout,
+        spawn_interval=args.spawn_interval,
     )
     try:
         asyncio.run(server.start())

@@ -165,25 +165,30 @@ void HandleNewData(WahooDataReceiver.CyclingData data)
 
 ## 📊 Dataformat
 
-WebSocket sender JSON-beskeder ved hver ny HR-opdatering:
+### Binary frame (primær — 12 bytes)
 
-```json
-{
-  "timestamp": 1704067200.123,
-  "power": 0.0,
-  "cadence": 0.0,
-  "speed": 0.0,
-  "heart_rate": 145
-}
+Sendes ved hver HR-opdatering (~20 Hz):
+
+```
+struct.pack("di", timestamp, heart_rate)
+  d = double  timestamp   (8 bytes, Unix epoch seconds)
+  i = int32   heart_rate  (4 bytes, BPM)
 ```
 
-| Felt | Type | Enhed | Beskrivelse |
-|------|------|-------|-------------|
-| timestamp | float | sekunder | Unix timestamp |
-| power | float | W | Altid 0.0 (Arduino ikke power-sensor) |
-| cadence | float | RPM | Altid 0.0 (kommer fra Arduino separat) |
-| speed | float | km/h | Altid 0.0 (kommer fra Arduino separat) |
-| heart_rate | int | BPM | Puls fra TICKR FIT |
+### JSON event (fra Arduino via UDP)
+
+Bike-data (speed, cadence, steering, brakes) sendes som JSON events fra Arduino:
+
+```json
+{"event": "hall_hit",  "source": "udp", "timestamp": 1704067200.1}
+{"event": "steering",  "angle": 12.5,   "source": "udp", "timestamp": ...}
+{"event": "speed",     "value": 18.3,   "source": "udp", "timestamp": ...}
+```
+
+| Felt | Type | Beskrivelse |
+|------|------|-------------|
+| timestamp | double | Unix epoch seconds (8 bytes) |
+| heart_rate | int32 | Puls fra TICKR FIT (4 bytes, BPM) |
 
 ---
 
