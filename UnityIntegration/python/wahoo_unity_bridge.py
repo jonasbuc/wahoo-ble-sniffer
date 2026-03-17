@@ -147,6 +147,7 @@ class WahooBridgeServer:
         keepalive_interval: float = 15.0,
         base_backoff: float = 1.0,
         max_backoff: float = 30.0,
+        scan_timeout: float = 12.0,
     ):
         self.host = host
         self.port = port
@@ -165,6 +166,7 @@ class WahooBridgeServer:
         self.keepalive_interval = keepalive_interval  # seconds between battery reads
         self.base_backoff = base_backoff               # initial backoff (seconds)
         self.max_backoff = max_backoff                 # cap on backoff (seconds)
+        self.scan_timeout = scan_timeout               # BLE scan timeout (seconds)
 
     async def register(self, ws: Any):
         """Handle a single WebSocket client for its entire lifetime.
@@ -447,34 +449,53 @@ class WahooBridgeServer:
         # Attempt counter used to calculate exponential backoff delay
         attempt = 0
         HR_UUID = "00002a37-0000-1000-8000-00805f9b34fb"  # Heart Rate Measurement char
+        # Scan timeout: TICKR FIT may take 8-10 s to start advertising after idle.
+        # Use self.scan_timeout (default 12 s, configurable via --scan-timeout).
+        SCAN_TIMEOUT = self.scan_timeout
         while True:
             attempt += 1
             try:
-                LOG.info("Starting BLE scan (looking for HR devices)... attempt %d", attempt)
-                # Passive BLE scan — discovers all advertising devices within range
-                devices = await BleakScanner.discover(timeout=5.0)
-                if not devices:
-                    LOG.info("No BLE devices found during scan; will retry")
-                    raise RuntimeError("no_devices")
-
-                # If the user supplied a specific address, prefer it
                 target = None
-                if self.ble_address:
-                    for d in devices:
-                        if getattr(d, "address", None) == self.ble_address:
-                            target = d
-                            break
 
-                # Otherwise find the first device whose name contains 'tickr'
+                # ── Fast path: known address → skip full scan ─────────────────
+                # If the user provided --ble-address we can connect directly
+                # without a discovery scan, which is significantly faster on
+                # reconnect and avoids missing the device during a short scan.
+                if self.ble_address:
+                    LOG.info(
+                        "Connecting directly to known address %s (attempt %d)",
+                        self.ble_address, attempt,
+                    )
+                    # BleakScanner.find_device_by_address stops as soon as the
+                    # device is found instead of waiting the full timeout.
+                    try:
+                        target = await BleakScanner.find_device_by_address(
+                            self.ble_address, timeout=SCAN_TIMEOUT
+                        )
+                    except Exception:
+                        LOG.debug("find_device_by_address failed; falling back to full scan")
+
+                # ── Slow path: scan for any TICKR ─────────────────────────────
                 if target is None:
-                    for d in devices:
-                        try:
-                            name = (d.name or "").lower()
-                        except Exception:
-                            name = ""
-                        if "tickr" in name:
-                            target = d
-                            break
+                    LOG.info("Scanning for TICKR devices... (attempt %d, timeout=%.0fs)",
+                             attempt, SCAN_TIMEOUT)
+                    # find_device_by_filter stops as soon as the predicate matches,
+                    # so we don't waste the full SCAN_TIMEOUT when the device is
+                    # nearby and advertising quickly.
+                    try:
+                        target = await BleakScanner.find_device_by_filter(
+                            lambda d, _adv: "tickr" in (d.name or "").lower(),
+                            timeout=SCAN_TIMEOUT,
+                        )
+                    except Exception:
+                        # Older bleak versions lack find_device_by_filter — fall
+                        # back to the classic discover() call.
+                        LOG.debug("find_device_by_filter not available; using discover()")
+                        devices = await BleakScanner.discover(timeout=SCAN_TIMEOUT)
+                        for d in devices:
+                            if "tickr" in (getattr(d, "name", "") or "").lower():
+                                target = d
+                                break
 
                 if target is None:
                     LOG.info("No TICKR device found during scan; will retry")
@@ -490,20 +511,28 @@ class WahooBridgeServer:
 
                     disconnected_event = asyncio.Event()
 
-                    # set a disconnected callback if supported by this bleak client
+                    # Register a disconnected callback.
+                    # bleak ≥ 0.20 passes the callback to the BleakClient
+                    # constructor; older versions expose set_disconnected_callback().
+                    def _on_disc(_client):
+                        LOG.warning(
+                            "BLE device disconnected: %s",
+                            getattr(target, "address", target),
+                        )
+                        try:
+                            disconnected_event.set()
+                        except Exception:
+                            pass
+
                     try:
                         set_disc = getattr(client, "set_disconnected_callback", None)
                         if callable(set_disc):
-                            def _on_disc(_client):
-                                LOG.warning("BLE device disconnected callback fired for %s", getattr(target, "address", target))
-                                try:
-                                    disconnected_event.set()
-                                except Exception:
-                                    pass
-
                             set_disc(_on_disc)
+                        elif hasattr(client, "disconnected_callback"):
+                            # bleak ≥ 0.20 style — assign attribute directly
+                            client.disconnected_callback = _on_disc
                     except Exception:
-                        LOG.debug("Failed to set disconnected callback on client")
+                        LOG.debug("Could not register disconnected callback")
 
                     def hr_handler(sender, data: bytes):
                         """Parse a raw HR notification and update self._ble_hr.
@@ -560,14 +589,15 @@ class WahooBridgeServer:
                         try:
                             await client.start_notify(HR_UUID, hr_handler)
                             LOG.info("Subscribed to HR notifications on %s", getattr(target, "address", target))
-                            # Reset attempt counter so backoff starts fresh next disconnection
+                            # Reset attempt counter so backoff starts fresh on next disconnection
                             attempt = 0
 
                             # Stay in this loop while the device is connected.
                             # The loop also performs periodic battery reads (keepalive) to
                             # prevent macOS from dropping the BLE link after ~30 s of
                             # silence on the ATT channel.
-                            keepalive_interval = 15.0
+                            # Use self.keepalive_interval (from --keepalive-interval arg).
+                            keepalive_interval = self.keepalive_interval
                             last_keep = 0.0
                             while client.is_connected and not disconnected_event.is_set():
                                 now_ts = asyncio.get_event_loop().time()
@@ -665,6 +695,12 @@ def parse_args():
         help="Maximum backoff (seconds) for reconnect attempts",
     )
     p.add_argument(
+        "--scan-timeout",
+        type=float,
+        default=12.0,
+        help="BLE scan timeout in seconds (default: 12). Increase if TICKR is slow to advertise.",
+    )
+    p.add_argument(
         "--verbose",
         action="store_true",
         help="Enable debug logging",
@@ -689,6 +725,7 @@ def main():
         keepalive_interval=args.keepalive_interval,
         base_backoff=args.base_backoff,
         max_backoff=args.max_backoff,
+        scan_timeout=args.scan_timeout,
     )
     try:
         asyncio.run(server.start())
