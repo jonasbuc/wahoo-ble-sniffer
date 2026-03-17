@@ -16,10 +16,10 @@ pip list | grep websockets
 ```
 
 ### ✅ Mock Server Virker
-Jeg har lavet en **mock server** til test uden hardware (ingen trainer krævet):
+`bike_bridge.py` kører i **mock mode** uden hardware (ingen trainer krævet):
 
 ```bash
-python3 python/mock_wahoo_bridge.py
+python3 python/bike_bridge.py
 ```
 
 Dette sender **simulerede cycling data** til Unity så du kan teste:
@@ -37,7 +37,7 @@ Dette sender **simulerede cycling data** til Unity så du kan teste:
 **Start mock server:**
 ```bash
 # From repo root
-python3 UnityIntegration/python/mock_wahoo_bridge.py
+python3 UnityIntegration/python/bike_bridge.py
 ```
 
 Du skulle se:
@@ -142,7 +142,7 @@ BikeMovementController.cs    ← Unity cykelbevægelse
 Terminal:
 ```bash
 # From repo root
-python3 UnityIntegration/python/mock_wahoo_bridge.py
+python3 UnityIntegration/python/bike_bridge.py
 ```
 
 Unity:

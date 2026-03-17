@@ -53,8 +53,8 @@ echo.
 echo ════════════════════════════════════════════════════════════
 echo.
 
-REM Start mock bridge (canonical copy)
-"%PYCMD%" "%~dp0..\python\mock_wahoo_bridge.py"
+REM Start bridge in mock mode (no BLE hardware needed)
+"%PYCMD%" "%~dp0..\python\bike_bridge.py"
 
 echo.
 echo Mock bridge stopped.

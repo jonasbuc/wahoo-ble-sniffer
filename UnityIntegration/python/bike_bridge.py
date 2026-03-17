@@ -145,6 +145,7 @@ class WahooBridgeServer:
         base_backoff: float = 1.0,
         max_backoff: float = 30.0,
         scan_timeout: float = 12.0,
+        spawn_interval: Optional[float] = None,
     ):
         self.host = host
         self.port = port
@@ -164,6 +165,7 @@ class WahooBridgeServer:
         self.base_backoff = base_backoff               # initial backoff (seconds)
         self.max_backoff = max_backoff                 # cap on backoff (seconds)
         self.scan_timeout = scan_timeout               # BLE scan timeout (seconds)
+        self.spawn_interval = spawn_interval           # seconds between auto spawn events (None = disabled)
 
     async def register(self, ws: Any):
         """Handle a single WebSocket client for its entire lifetime.
@@ -319,17 +321,22 @@ class WahooBridgeServer:
             # Run broadcast loop and ping loop concurrently while server context is active
             ping_task = asyncio.create_task(self.ping_loop())
             broadcast_task = asyncio.create_task(self.broadcast_loop())
+            spawn_task = asyncio.create_task(self.spawn_loop())
             try:
-                await asyncio.gather(ping_task, broadcast_task)
+                await asyncio.gather(ping_task, broadcast_task, spawn_task)
             finally:
                 ping_task.cancel()
                 broadcast_task.cancel()
+                spawn_task.cancel()
                 # Close UDP transport if opened
                 try:
                     if getattr(self, "_udp_transport", None):
                         self._udp_transport.close()
                 except Exception:
                     pass
+
+    # Backwards-compatibility alias used by legacy tests and scripts.
+    start_server = start
 
     async def broadcast_json(self, data: dict, exclude: Optional[Any] = None):
         """Broadcast a JSON-serialisable dict to every connected client.
@@ -661,6 +668,19 @@ class WahooBridgeServer:
                         await c.close()
                     except Exception:
                         pass
+
+    async def spawn_loop(self):
+        """Emit periodic ``spawn`` JSON events when ``spawn_interval`` is set.
+
+        This is used in mock/testing scenarios to simulate game events (e.g.
+        obstacle spawns in Unity) at a fixed cadence.  Set ``spawn_interval``
+        to the number of seconds between events; ``None`` disables the loop.
+        """
+        if not self.spawn_interval:
+            return
+        while self.running:
+            await asyncio.sleep(self.spawn_interval)
+            await self.broadcast_json({"event": "spawn", "source": "bridge", "timestamp": time.time()})
 
 
 def parse_args():

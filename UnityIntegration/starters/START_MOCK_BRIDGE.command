@@ -38,8 +38,8 @@ echo ""
 echo "════════════════════════════════════════════════════════════"
 echo ""
 
-# Start mock bridge (moved into ../python/ folder)
-$PYTHON ../python/mock_wahoo_bridge.py
+# Start bridge in mock mode (no BLE hardware needed)
+$PYTHON ../python/bike_bridge.py
 
 echo ""
 echo "Mock bridge stopped."
