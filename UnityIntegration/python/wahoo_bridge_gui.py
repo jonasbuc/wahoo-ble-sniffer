@@ -257,11 +257,12 @@ class WahooBridgeGUI:
         self.heart_rate = hr
         now = time.time()
         try:
-            self.hr_history.append((now, int(hr)))
+            bpm = int(hr)
         except Exception:
-            self.hr_history.append((now, 0))
+            bpm = 0
+        self.hr_history.append((now, bpm))
 
-        self.hr_value.config(text=str(int(hr)))
+        self.hr_value.config(text=str(bpm))
 
         self.root.after(0, self.draw_graph)
 
