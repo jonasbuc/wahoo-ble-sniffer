@@ -54,8 +54,12 @@ echo ═════════════════════════
 echo.
 
 REM Start bridge in mock mode (no BLE hardware needed)
-"%PYCMD%" "%~dp0..\python\bike_bridge.py"
+start "Wahoo Mock Bridge" "%PYCMD%" "%~dp0..\python\bike_bridge.py"
+
+REM Give bridge a moment to start, then launch GUI monitor
+timeout /t 2 /nobreak >nul
+start "Wahoo Bridge GUI" "%PYCMD%" "%~dp0..\python\wahoo_bridge_gui.py" --url ws://localhost:8765
 
 echo.
-echo Mock bridge stopped.
+echo Mock bridge and GUI started.
 pause

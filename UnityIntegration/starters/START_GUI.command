@@ -12,4 +12,4 @@ if [ ! -f "$PYTHON" ]; then
 fi
 
 # Launch GUI (use canonical ../python/ copy)
-$PYTHON ../python/wahoo_bridge_gui.py
+$PYTHON ../python/wahoo_bridge_gui.py --url ws://localhost:8765

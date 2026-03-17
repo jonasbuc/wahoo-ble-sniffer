@@ -45,8 +45,8 @@ if %errorlevel% neq 0 (
 
 echo OK: Dependencies installed
 echo.
-echo Scanning for KICKR and TICKR...
-echo TIP: Pedal to wake up your KICKR!
+echo Scanning for Wahoo BLE devices (e.g. TICKR)...
+echo TIP: Make sure your sensor is awake and nearby!
 echo.
 echo WebSocket server starting on ws://localhost:8765
 echo.
@@ -59,7 +59,7 @@ start "Wahoo Bridge" "%PYCMD%" "%~dp0..\python\bike_bridge.py" --live
 
 REM Give the bridge a moment to initialize, then start the GUI monitor in a separate window
 timeout /t 2 /nobreak >nul
-start "Wahoo Bridge GUI" "%PYCMD%" "%~dp0..\python\wahoo_bridge_gui.py" --live
+start "Wahoo Bridge GUI" "%PYCMD%" "%~dp0..\python\wahoo_bridge_gui.py" --url ws://localhost:8765
 
 echo.
 echo Bridge stopped.
