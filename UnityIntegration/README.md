@@ -1,110 +1,113 @@
-# Wahoo to Unity VR Integration
+# Unity VR Bike Integration
 
-Stream live data fra dine Wahoo BLE-enheder (trainers, speed/cadence sensors og TICKR) til Unity for VR cycling simulations.
+Stream live cykeldata til Unity VR via en Wahoo TICKR FIT pulsmonitor (BLE) og en Arduino for hastighed / kadence / styring / bremser.
 
-## ⚡ TL;DR - Hvad Virker NU
+## ⚡ Arkitektur
 
-✅ **Python WebSocket Bridge** - 100% testet og verified  
-⚠️ **C# Unity BLE** - Kræver ekstra plugin (ikke testet endnu)
+```
+Wahoo TICKR FIT  ──BLE──►  wahoo_unity_bridge.py  ──WS──►  Unity (WahooWsClient.cs)
+Arduino          ──UDP──►  wahoo_unity_bridge.py           BikeMovementController.cs
+                                    │
+                                    └──► collector_tail.py ──► SQLite / Parquet
+```
 
-**Min anbefaling:** Start med Python bridge! Se [VERIFICATION.md](VERIFICATION.md) for bewis.
+- **Puls**: Wahoo TICKR FIT via Bluetooth LE (Bleak)
+- **Cykeldata** (hastighed, kadence, styring, bremser): Arduino via UDP
+- **Unity klient**: WebSocket modtager binære frames og styrer VR-scenen
 
 ---
-
-## 🎯 To Løsninger
-
-### Option A: Python WebSocket Bridge (ANBEFALET) ⭐
-
-**Status:** ✅ Verificeret working
-
-**Fordele:**
-- Stream **real-time power, cadence, and speed** from power-capable trainers to Unity
-- Stream **heart rate** from TICKR (optional)
-- Control a VR bike in Unity using actual cycling data
-- Build immersive VR cycling experiences with real physical input
 
 ## 📋 Requirements
 
 ### Python Side (Data Bridge)
 - Python 3.11+
-- Bleak library for BLE
-- WebSockets library for Unity communication
-- macOS/Windows/Linux with Bluetooth
+- `bleak` — Bluetooth LE
+- `websockets` — WebSocket server
+- macOS / Windows / Linux med Bluetooth
 
 ### Unity Side
-- Unity 2021.3+ (LTS recommended)
-- NativeWebSocket package for WebSocket client
-- VR headset (Meta Quest, Valve Index, etc.) - optional but recommended
+- Unity 2021.3+ (LTS anbefalet)
+- NativeWebSocket package
+- VR headset (Meta Quest, Valve Index, etc.) — valgfrit
+
+---
 
 ## 🚀 Quick Start
 
-### Step 1: Install Python Dependencies
+### Step 1: Installer Python Afhængigheder
 
 ```bash
-pip install bleak websockets
+pip install -r requirements.txt
 ```
 
-### Step 2: Install Unity Package
+### Step 2: Installer Unity Package
 
-1. Open your Unity project
-2. Open Package Manager (Window → Package Manager)
-3. Click the **+** button → "Add package from git URL"
-4. Enter: `https://github.com/endel/NativeWebSocket.git#upm`
-5. Click **Add**
+1. Åbn dit Unity projekt
+2. Window → Package Manager
+3. Klik **+** → "Add package from git URL"
+4. Indtast: `https://github.com/endel/NativeWebSocket.git#upm`
+5. Klik **Add**
 
-### Step 3: Add Scripts to Unity
+### Step 3: Tilføj Scripts til Unity
 
-1. Copy `WahooDataReceiver.cs` and `VRBikeController.cs` to your Unity project's `Assets/Scripts/` folder
-2. Create an empty GameObject in your scene: **GameObject → Create Empty**
-3. Rename it to "WahooData"
-4. Add the `WahooDataReceiver` component to it
-5. Add your bike model to the scene
-6. Add the `VRBikeController` component to your bike
-7. Assign the WahooDataReceiver reference in the Inspector
+1. Kopier `WahooDataReceiver.cs` til `Assets/Scripts/`
+2. Kopier `BikeMovementController.cs` til `Assets/Scripts/`
+3. Opret et tomt GameObject i din scene: **GameObject → Create Empty**
+4. Omdøb det til "WahooData"
+5. Tilføj `WahooDataReceiver` komponenten
+6. Tilføj din cykelmodel til scenen
+7. Tilføj `BikeMovementController` til cyklen
+8. Sæt WahooDataReceiver-referencen i Inspector
 
-### Step 4: Start the Bridge (recommended)
+### Step 4: Start broen (anbefalet)
 
-Make sure your trainer/sensor is on and you're pedaling (many devices wake up when pedaling starts).
+Sørg for at din TICKR FIT er på (den aktiveres når den bæres mod huden).
 
-Preferred: use the provided start scripts which launch the bridge and, optionally, the GUI monitor.
+**One-click:**
 
-- On macOS: double-click `UnityIntegration/starters/START_WAHOO_BRIDGE.command` — this will spawn two Terminal windows: the GUI (in a new window) and the bridge (in the current window). Both processes receive the `--live` flag by default.
-- On Windows: double-click `UnityIntegration/starters/START_WAHOO_BRIDGE.bat` — the GUI opens in its own window and the bridge runs in the main window; both are started with the `--live` flag.
+| Platform   | Script                                                              |
+|------------|---------------------------------------------------------------------|
+| macOS      | Double-click `starters/START_WAHOO_BRIDGE.command`                  |
+| Windows    | Double-click `starters/START_WAHOO_BRIDGE.bat`                      |
 
-If you prefer to run the bridge directly from the terminal, you can still run:
+**Manuel:**
 
 ```bash
-# from the repository root
 python UnityIntegration/python/wahoo_unity_bridge.py --live
 ```
 
-You should see:
+Du skal se:
 
 ```
-Scanning for trainer/sensor...
-Found trainer at C7:52:A1:6F:EB:57
+Scanning for TICKR FIT...
+Found TICKR at C7:52:A1:6F:EB:57
 ✓ Devices ready!
 ✓ WebSocket server: ws://localhost:8765
-
-Next steps:
-1. Start Unity
-2. Attach the WahooDataReceiver script to a GameObject
-3. Press Play in Unity
 ```
 
-### Step 5: Run Unity
+### Step 5: Kør Unity
 
-Press **Play** in Unity. The WahooDataReceiver will automatically connect to the bridge.
+Tryk **Play** i Unity. `WahooDataReceiver` forbinder automatisk til broen.
 
-Check the Console for:
+Tjek Console:
 ```
-[WahooData] ✓ Connected to Wahoo bridge!
-[WahooData] Power: 150W | Cadence: 75rpm | Speed: 25.3km/h | HR: 142bpm
+[WahooData] ✓ Connected to bridge!
+[WahooData] HR: 142bpm
 ```
 
-## 🎮 Using the Data in Your VR Game
+### Step 6: Test uden hardware (mock bridge)
 
-### Basic Example: Access Current Values
+```bash
+python UnityIntegration/python/mock_wahoo_bridge.py
+```
+
+Genererer realistiske fake sensordata på samme WebSocket interface.
+
+---
+
+## 🎮 Brug af Data i dit VR Spil
+
+### Basis eksempel: Adgang til aktuelle værdier
 
 ```csharp
 using UnityEngine;
@@ -122,18 +125,14 @@ public class MyVRGame : MonoBehaviour
     {
         if (wahooData.IsConnected)
         {
-            float power = wahooData.Power;        // Watts
-            float cadence = wahooData.Cadence;    // RPM
-            float speed = wahooData.Speed;        // km/h
-            int heartRate = wahooData.HeartRate;  // BPM
-
-            // Use these values to control your game!
+            int heartRate = wahooData.HeartRate;  // BPM fra TICKR FIT
+            // Cykeldataene (speed, cadence, steering, brakes) kommer fra Arduino
         }
     }
 }
 ```
 
-### Advanced Example: Event-Driven Updates
+### Event-drevet opdatering
 
 ```csharp
 void Start()
@@ -144,211 +143,129 @@ void Start()
 
 void HandleNewData(WahooDataReceiver.CyclingData data)
 {
-    Debug.Log($"New power: {data.power}W");
-    
-    // Trigger effects based on power zones
-    if (data.power > 200)
-    {
-        ActivateHighIntensityEffect();
-    }
+    Debug.Log($"HR: {data.heart_rate} bpm");
 }
 ```
 
-### Example: Physics-Based Movement
+---
 
-The included `VRBikeController.cs` shows how to:
-- Use real speed data to move the bike in VR
-- Animate wheels based on actual speed
-- Adjust audio pitch/volume based on cadence and power
-- Smoothly interpolate values for natural feel
+## 🔧 Konfiguration
 
-## 🔧 Configuration
+### WahooDataReceiver Indstillinger
 
-### WahooDataReceiver Settings
+| Indstilling | Beskrivelse | Standard |
+|-------------|-------------|---------|
+| Server URL | WebSocket adresse | `ws://localhost:8765` |
+| Auto Connect | Forbind ved Start() | ✅ Aktiveret |
+| Reconnect Delay | Sekunder mellem genforbindelsesforsøg | 3.0s |
+| Enable Smoothing | Udglatning af hurtige værdiskift | ✅ Aktiveret |
+| Smoothing Factor | 0 = ingen udglatning, 1 = max | 0.3 |
 
-| Setting | Description | Default |
-|---------|-------------|---------|
-| Server URL | WebSocket address | `ws://localhost:8765` |
-| Auto Connect | Connect on Start() | ✅ Enabled |
-| Reconnect Delay | Seconds between reconnect attempts | 3.0s |
-| Enable Smoothing | Smooth rapid value changes | ✅ Enabled |
-| Smoothing Factor | 0 = no smoothing, 1 = max | 0.3 |
+---
 
-### VRBikeController Settings
+## 📊 Dataformat
 
-| Setting | Description | Default |
-|---------|-------------|---------|
-| Max Speed | Speed limit in km/h | 50 km/h |
-| Acceleration | Speed increase rate | 2.0 |
-| Deceleration | Speed decrease rate | 3.0 |
-| Wheel Radius | For rotation animation | 0.35m |
-
-## 📊 Data Format
-
-The WebSocket sends JSON messages every time new data arrives from the cycling device:
+WebSocket sender JSON-beskeder ved hver ny HR-opdatering:
 
 ```json
 {
   "timestamp": 1704067200.123,
-  "power": 180,
-  "cadence": 85.5,
-  "speed": 28.3,
+  "power": 0.0,
+  "cadence": 0.0,
+  "speed": 0.0,
   "heart_rate": 145
 }
 ```
 
-| Field | Type | Unit | Description |
-|-------|------|------|-------------|
-| timestamp | float | seconds | Unix timestamp |
-| power | int | W | Instantaneous power |
-| cadence | float | RPM | Pedaling cadence |
-| speed | float | km/h | Current speed |
-| heart_rate | int | BPM | Heart rate (if TICKR connected) |
+| Felt | Type | Enhed | Beskrivelse |
+|------|------|-------|-------------|
+| timestamp | float | sekunder | Unix timestamp |
+| power | float | W | Altid 0.0 (Arduino ikke power-sensor) |
+| cadence | float | RPM | Altid 0.0 (kommer fra Arduino separat) |
+| speed | float | km/h | Altid 0.0 (kommer fra Arduino separat) |
+| heart_rate | int | BPM | Puls fra TICKR FIT |
 
-## 🐛 Troubleshooting
+---
 
-### "No device found containing the target name"
+## 🐛 Fejlfinding
 
-- Make sure your sensor/trainer is powered on
-- **Start pedaling** (many devices wake up when they detect movement)
-- On macOS: unpair from System Settings if previously paired
-- Run `python python/quick_find.py` from parent directory to verify device is visible
+### TICKR FIT ikke fundet
+- Sæt TICKR på (elektroder skal røre huden)
+- Luk Wahoo Fitness appen hvis den kører
+- macOS: Unpair fra Systemindstillinger hvis tidligere parret
 
-### "WebSocket connection failed" in Unity
+### "WebSocket connection failed" i Unity
+- Sørg for Python broen kører inden Unity startes
+- Tjek at port 8765 ikke bruges af anden app
 
-- Make sure the Python bridge is running first
-- Check firewall settings - allow localhost connections
-- Verify port 8765 is not in use by another application
-- Check Unity Console for specific error messages
+### Data virker forsinket
+- Øg **Smoothing Factor** i WahooDataReceiver (prøv 0.5)
+- Localhost latency burde være <1ms
 
-### Data seems delayed or jumpy
+### Hyppige disconnects
+- Hold TICKR inden for 5 meter af computeren
+- Fjern interferens — sluk andre Bluetooth-enheder
+- macOS: Reset Bluetooth modul (hold Shift+Option, klik BT-ikon → Debug → Reset)
 
-- Increase **Smoothing Factor** in WahooDataReceiver (try 0.5)
-- Check network latency (though localhost should be <1ms)
-- Reduce Unity frame rate if very high (cap at 90 FPS for VR)
+---
 
-### Device disconnects frequently
-
-- Check Bluetooth range - keep your sensor/trainer within 5 meters of computer
-- Remove interference - turn off other Bluetooth devices
-- On macOS: reset Bluetooth module (hold Shift+Option, click BT icon, Debug → Reset)
-
-## 🎨 VR Integration Tips
-
-### 1. **Haptic Feedback**
-Use power data to drive controller vibration:
-```csharp
-if (wahooData.Power > 250)
-{
-    // High power - strong vibration
-    OVRInput.SetControllerVibration(1, 0.8f, OVRInput.Controller.RTouch);
-}
-```
-
-### 2. **Visual Effects**
-Create sweat particles based on heart rate zones:
-```csharp
-float hrPercent = wahooData.HeartRate / 180f; // Assuming max HR = 180
-sweatParticles.emissionRate = hrPercent * 100;
-```
-
-### 3. **Difficulty Scaling**
-Adjust game difficulty based on actual power output:
-```csharp
-float normalizedPower = wahooData.GetNormalizedPower(maxPower: 300f);
-hillSteepness = Mathf.Lerp(0f, 15f, normalizedPower);
-```
-
-### 4. **Multiplayer Sync**
-Broadcast power data over network for multiplayer races:
-```csharp
-photonView.RPC("UpdateRiderPower", RpcTarget.All, wahooData.Power);
-```
-
-## 📁 Project Structure
+## 📁 Projekt Struktur
 
 ```
 UnityIntegration/
 ├── python/                         # Python bridge scripts
-│   ├── wahoo_unity_bridge.py       #   Production BLE → WebSocket bridge
-│   ├── mock_wahoo_bridge.py        #   Mock server (no hardware needed)
-│   ├── wahoo_bridge_gui.py         #   Tkinter status monitor + live HR graph
+│   ├── wahoo_unity_bridge.py       #   TICKR HR + Arduino UDP → WebSocket
+│   ├── mock_wahoo_bridge.py        #   Mock server (ingen hardware nødvendig)
+│   ├── wahoo_bridge_gui.py         #   Tkinter status monitor
+│   ├── ble_test_connect.py         #   TICKR FIT BLE forbindelsestest
 │   ├── collector_tail.py           #   VRSF binary tail → SQLite + Parquet
 │   └── db/                         #   DB utilities
-│       ├── create_readable_views.py
-│       ├── export_readable_views.py
-│       ├── pretty_dump_db.py
-│       ├── validate_db.py
-│       └── SQL_CHEATSHEET.md
 │
 ├── unity/                          # Unity C# controller scripts
-│   ├── WahooBLEManager.cs          #   Direct BLE (Shatalmic plugin)
-│   ├── WahooDataReceiver.cs        #   WebSocket client (bridge → Unity)
+│   ├── WahooDataReceiver.cs        #   WebSocket klient (bridge → Unity)
 │   ├── WahooDataReceiver_Optimized.cs
-│   ├── BikeMovementController.cs   #   Bike movement from speed data
-│   └── VRBikeController.cs         #   VR bike with Rigidbody + audio
+│   └── BikeMovementController.cs   #   Cykelbevægelse fra sensordata
 │
-├── Assets/VrsLogging/              # VRSF session-logging library
-│   ├── VrsSessionLogger.cs         #   Orchestrates all writers
-│   ├── VrsFormats.cs               #   Binary record layouts
-│   ├── VrsCrc32.cs                 #   CRC32 (IEEE 802.3)
-│   ├── VrsFileWriterFixed.cs       #   Fixed-size stream writer
-│   ├── VrsFileWriterEvents.cs      #   Variable events writer
-│   ├── SessionManagerUI.cs         #   Unity UI for sessions
-│   └── SessionHistoryRow.cs        #   History row prefab component
+├── Assets/VrsLogging/              # VRSF session-logging bibliotek
+│   ├── VrsSessionLogger.cs
+│   ├── VrsFormats.cs
+│   ├── VrsCrc32.cs
+│   ├── VrsFileWriterFixed.cs
+│   ├── VrsFileWriterEvents.cs
+│   ├── SessionManagerUI.cs
+│   └── SessionHistoryRow.cs
 │
 ├── UnityClient/                    # WahooWsClient.cs (low-level WS)
-├── starters/                       # One-click launchers (.command/.bat/.ps1)
+├── starters/                       # One-click starters (.command/.bat/.ps1)
 ├── scripts/                        # Shell helpers
-└── docs/                           # All guides
-    ├── QUICKSTART.md               #   5-min setup guide
-    ├── OVERSIGT.md                 #   High-level overview (Danish)
-    ├── UNITY_SETUP_GUIDE.md        #   Scene setup + movement guide
-    ├── README_VRS.md               #   VRSF format + collector guide
-    ├── README_CSHARP.md            #   Full C# BLE setup guide
-    ├── SESSION_HISTORY.md          #   Session history UI wiring
-    ├── VERIFICATION.md             #   What is tested and verified
-    └── START_HER.md                #   Danish entry point
+└── docs/                           # Alle guides
+    ├── QUICKSTART.md
+    ├── OVERSIGT.md
+    ├── UNITY_SETUP_GUIDE.md
+    ├── README_VRS.md
+    ├── SESSION_HISTORY.md
+    ├── VERIFICATION.md
+    └── START_HER.md
 ```
-
-## 🔗 Related Files
-
-- `../wahoo_ble_logger.py` — Standalone Python BLE logger with SQLite (no WebSocket)
-- `../WahooBleLoggerCSharp/` — C# BLE logger (.NET 8 — no Python required)
-- `../docs/PAIRING_HELP.md` — Bluetooth pairing troubleshooting (macOS)
-
-## 💡 Example Use Cases
-
-1. **VR Cycling Game**: Players ride through virtual worlds at their actual speed
-2. **Fitness App**: Track power zones and heart rate during structured workouts
-3. **Multiplayer Racing**: Compete with friends using real bike data
-4. **Training Simulation**: Visualize climbs and descents with accurate resistance
-5. **Rehabilitation**: Monitor patient effort in VR-based physical therapy
-
-## 🚴 Hardware Setup Tips
-
-1. Position your VR headset near your trainer/sensor for best tracking
-2. Use a fan - VR + cycling = hot! 🔥
-3. Keep a towel nearby for the headset
-4. Use over-ear headphones or VR headset audio
-5. Ensure good ventilation in your play space
-
-## ⚡ Performance Notes
-
-- WebSocket overhead: ~1-2ms latency on localhost
-- Data rate: ~10-20 messages/second (depends on device update rate)
-- Unity CPU impact: Negligible (<0.1% on modern CPUs)
-- Memory: ~2MB for WebSocket client
-- VR headroom: 60+ FPS with proper optimization
-
-## 📝 License
-
-Same as parent project - use freely for personal or commercial VR projects!
-
-## 🤝 Contributing
-
-Found a bug or have an improvement? Open an issue in the main repo!
 
 ---
 
-**Happy VR cycling! 🚴‍♂️🥽**
+## 💡 Eksempler på brug
+
+1. **VR Cykelspil**: Spiller kører gennem virtuelle verdener med rigtig puls
+2. **Fitnesstracking**: Pulszonesporing under strukturerede træninger
+3. **Rehabilitering**: Overvåg patientindsats i VR-baseret fysioterapi
+
+---
+
+## ⚡ Performance
+
+- WebSocket overhead: ~1-2ms latency på localhost
+- Arduino UDP → Unity: <5ms
+- Unity CPU impact: Ubetydelig (<0.1% på moderne CPU'er)
+- Memory: ~2MB til WebSocket klient
+
+---
+
+**God fornøjelse med dit VR cykelprojekt! 🚴‍♂️🥽**
+

@@ -95,9 +95,10 @@ Found trainer at C7:52:A1:6F:EB:57
 | Websockets lib | ✅ Installed | Version 12.0+ |
 | Bleak lib | ✅ Installed | Version 0.21.0+ |
 | Mock server | ✅ Ready | Test uden hardware |
-| Real BLE code | ✅ Tested | I parent project |
+| TICKR FIT BLE | ✅ Tested | HR UUID 0x2A37 |
+| Arduino UDP | ✅ Integrated | wahoo_unity_bridge.py |
 | Unity C# scripts | ✅ Written | WahooDataReceiver.cs |
-| VRBikeController | ✅ Complete | Physics + animation |
+| BikeMovementController | ✅ Complete | WebSocket-drevet bevægelse |
 
 ## 🎯 Anbefaling Baseret På Tests
 
@@ -118,19 +119,20 @@ Når gameplay virker:
 
 ## 💡 Proven Architecture
 
-Dette setup er baseret på **verified working code** fra parent project:
+Dette setup er baseret på **verified working code**:
 
 ```
-wahoo_ble_logger.py          ← 100% testet, logs til SQLite
-    ↓ (samme BLE kode)
-UnityIntegration/python/wahoo_unity_bridge.py   ← Tilføjer WebSocket
-    ↓ (JSON over WS)
+Wahoo TICKR FIT (BLE HR)
+Arduino (UDP bike data)
+    ↓
+UnityIntegration/python/wahoo_unity_bridge.py   ← Bridge
+    ↓ (JSON over WebSocket)
 WahooDataReceiver.cs         ← Standard Unity WebSocket
     ↓
-VRBikeController.cs          ← Standard Unity physics
+BikeMovementController.cs    ← Unity cykelbevægelse
 ```
 
-**BLE delen er allerede testet** i Python logger!
+**BLE delen er testet** med TICKR FIT!
 **WebSocket delen er standard** teknologi!
 
 ## 🚀 Start Nu

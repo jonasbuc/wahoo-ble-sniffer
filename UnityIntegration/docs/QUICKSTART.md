@@ -1,97 +1,41 @@
-# Unity VR Cycling - Quick Start Guide
+# Unity VR Cykling - Quick Start Guide
 
 Kom i gang med VR cykling på 5 minutter! 🚴‍♂️
 
-**To muligheder:**
-- **Option A:** 100% C# i Unity (anbefalet - simplest!)
-- **Option B:** Python bridge + Unity WebSocket
+**Hardware:**
+- Wahoo TICKR FIT (puls via BLE)
+- Arduino (hastighed, kadence, styring, bremser via UDP)
 
 ---
 
-## Option A: 100% C# Løsning (Anbefalet) ⭐
-
-### 1. Installer Bluetooth LE Plugin i Unity
-
-1. Åbn Unity Asset Store
-2. Søg: **"Bluetooth LE for iOS, tvOS and Android"**
-3. Download og importer (gratis!)
-
-### 2. Setup Unity Scene
-
-**Wahoo Manager:**
-1. GameObject → Create Empty → Omdøb til "WahooManager"
-2. Add Component → **WahooBLEManager**
-3. I Inspector:
-   - Kickr Name Filter: `KICKR`
-   - ✅ Auto Connect
-   - Enable Smoothing: ✅
-
-**VR Bike:**
-1. Tilføj din cykel model
-2. Add Component → Rigidbody
-3. Add Component → **VRBikeController**
-4. Træk "WahooManager" til Wahoo BLE feltet
-
-### 3. Forbered KICKR
-
-1. Tænd for KICKR SNAP
-2. **Begynd at træde** (vågner ved bevægelse)
-3. macOS: Unpair fra System Settings hvis tidligere parret
-
-### 4. Tryk Play!
-
-Se debug overlay:
-```
-KICKR: ✓
-Power: 150W
-Cadence: 75rpm
-```
-
-✅ **Færdig!** Ingen Python, ingen eksterne scripts!
-
-Se `README_CSHARP.md` for detaljer.
-
----
-
-## Option B: Python Bridge Løsning
-
-### 1. Installer Python Afhængigheder
+## Step 1: Installer Python Afhængigheder
 
 ```bash
-# From repository root
+# Fra repository root
 pip install -r requirements.txt
 ```
 
-### 2. Forbered din KICKR
+---
 
-1. Tænd for KICKR SNAP
-2. **Begynd at træde** (den vågner når du træder)
-3. På macOS: Hvis den var parret før, unpair den:
-   - System Settings → Bluetooth → KICKR SNAP → Forget Device
-
-### 3. Start Bridge Server
+## Step 2: Test uden hardware (anbefalet første gang)
 
 ```bash
-cd UnityIntegration
-python python/wahoo_unity_bridge.py
+python3 UnityIntegration/python/mock_wahoo_bridge.py
 ```
 
-Du skal se:
+Du ser:
 ```
-✓ Devices ready!
 ✓ WebSocket server: ws://localhost:8765
-
-Next steps:
-1. Start Unity
-2. Attach the WahooDataReceiver script to a GameObject
-3. Press Play in Unity
+📡 HR: 72bpm (mock)
 ```
 
-### 4. Setup Unity (Første gang)
+---
+
+## Step 3: Setup Unity Scene
 
 #### A. Installer NativeWebSocket Package
 
-1. Åbn din Unity project
+1. Åbn dit Unity projekt
 2. Window → Package Manager
 3. Klik **+** → "Add package from git URL"
 4. Indtast: `https://github.com/endel/NativeWebSocket.git#upm`
@@ -99,85 +43,70 @@ Next steps:
 
 #### B. Tilføj Scripts
 
-1. Træk `WahooDataReceiver.cs` til `Assets/Scripts/`
-2. Træk `VRBikeController.cs` til `Assets/Scripts/`
+1. Kopier `WahooDataReceiver.cs` til `Assets/Scripts/`
+2. Kopier `BikeMovementController.cs` til `Assets/Scripts/`
 
-##### C. Setup Scene
+#### C. Setup Scene
 
 **Wahoo Data Manager:**
 1. GameObject → Create Empty
 2. Omdøb til "WahooData"
-3. Add Component → WahooDataReceiver
+3. Add Component → `WahooDataReceiver`
 4. Sæt Server URL til: `ws://localhost:8765`
 5. Enable "Auto Connect"
 
 **VR Bike:**
-1. Importer din cykel model
+1. Importer din cykelmodel
 2. Add Component → Rigidbody
-3. Add Component → VRBikeController
-4. Sleep i Inspector:
+3. Add Component → `BikeMovementController`
+4. I Inspector:
    - Wahoo Data → træk "WahooData" GameObject hertil
-   - Bike Model → træk din cykel model hertil
-   - Front Wheel → træk forhjul hertil
-   - Rear Wheel → træk baghjul hertil
-
-### 5. Test Det!
-
-1. Sørg for Python bridge kører
-2. Tryk **Play** i Unity
-3. Begynd at træde på KICKR
-4. Se hastighedsmåleren i Unity stige! 🚀
+   - Bike Model → træk din cykelmodel hertil
 
 ---
 
-## Hvilken Option Skal Jeg Vælge?
+## Step 4: Test Det!
 
-**Option A (C#)** hvis:
-- ✅ Du vil deploye til mobile/Quest
-- ✅ Du vil have alt i Unity
-- ✅ Du vil undgå eksterne dependencies
+1. Sørg for Python bridge eller mock kører
+2. Tryk **Play** i Unity
+3. Tjek Console:
+   ```
+   [WahooData] ✓ Connected to bridge!
+   [WahooData] HR: 72bpm
+   ```
 
-**Option B (Python)** hvis:
-- ✅ Du allerede har Python setup
-- ✅ Du logger data til database
-- ✅ Du kun tester på computer
+---
 
-**Anbefaling:** Start med **Option A** - det er simplest! 🎯
+## Step 5: Kør med Rigtig Hardware
+
+```bash
+python3 UnityIntegration/python/wahoo_unity_bridge.py --live
+```
+
+(Kræver TICKR FIT på + Arduino tilsluttet og kørende)
 
 ---
 
 ## Debug Tips
 
-Hvis det ikke virker:
-
 **Check Console i Unity:**
 ```
-[WahooData] ✓ Connected to Wahoo bridge!  ← God!
-[WahooData] Connection failed             ← Kør Python bridge først
+[WahooData] ✓ Connected to bridge!      ← Godt!
+[WahooData] Connection failed            ← Kør Python bridge først
 ```
 
 **Check Python terminal:**
 ```
-✓ Connected to KICKR SNAP                 ← God!
-No device found containing 'KICKR'        ← Træd på pedaler!
+✓ Connected to TICKR FIT                ← Godt!
+Scanning... no device found             ← Sæt TICKR på (elektroderne skal røre huden)
 ```
 
-## Næste Skridt
-
-Se `README.md` for:
-- Avancerede features
-- VR haptic feedback
-- Multiplayer setup
-- Performance optimization
+---
 
 ## Data Du Får
 
-- **Power** (W) - Din aktuelle effekt
-- **Cadence** (RPM) - Pedal frekvens  
-- **Speed** (km/h) - Hastighed
-- **Heart Rate** (BPM) - Hvis TICKR er tilsluttet
-
-Alle værdier er real-time med <10ms latency!
+- **Heart Rate** (BPM) — fra Wahoo TICKR FIT via BLE
+- **Speed / Cadence / Steering / Brakes** — fra Arduino via UDP (direkte til Unity)
 
 ---
 

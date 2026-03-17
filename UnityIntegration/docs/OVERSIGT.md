@@ -1,81 +1,78 @@
 # Unity Integration Oversigt 🎮
 
-**To måder at forbinde Wahoo enheder til Unity:**
+**Systemarkitektur: Arduino + TICKR FIT → Python Bridge → Unity**
+
+## 📡 Datakilder
+
+| Kilde | Data | Transport |
+|-------|------|-----------|
+| Wahoo TICKR FIT | Puls (BPM) | Bluetooth LE → Python (Bleak) |
+| Arduino | Hastighed, kadence, styring, bremser | UDP → Python |
+
+Python-broen sender alt videre til Unity over WebSocket.
+
+---
 
 ## 📋 Filer Overview
 
-### Option A: 100% C# i Unity (Anbefalet) ⭐
+### Python Bridge
 
 | Fil | Beskrivelse |
 |-----|-------------|
-| `WahooBLEManager.cs` | Direkte Bluetooth LE forbindelse i Unity |
-| `VRBikeController.cs` | VR cykel controller (opdateret til BLE manager) |
-| `README_CSHARP.md` | Komplet guide til C# løsning |
+| `wahoo_unity_bridge.py` | TICKR HR + Arduino UDP → WebSocket server |
+| `mock_wahoo_bridge.py` | Mock server til test uden hardware |
+| `wahoo_bridge_gui.py` | Tkinter GUI monitor |
+| `ble_test_connect.py` | Test af TICKR FIT BLE forbindelse |
+| `collector_tail.py` | VRSF binary → SQLite / Parquet |
+| `db/` | DB utilities (views, export, validering) |
 
-**Fordele:**
-- ✅ Alt kører i Unity - ingen eksterne scripts
-- ✅ Deploy til Android/iOS/Quest direkte
-- ✅ Native performance
-- ✅ Simplere setup
-
-**Ulemper:**
-- ⚠️ Kræver Bluetooth LE Unity plugin (gratis på Asset Store)
-- ⚠️ Platform-specific permissions (Android/iOS)
-
-### Option B: Python Bridge + WebSocket
+### Unity C# Scripts
 
 | Fil | Beskrivelse |
 |-----|-------------|
-| `wahoo_unity_bridge.py` | Python BLE → WebSocket server |
-| `WahooDataReceiver.cs` | Unity WebSocket client |
-| `VRBikeController.cs` | VR cykel controller (original version) |
-| `README.md` | Komplet guide til WebSocket løsning |
+| `WahooDataReceiver.cs` | WebSocket klient (modtager bridge-data) |
+| `WahooDataReceiver_Optimized.cs` | Optimeret version |
+| `BikeMovementController.cs` | Cykelbevægelse fra sensordata |
+| `WahooWsClient.cs` | Low-level WebSocket klient |
 
-**Fordele:**
-- ✅ Kan også logge til database samtidig
-- ✅ Nemmere debugging af BLE forbindelse
-- ✅ Kan køre på separat computer
+### Session Logging (VRSF)
 
-**Ulemper:**
-- ⚠️ Kræver Python runtime
-- ⚠️ To programmer skal køre samtidig
-- ⚠️ Virker kun på computer (ikke mobile builds)
+| Fil | Beskrivelse |
+|-----|-------------|
+| `Assets/VrsLogging/VrsSessionLogger.cs` | Orchestrerer alle writers |
+| `Assets/VrsLogging/VrsFormats.cs` | Binary record layouts |
+| `python/collector_tail.py` | Tail VRSF → SQLite/Parquet |
+| `docs/README_VRS.md` | VRSF format guide |
 
-## 🚀 Quick Start
-
-### Bruger du Unity alene?
-→ Følg **QUICKSTART.md** → Option A (C#)
-
-### Har du Python setup og vil logge data?
-→ Følg **QUICKSTART.md** → Option B (Python Bridge)
+---
 
 ## 📁 Fil Struktur
 
 ```
 UnityIntegration/
 │
-├── 🎯 C# LØSNING (Anbefalet)
-│   ├── unity/WahooBLEManager.cs        # Direkte BLE i Unity
-│   ├── unity/VRBikeController.cs       # VR bike controller
-│   └── docs/README_CSHARP.md           # C# guide
+├── 🐍 PYTHON BRIDGE
+│   ├── python/wahoo_unity_bridge.py    # TICKR HR + Arduino UDP → WebSocket
+│   ├── python/mock_wahoo_bridge.py     # Mock server (ingen hardware)
+│   ├── python/wahoo_bridge_gui.py      # GUI monitor
+│   ├── python/ble_test_connect.py      # TICKR BLE test
+│   └── python/collector_tail.py        # VRSF → SQLite/Parquet
 │
-├── 🐍 PYTHON LØSNING
-│   ├── python/wahoo_unity_bridge.py    # Python WebSocket bridge
-│   ├── unity/WahooDataReceiver.cs      # Unity WebSocket client
-│   └── README.md                       # WebSocket guide
+├── 🎮 UNITY SCRIPTS
+│   ├── unity/WahooDataReceiver.cs      # WebSocket klient
+│   ├── unity/BikeMovementController.cs # Cykelbevægelse
+│   └── UnityClient/WahooWsClient.cs    # Low-level WS klient
 │
-├── � SESSION LOGGING (VRSF)
+├── 📊 SESSION LOGGING (VRSF)
 │   ├── Assets/VrsLogging/VrsSessionLogger.cs
 │   ├── Assets/VrsLogging/VrsFormats.cs
-│   ├── python/collector_tail.py        # Tail VRSF → SQLite/Parquet
-│   └── docs/README_VRS.md              # VRSF format guide
+│   └── docs/README_VRS.md
 │
-├── �📚 DOKUMENTATION (docs/)
-│   ├── QUICKSTART.md                   # Hurtig start (begge options)
+├── 📚 DOKUMENTATION (docs/)
+│   ├── QUICKSTART.md                   # Hurtig start
 │   ├── OVERSIGT.md                     # Denne fil
 │   ├── UNITY_SETUP_GUIDE.md            # Scene setup guide
 │   ├── README_VRS.md                   # VRSF binary format
-│   ├── README_CSHARP.md                # C# BLE guide
 │   ├── SESSION_HISTORY.md              # Session history UI
 │   ├── VERIFICATION.md                 # Hvad er testet og virker
 │   └── START_HER.md                    # Dansk entry point
@@ -86,129 +83,38 @@ UnityIntegration/
     └── starters/START_MOCK_BRIDGE.command   # Mock (ingen hardware)
 ```
 
-## 🔌 Teknisk Sammenligning
+---
 
-| Feature | C# Løsning | Python Løsning |
-|---------|------------|----------------|
-| **Setup Kompleksitet** | Medium | Lav |
-| **Runtime Dependencies** | Unity BLE plugin | Python + libraries |
-| **Latency** | ~20-50ms | ~50-100ms |
-| **Platform Support** | Android, iOS, Windows, macOS | macOS, Windows, Linux |
-| **Mobile/Quest Deploy** | ✅ Ja | ❌ Nej |
-| **Database Logging** | ⚠️ Tilføj selv | ✅ Built-in |
-| **Debug Overlay** | ✅ Built-in | ✅ Built-in |
-| **Auto-reconnect** | ✅ Ja | ✅ Ja |
+## 🔌 Data Flow
 
-## 🎯 Use Case Recommendations
-
-### VR Spil til Quest/Mobile
-**→ Brug C# Løsning**
-- Native deployment
-- Ingen eksterne dependencies
-- Best performance
-
-### Desktop VR med Data Logging
-**→ Brug Python Løsning**
-- Kan logge til SQLite samtidig
-- Lettere at debugge BLE issues
-- Kan køre på separat computer
-
-### Multiplayer/Cloud Gaming
-**→ Brug Python Løsning**
-- Kan sende data til cloud server
-- Lettere at integrere med backends
-- Kan stream til flere clients
-
-### Trænings Apps (Mobile)
-**→ Brug C# Løsning**
-- Deploy direkte til mobile
-- Offline support
-- App Store ready
-
-## 🛠️ Opsætning Per Option
-
-### Option A (C#) - 3 Steps
-
-1. **Installer Bluetooth LE plugin** i Unity
-2. **Tilføj WahooBLEManager.cs** til scene
-3. **Tryk Play** og se data!
-
-### Option B (Python) - 4 Steps
-
-1. **Installer Python packages:** `pip install -r requirements.txt`
-2. **Kør bridge:** `python python/wahoo_unity_bridge.py`
-3. **Tilføj WahooDataReceiver.cs** til Unity scene
-4. **Tryk Play** i Unity
-
-## 🔗 Data Flow
-
-### C# Løsning:
 ```
-trainer ─BLE─> Unity (WahooBLEManager) ─> VRBikeController ─> VR Scene
-     ↑                                              ↓
-     └──────────────────────────────────────────────┘
-         Real-time Bluetooth LE (20-50ms latency)
+TICKR FIT ──BLE──► Python Bridge ──WebSocket──► Unity (WahooDataReceiver)
+Arduino   ──UDP──► Python Bridge                       │
+                        │                              ▼
+                        └──► collector_tail.py    BikeMovementController
+                                    │
+                                    ▼
+                              SQLite / Parquet
 ```
-
-### Python Løsning:
-```
-trainer ─BLE─> Python Bridge ─WebSocket─> Unity (WahooDataReceiver) ─> VRBikeController ─> VR Scene
-     ↑                 ↓                                                           ↓
-     │              SQLite DB                                                VR Scene
-     └────────────────────────────────────────────────────────────────────────┘
-         BLE (20ms) + WebSocket (30ms) = ~50-100ms total latency
-```
-
-## 📊 Data Format (Begge Løsninger)
-
-```csharp
-public class CyclingData
-{
-    public double timestamp;      // Unix timestamp / Unity time
-    public int power;             // Watts (0-1500)
-    public float cadence;         // RPM (0-150)
-    public float speed;           // km/h (0-80)
-    public int heart_rate;        // BPM (40-220)
-}
-```
-
-## 🆘 Support
-
-**C# Løsning problemer?**
-→ Se `README_CSHARP.md` troubleshooting sektion
-
-**Python Løsning problemer?**
-→ Se `README.md` troubleshooting sektion
-
-**Generelle BLE issues?**
-→ Se `../../docs/PAIRING_HELP.md` i parent directory
-
-## 🎓 Læringssti
-
-1. **Start Simple:** Test C# løsning i Unity Editor
-2. **Test VR:** Tilføj XR Interaction Toolkit
-3. **Add Features:** Haptics, audio, visual effects
-4. **Polish:** UI, menus, settings
-5. **Deploy:** Build til din target platform
-
-## 💡 Pro Tips
-
-- **Test i Editor først** - begge løsninger virker i Unity Editor
-- **Brug Smoothing** - sæt smoothing factor til 0.3-0.5 for naturlig følelse
-- **Debug Overlay** - begge scripts har built-in debug display
-- **Auto-reconnect** - begge håndterer disconnects automatisk
-
-## 🏆 Anbefaling
-
-**Ny til Unity VR?**
-→ Start med **C# løsning** - alt i ét program
-
-**Erfaren Unity dev + vil logge data?**
-→ Brug **Python løsning** - mere fleksibel
-
-**Building for Quest?**
-→ **KUN C# løsning** virker på mobile
 
 ---
 
-**God fornøjelse med dit VR cykel projekt! 🚴‍♂️🥽**
+## 🚀 Opsætning - 4 Steps
+
+1. **Installer Python packages:** `pip install -r requirements.txt`
+2. **Start broen:** `python python/wahoo_unity_bridge.py --live`
+3. **Tilføj `WahooDataReceiver.cs`** til Unity scene
+4. **Tryk Play** i Unity
+
+---
+
+## 💡 Pro Tips
+
+- **Test i Editor først** — brug mock_wahoo_bridge.py uden hardware
+- **Brug Smoothing** — sæt smoothing factor til 0.3-0.5 for naturlig følelse
+- **Debug Overlay** — WahooDataReceiver har built-in debug display
+- **Auto-reconnect** — broen håndterer disconnects automatisk
+
+---
+
+**God fornøjelse med dit VR cykelprojekt! 🚴‍♂️🥽**

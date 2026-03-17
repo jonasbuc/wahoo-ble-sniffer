@@ -54,6 +54,8 @@ wahoo_bridge_capture_*/
 
 # Ignore UnityCompileCheck build artifacts
 UnityIntegration/UnityCompileCheck/bin/
+WahooBleLoggerCSharp/bin/
+WahooBleLoggerCSharp/obj/
 UnityIntegration/UnityCompileCheck/obj/
 
 # Ignore UnityCompileCheck runtime output
