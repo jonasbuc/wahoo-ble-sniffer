@@ -42,15 +42,9 @@ python3 UnityIntegration/python/bike_bridge.py
 
 Du skulle se:
 ```
-============================================================
-  Mock Wahoo Bridge - Test Server
-============================================================
-
-⚠️  Dette er MOCK DATA - ingen rigtige BLE enheder!
-
-✓ WebSocket server: ws://localhost:8765
-
-Waiting for Unity to connect...
+INFO wahoo_bridge: Starting WahooBridgeServer (mock=True) on localhost:8765
+INFO wahoo_bridge: UDP event listener bound to 127.0.0.1:5005
+INFO websockets.server: server listening on 127.0.0.1:8765
 ```
 
 **I Unity:**
@@ -59,7 +53,7 @@ Waiting for Unity to connect...
 3. Se Console:
 ```
 [WahooData] ✓ Connected to Wahoo bridge!
-[WahooData] Power: 165W | Cadence: 84rpm | Speed: 27.3km/h | HR: 145bpm
+[WahooData] HR: 72bpm
 ```
 
 **Result:** ✅ WebSocket kommunikation virker!
