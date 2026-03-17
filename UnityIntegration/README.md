@@ -87,12 +87,11 @@ Found TICKR at C7:52:A1:6F:EB:57
 
 ### Step 5: Kør Unity
 
-Tryk **Play** i Unity. `WahooDataReceiver` forbinder automatisk til broen.
+Tryk **Play** i Unity. `WahooWsClient` forbinder automatisk til broen.
 
 Tjek Console:
 ```
-[WahooData] ✓ Connected to bridge!
-[WahooData] HR: 142bpm
+[WahooWsClient] Connected
 ```
 
 ### Step 6: Test uden hardware (mock bridge)
@@ -107,43 +106,43 @@ Genererer realistiske fake sensordata på samme WebSocket interface.
 
 ## 🎮 Brug af Data i dit VR Spil
 
-### Basis eksempel: Adgang til aktuelle værdier
+### Puls fra WahooWsClient
 
 ```csharp
 using UnityEngine;
 
 public class MyVRGame : MonoBehaviour
 {
-    private WahooDataReceiver wahooData;
+    private WahooWsClient wsClient;
 
     void Start()
     {
-        wahooData = FindObjectOfType<WahooDataReceiver>();
+        wsClient = FindObjectOfType<WahooWsClient>();
+        wsClient.OnHeartRate += OnHR;
     }
 
-    void Update()
+    void OnHR(int bpm)
     {
-        if (wahooData.IsConnected)
-        {
-            int heartRate = wahooData.HeartRate;  // BPM fra TICKR FIT
-            // Cykeldataene (speed, cadence, steering, brakes) kommer fra Arduino
-        }
+        Debug.Log($"HR: {bpm} bpm");
+        // Brug bpm til UI, intensitetslogik, etc.
     }
+
+    void OnDestroy() => wsClient.OnHeartRate -= OnHR;
 }
 ```
 
-### Event-drevet opdatering
+### Hastighed fra ArduinoSerialReader
+
+`BikeController` læser `arduinoSerialReader.speed` direkte. Vil du bruge speed i dit eget script:
 
 ```csharp
-void Start()
-{
-    wahooData = FindObjectOfType<WahooDataReceiver>();
-    wahooData.OnDataReceived += HandleNewData;
-}
+private ArduinoSerialReader arduino;
 
-void HandleNewData(WahooDataReceiver.CyclingData data)
+void Start() => arduino = FindObjectOfType<ArduinoSerialReader>();
+
+void Update()
 {
-    Debug.Log($"HR: {data.heart_rate} bpm");
+    float speed = arduino != null ? arduino.speed : 0f;
 }
 ```
 
@@ -151,15 +150,12 @@ void HandleNewData(WahooDataReceiver.CyclingData data)
 
 ## 🔧 Konfiguration
 
-### WahooDataReceiver Indstillinger
+### WahooWsClient Indstillinger
 
 | Indstilling | Beskrivelse | Standard |
 |-------------|-------------|---------|
 | Server URL | WebSocket adresse | `ws://localhost:8765` |
 | Auto Connect | Forbind ved Start() | ✅ Aktiveret |
-| Reconnect Delay | Sekunder mellem genforbindelsesforsøg | 3.0s |
-| Enable Smoothing | Udglatning af hurtige værdiskift | ✅ Aktiveret |
-| Smoothing Factor | 0 = ingen udglatning, 1 = max | 0.3 |
 
 ---
 
@@ -204,8 +200,8 @@ Bike-data (speed, cadence, steering, brakes) sendes som JSON events fra Arduino:
 - Tjek at port 8765 ikke bruges af anden app
 
 ### Data virker forsinket
-- Øg **Smoothing Factor** i WahooDataReceiver (prøv 0.5)
 - Localhost latency burde være <1ms
+- Kontrollér at bridge kører og sender (~1 Hz mock, eller live ved HR-ændring)
 
 ### Hyppige disconnects
 - Hold TICKR inden for 5 meter af computeren
@@ -227,9 +223,7 @@ UnityIntegration/
 │
 ├── unity/                          # Unity C# controller scripts
 │   ├── BikeController.cs           #   Bevægelse + styring (ArduinoSerialReader + Quest)
-│   ├── WahooDataReceiver.cs        #   (legacy — ikke i brug)
-│   ├── WahooDataReceiver_Optimized.cs  #   (legacy — ikke i brug)
-│   └── BikeMovementController.cs   #   (alias for BikeController.cs)
+│   └── BikeMovementController.cs   #   Indeholder BikeController (se ovenstående)
 │
 ├── Assets/VrsLogging/              # VRSF session-logging bibliotek
 │   ├── VrsSessionLogger.cs
