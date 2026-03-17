@@ -5,8 +5,8 @@ Stream live bike-sensor data into Unity VR using a Wahoo TICKR FIT heart-rate mo
 ## Architecture
 
 ```
-Wahoo TICKR FIT  ──BLE──►  wahoo_unity_bridge.py  ──WS──►  Unity (WahooWsClient.cs)
-Arduino          ──UDP──►  wahoo_unity_bridge.py           BikeMovementController.cs
+Wahoo TICKR FIT  ──BLE──►  bike_bridge.py  ──WS──►  Unity (WahooWsClient.cs)
+Arduino          ──UDP──►  bike_bridge.py           BikeMovementController.cs
                                     │
                                     └──► collector_tail.py ──► SQLite / Parquet
 ```
@@ -21,7 +21,7 @@ Arduino          ──UDP──►  wahoo_unity_bridge.py           BikeMovemen
 .
 ├── UnityIntegration/              # Unity ↔ Python bridge & C# scripts
 │   ├── python/                    #   Bridge, mock server, GUI, collector
-│   │   ├── wahoo_unity_bridge.py  #     WebSocket bridge (TICKR HR + Arduino → Unity)
+│   │   ├── bike_bridge.py  #     WebSocket bridge (TICKR HR + Arduino → Unity)
 │   │   ├── mock_wahoo_bridge.py   #     Mock server for testing without hardware
 │   │   ├── wahoo_bridge_gui.py    #     Tkinter GUI monitor
 │   │   ├── ble_test_connect.py    #     TICKR FIT BLE connection test
@@ -84,7 +84,7 @@ These launch both the bridge and the GUI monitor with the `--live` flag.
 **Manual:**
 
 ```bash
-python UnityIntegration/python/wahoo_unity_bridge.py --live --verbose
+python UnityIntegration/python/bike_bridge.py --live --verbose
 ```
 
 Bridge options:

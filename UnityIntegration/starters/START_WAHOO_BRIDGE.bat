@@ -55,7 +55,7 @@ echo.
 
 REM Start bridge first, then GUI
 REM Start canonical bridge in a new window so it runs independently
-start "Wahoo Bridge" "%PYCMD%" "%~dp0..\python\wahoo_unity_bridge.py" --live
+start "Wahoo Bridge" "%PYCMD%" "%~dp0..\python\bike_bridge.py" --live
 
 REM Give the bridge a moment to initialize, then start the GUI monitor in a separate window
 timeout /t 2 /nobreak >nul

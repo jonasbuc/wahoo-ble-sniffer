@@ -1,7 +1,7 @@
 """
 test_bridge_extra.py
 ====================
-Additional tests for wahoo_unity_bridge.py covering paths not yet exercised:
+Additional tests for bike_bridge.py covering paths not yet exercised:
 
   • WahooBridgeServer.__init__ — attribute defaults
   • parse_args — default values and flag overrides
@@ -12,7 +12,6 @@ Additional tests for wahoo_unity_bridge.py covering paths not yet exercised:
   • broadcast_json with zero clients — no error, returns cleanly
   • broadcast_json with many clients — all receive the message
   • Live-mode frame packing — struct round-trip for _ble_hr value
-  • Frame power/cadence/speed always 0.0 in current protocol
   • broadcast_loop exits on CancelledError without swallowing it
   • Handshake re-sent to each independently connecting client
   • Server on already-occupied port raises immediately (port-in-use)
@@ -34,7 +33,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from UnityIntegration.python.wahoo_unity_bridge import (
+from UnityIntegration.python.bike_bridge import (
     MockCyclingData,
     WahooBridgeServer,
     parse_args,
@@ -46,8 +45,8 @@ try:
 except Exception:
     HAS_WS = False
 
-FRAME_FMT  = "dfffi"
-FRAME_SIZE = struct.calcsize(FRAME_FMT)   # 24 bytes
+FRAME_FMT  = "di"
+FRAME_SIZE = struct.calcsize(FRAME_FMT)   # 12 bytes
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────
@@ -205,15 +204,14 @@ class TestParseArgs:
 
 class TestFrameProtocol:
 
-    def test_frame_power_cadence_speed_zero_in_mock(self):
-        """In the current protocol power, cadence, speed are always 0.0."""
+    def test_frame_only_contains_timestamp_and_hr(self):
+        """di wire format: only timestamp (double) and HR (int32) — 12 bytes."""
         gen = MockCyclingData()
         for _ in range(20):
             frame = gen.get_binary_frame()
-            _ts, power, cadence, speed, _hr = struct.unpack(FRAME_FMT, frame)
-            assert power   == 0.0, f"power should be 0.0, got {power}"
-            assert cadence == 0.0, f"cadence should be 0.0, got {cadence}"
-            assert speed   == 0.0, f"speed should be 0.0, got {speed}"
+            assert len(frame) == FRAME_SIZE
+            _ts, hr = struct.unpack(FRAME_FMT, frame)
+            assert 30 <= hr <= 220, f"HR out of plausible range: {hr}"
 
     def test_live_mode_frame_packs_ble_hr(self):
         """When _ble_hr is set the broadcast frame must encode it correctly."""
@@ -223,18 +221,17 @@ class TestFrameProtocol:
         frame = struct.pack(
             FRAME_FMT,
             time.time(),
-            0.0, 0.0, 0.0,
             int(server._ble_hr),
         )
         assert len(frame) == FRAME_SIZE
-        _ts, _p, _c, _s, hr = struct.unpack(FRAME_FMT, frame)
+        _ts, hr = struct.unpack(FRAME_FMT, frame)
         assert hr == 155
 
     def test_frame_hr_field_is_int32(self):
         """HR is packed as 'i' (signed int32) — verify it round-trips for large BPM."""
         for bpm in (40, 100, 155, 220):
-            frame = struct.pack(FRAME_FMT, time.time(), 0.0, 0.0, 0.0, bpm)
-            _, _, _, _, recovered = struct.unpack(FRAME_FMT, frame)
+            frame = struct.pack(FRAME_FMT, time.time(), bpm)
+            _, recovered = struct.unpack(FRAME_FMT, frame)
             assert recovered == bpm
 
     def test_mock_base_hr_attribute(self):

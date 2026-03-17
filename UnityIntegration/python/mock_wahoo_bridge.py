@@ -2,7 +2,7 @@
 """
 mock_wahoo_bridge.py — Lightweight mock WebSocket bridge for testing
 =====================================================================
-Provides a self-contained WebSocket server that emits simulated cycling
+Provides a self-contained WebSocket server that emits simulated HR
 frames at ~20 Hz **without** requiring any BLE hardware.
 
 Use this when:
@@ -12,18 +12,15 @@ Use this when:
 
 Wire format (same as the real bridge)
 --------------------------------------
-Each broadcast frame is a 24-byte binary struct::
+Each broadcast frame is a 12-byte binary struct::
 
-    struct.pack("dfffi", timestamp, power, cadence, speed, hr)
+    struct.pack("di", timestamp, hr)
 
     d = double  timestamp (8 bytes, Unix epoch seconds)
-    f = float   power     (4 bytes, watts — always 0.0 in this mock)
-    f = float   cadence   (4 bytes, RPM   — always 0.0 in this mock)
-    f = float   speed     (4 bytes, km/h  — always 0.0 in this mock)
     i = int32   hr        (4 bytes, BPM)
 
-Only HR is simulated; the other three fields are kept at zero for
-binary-format compatibility with the real bridge and the Unity receiver.
+Bike data (speed, cadence, steering, brakes) comes from the Arduino over
+UDP and is NOT included in binary frames — it is sent as JSON events.
 
 Optional JSON mode
 ------------------
@@ -56,27 +53,21 @@ LOG = logging.getLogger("mock_wahoo_bridge")
 
 
 class MockCyclingData:
-    """Generates simulated cycling metrics for the mock bridge.
+    """Generates simulated HR metrics for the mock bridge.
 
     Heart rate oscillates around ``base_hr`` using a sine wave and
-    random noise.  All other fields (power, cadence, speed) remain at
-    zero so the binary format stays compatible with the real bridge.
+    random noise.  Bike data (speed, cadence, steering, brakes) comes
+    from the Arduino and is not simulated here.
     """
 
     def __init__(self) -> None:
         self.time_offset = time.time()   # epoch reference for elapsed-time calculations
-        self.base_power    = 150         # W  (reserved for future use)
-        self.base_cadence  = 80          # RPM (reserved for future use)
-        self.base_speed    = 25.0        # km/h (reserved for future use)
         self.base_hr       = 140         # BPM — midpoint of the simulated HR range
-        self.cycle_duration = 20         # s — legacy field, currently unused
-        self.stop_duration  = 5          # s — legacy field, currently unused
 
     def get_current_data(self, use_binary: bool = True):
-        """Return either a 24-byte binary frame or a JSON dict.
+        """Return either a 12-byte binary frame or a JSON dict.
 
         HR is simulated as ``base_hr ± sine_variation ± random_noise``.
-        Power, cadence, and speed are always zero in this mock.
 
         Args:
             use_binary: If True return bytes; if False return a dict.
@@ -89,18 +80,11 @@ class MockCyclingData:
         micro_noise  = random.uniform(-2.0, 2.0)
         hr = max(40, int(self.base_hr + hr_variation + micro_noise))
 
-        # Power/cadence/speed are intentionally zero — HR-only simulation
-        power   = 0.0
-        cadence = 0.0
-        speed   = 0.0
-
         if use_binary:
-            # 24-byte binary frame: d(8)+f(4)+f(4)+f(4)+i(4)
-            return struct.pack(
-                "dfffi", time.time(), float(power), float(cadence), float(speed), int(hr)
-            )
+            # 12-byte binary frame: d(8) + i(4)
+            return struct.pack("di", time.time(), int(hr))
         else:
-            return {"timestamp": time.time(), "power": 0.0, "cadence": 0.0, "speed": 0.0, "heart_rate": hr}
+            return {"timestamp": time.time(), "heart_rate": hr}
 
 
 class MockWahooBridge:
@@ -160,7 +144,7 @@ class MockWahooBridge:
             {
                 "protocol": "binary" if self.use_binary else "json",
                 "version": "1.0",
-                "format": "dfffi (timestamp, power, cadence, speed, hr)",
+                "format": "di (timestamp, hr)",
             }
         )
         await websocket.send(handshake)
@@ -200,7 +184,7 @@ class MockWahooBridge:
                         except Exception:
                             self.clients.discard(client)
                         try:
-                            *_, hr = struct.unpack("dfffi", message[:24])
+                            _ts, hr = struct.unpack("di", message[:12])
                         except struct.error:
                             hr = 0
                 else:

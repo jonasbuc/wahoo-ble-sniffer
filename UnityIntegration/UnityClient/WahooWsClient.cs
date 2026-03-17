@@ -7,8 +7,8 @@ using System.Threading;
 using System.Threading.Tasks;
 using UnityEngine;
 
-// Lightweight WebSocket client for Unity that connects to the Wahoo bridge,
-// decodes binary frames (dfffi) for heart-rate and forwards JSON trigger
+// Lightweight WebSocket client for Unity that connects to the bike bridge,
+// decodes binary frames (di: timestamp + hr) and forwards JSON trigger
 // events as C# events/delegates on the main thread.
 // NOTE: This uses System.Net.WebSockets.ClientWebSocket which is available
 // when scripting runtime supports .NET 4.x Equivalent. If your Unity
@@ -154,19 +154,14 @@ public class WahooWsClient : MonoBehaviour
 
     private void HandleBinaryMessage(byte[] bytes)
     {
-        // Expecting Python struct.pack('dfffi') = 8 + 4 + 4 + 4 + 4 = 24 bytes
-        if (bytes == null || bytes.Length < 24) return;
+        // Expecting Python struct.pack('di') = 8 + 4 = 12 bytes
+        // d = double timestamp (8 bytes), i = int32 hr (4 bytes)
+        if (bytes == null || bytes.Length < 12) return;
 
         try
         {
-            // Little-endian expected on most machines; Python struct default is native.
-            bool isLittle = BitConverter.IsLittleEndian;
-
             double timestamp = BitConverter.ToDouble(bytes, 0);
-            float power = BitConverter.ToSingle(bytes, 8);
-            float cadence = BitConverter.ToSingle(bytes, 12);
-            float speed = BitConverter.ToSingle(bytes, 16);
-            int hr = BitConverter.ToInt32(bytes, 20);
+            int hr = BitConverter.ToInt32(bytes, 8);
 
             // Enqueue main-thread invocation
             _mainThreadQueue.Enqueue(() => OnHeartRate?.Invoke(hr));

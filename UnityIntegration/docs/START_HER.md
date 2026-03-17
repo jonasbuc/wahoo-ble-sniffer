@@ -33,7 +33,7 @@ python3 UnityIntegration/python/mock_wahoo_bridge.py
 ### Step 3: Test Med Rigtig Hardware
 
 ```bash
-python3 UnityIntegration/python/wahoo_unity_bridge.py --live
+python3 UnityIntegration/python/bike_bridge.py --live
 ```
 
 (Kræver TICKR FIT på + Arduino tilsluttet)
@@ -43,7 +43,7 @@ python3 UnityIntegration/python/wahoo_unity_bridge.py --live
 ## 📁 Hvilke Filer Skal Du Bruge?
 
 ```
-✅ wahoo_unity_bridge.py        - Real bridge (TICKR FIT BLE + Arduino UDP)
+✅ bike_bridge.py        - Real bridge (TICKR FIT BLE + Arduino UDP)
 ✅ mock_wahoo_bridge.py          - Test uden hardware
 ✅ WahooDataReceiver.cs          - Unity WebSocket klient
 ✅ BikeMovementController.cs     - VR bike bevægelse
@@ -65,7 +65,7 @@ Læs i denne rækkefølge:
 ## 🎯 Min Anbefaling
 
 1. ✅ Brug **mock_wahoo_bridge.py** til initial Unity-udvikling
-2. ✅ Skift til **wahoo_unity_bridge.py --live** når hardware er klar
+2. ✅ Skift til **bike_bridge.py --live** når hardware er klar
 3. ✅ Arduino senderdata direkte til Unity over UDP (separat fra bridge)
 
 ---

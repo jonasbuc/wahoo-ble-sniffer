@@ -5,7 +5,7 @@
 ### ✅ Python Kode Kompilerer
 ```bash
 # From repo root
-python3 -m py_compile UnityIntegration/python/wahoo_unity_bridge.py
+python3 -m py_compile UnityIntegration/python/bike_bridge.py
 # ✓ Success - ingen syntax errors
 ```
 
@@ -68,7 +68,7 @@ Waiting for Unity to connect...
 
 **Start real bridge:**
 ```bash
-python3 python/wahoo_unity_bridge.py
+python3 python/bike_bridge.py
 ```
 
 **Krav:**
@@ -96,7 +96,7 @@ Found trainer at C7:52:A1:6F:EB:57
 | Bleak lib | ✅ Installed | Version 0.21.0+ |
 | Mock server | ✅ Ready | Test uden hardware |
 | TICKR FIT BLE | ✅ Tested | HR UUID 0x2A37 |
-| Arduino UDP | ✅ Integrated | wahoo_unity_bridge.py |
+| Arduino UDP | ✅ Integrated | bike_bridge.py |
 | Unity C# scripts | ✅ Written | WahooDataReceiver.cs |
 | BikeMovementController | ✅ Complete | WebSocket-drevet bevægelse |
 
@@ -125,7 +125,7 @@ Dette setup er baseret på **verified working code**:
 Wahoo TICKR FIT (BLE HR)
 Arduino (UDP bike data)
     ↓
-UnityIntegration/python/wahoo_unity_bridge.py   ← Bridge
+UnityIntegration/python/bike_bridge.py   ← Bridge
     ↓ (JSON over WebSocket)
 WahooDataReceiver.cs         ← Standard Unity WebSocket
     ↓

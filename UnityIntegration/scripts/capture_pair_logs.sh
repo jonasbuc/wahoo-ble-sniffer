@@ -22,9 +22,9 @@ else
   PY="python3"
 fi
 
-echo "Starting bridge with: $PY -u UnityIntegration/python/wahoo_unity_bridge.py --live"
+echo "Starting bridge with: $PY -u UnityIntegration/python/bike_bridge.py --live"
 # Start bridge in background and capture its PID. Use setsid to keep it separate from this terminal.
-setsid "$PY" -u UnityIntegration/python/wahoo_unity_bridge.py --live > "$BRIDGE_LOG" 2>&1 &
+setsid "$PY" -u UnityIntegration/python/bike_bridge.py --live > "$BRIDGE_LOG" 2>&1 &
 BRIDGE_PID=$!
 sleep 0.5
 if ps -p $BRIDGE_PID > /dev/null 2>&1; then
