@@ -2,7 +2,7 @@
 REM Wahoo Bridge Auto-Installer (Windows)
 REM Double-click to install everything automatically!
 
-cd /d "%~dp0\.."
+cd /d "%~dp0..\.."
 
 echo ============================================================
 echo   Wahoo Bridge - Auto Installer
