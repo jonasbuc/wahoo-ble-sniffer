@@ -3,7 +3,7 @@ test_disconnections.py
 ======================
 Exhaustive disconnection and fault-tolerance tests for:
 
-  ■ Bridge (WahooBridgeServer / wahoo_unity_bridge.py)
+  ■ Bridge (WahooBridgeServer / bike_bridge.py)
       – client drops connection mid-stream
       – client times out (ping/pong failure)
       – multiple clients, only one drops
@@ -51,7 +51,7 @@ import pytest
 
 # ── Import under-test modules ─────────────────────────────────────────────────
 from UnityIntegration.python import collector_tail as ct
-from UnityIntegration.python.wahoo_unity_bridge import MockCyclingData, WahooBridgeServer
+from UnityIntegration.python.bike_bridge import MockCyclingData, WahooBridgeServer
 
 try:
     import websockets
@@ -64,8 +64,8 @@ except Exception:
 # Shared helpers
 # ─────────────────────────────────────────────────────────────────────────────
 
-FRAME_FMT = "dfffi"  # timestamp(d) power(f) cadence(f) speed(f) hr(i) = 24 bytes
-FRAME_SIZE = struct.calcsize(FRAME_FMT)  # 24
+FRAME_FMT = "di"   # timestamp(d) hr(i) = 12 bytes
+FRAME_SIZE = struct.calcsize(FRAME_FMT)  # 12
 
 
 def _free_port() -> int:
@@ -164,7 +164,7 @@ class TestBridgeMockMode:
         gen = MockCyclingData()
         for _ in range(200):
             frame = gen.get_binary_frame()
-            _, _, _, _, hr = struct.unpack(FRAME_FMT, frame)
+            _, hr = struct.unpack(FRAME_FMT, frame)
             assert 40 <= hr <= 220, f"HR {hr} outside plausible range"
 
     def test_mock_frame_timestamp_advances(self):
@@ -180,7 +180,7 @@ class TestBridgeMockMode:
     @pytest.mark.asyncio
     async def test_server_starts_in_mock_mode_without_bleak(self):
         """Server must start successfully even when HAVE_BLEAK is False."""
-        import UnityIntegration.python.wahoo_unity_bridge as bridge_mod
+        import UnityIntegration.python.bike_bridge as bridge_mod
 
         port = _free_port()
         original = bridge_mod.HAVE_BLEAK

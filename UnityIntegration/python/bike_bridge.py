@@ -1,44 +1,52 @@
 #!/usr/bin/env python3
 """
-wahoo_unity_bridge.py — Authoritative Wahoo BLE → WebSocket bridge
-====================================================================
-This is the canonical real-time bridge for the project.  It runs a
-WebSocket server (default port 8765) that streams cycling data to any
-number of Unity clients (or other WebSocket consumers).
+bike_bridge.py — BLE + Arduino → Unity WebSocket bridge
+=========================================================
+Canonical real-time bridge.  Runs a WebSocket server (default port 8765)
+that streams heart-rate data from a Wahoo TICKR FIT and relays UDP trigger
+events from the Arduino to any number of Unity clients.
 
 Modes
 -----
 * **Mock mode** (default / ``--mock``): generates simulated HR data with a
   sine-wave variation and random noise so the Unity scene can be tested
   without any physical hardware.
-* **Live mode** (``--live``): scans for a Wahoo TICKR via bleak, subscribes to
-  Heart Rate GATT notifications, and forwards the real BPM to clients.
+* **Live mode** (``--live``): scans for a Wahoo TICKR via Bleak, subscribes
+  to Heart Rate GATT notifications, and forwards the real BPM to clients.
 
 Wire format
 -----------
-Every broadcast frame is a 24-byte binary struct:
+Every broadcast frame is a 12-byte binary struct:
 
-  ``struct.pack("dfffi", timestamp, power, cadence, speed, hr)``
+  ``struct.pack("di", timestamp, hr)``
 
   +-----------+--------+-------+-------------------------------------------+
   | Field     | Type   | Bytes | Notes                                     |
   +===========+========+=======+===========================================+
   | timestamp | double |   8   | Unix epoch seconds (float)                |
-  | power     | float  |   4   | Watts (0.0 when only HR is available)     |
-  | cadence   | float  |   4   | RPM  (0.0 when only HR is available)      |
-  | speed     | float  |   4   | km/h (0.0 when only HR is available)      |
   | hr        | int32  |   4   | Heart rate in BPM                         |
   +-----------+--------+-------+-------------------------------------------+
 
-On connection the server also sends a JSON handshake so clients know the
-protocol version and supported data modes.
+Bike data (speed, cadence, steering, brakes) comes from the Arduino over UDP
+and is forwarded to Unity clients as JSON event messages — it is NOT packed
+into the binary frame.
+
+UDP trigger listener
+--------------------
+The server also binds a UDP socket (default 127.0.0.1:5005).  The Arduino
+(or any other sender) can send either:
+
+* Plain ASCII strings like ``HALL_HIT``, ``SWITCH_HIT`` — mapped to canonical
+  event names and broadcast as JSON.
+* JSON objects ``{"event": "...", ...}`` — forwarded as-is.
+
+All UDP events are broadcast to every connected WebSocket client as JSON.
 
 Robustness features
 -------------------
 - Validates binary frame length before unpacking
 - Catches struct errors and logs parse problems without crashing
 - Graceful per-client error handling — one bad client cannot kill others
-- UDP listener for external trigger events (e.g. from Arduino or Unity)
 - Exponential reconnect backoff for BLE
 - Periodic battery keepalive reads to prevent BLE supervision timeouts
 - Ping loop to detect and evict dead WebSocket connections
@@ -72,28 +80,22 @@ except Exception:
 
 
 class MockCyclingData:
-    """Generates simulated cycling data for testing without hardware.
+    """Generates simulated HR data for testing without hardware.
 
     The heart rate oscillates around a ``base_hr`` value using a sine wave
     (period ~31 s) plus small random noise, mimicking a realistic HR trace.
-    Power, cadence and speed are intentionally left at 0 because the live
-    bridge only populates HR; keeping them zero preserves binary compatibility.
+    Bike data (speed, cadence, steering, brakes) comes from the Arduino and
+    is not simulated here.
     """
 
     def __init__(self):
         self.time_offset = time.time()   # reference epoch for elapsed-time calculations
-        self.base_power = 150            # W (unused in current protocol — kept for reference)
-        self.base_cadence = 80           # RPM (unused)
-        self.base_speed = 25.0           # km/h (unused)
         self.base_hr = 140               # BPM — centre of the simulated HR range
-        self.cycle_duration = 20         # s — period of the ride/rest cycle (legacy, unused)
-        self.stop_duration = 5           # s (legacy, unused)
 
     def get_binary_frame(self):
-        """Return a 24-byte binary frame with simulated HR data.
+        """Return a 12-byte binary frame with simulated HR data.
 
-        Format: ``struct.pack("dfffi", timestamp, power, cadence, speed, hr)``
-        Power, cadence, and speed are always 0.0 in this mock.
+        Format: ``struct.pack("di", timestamp, hr)``
         """
         now = time.time()
         elapsed = now - self.time_offset
@@ -103,13 +105,8 @@ class MockCyclingData:
         micro_noise  = random.uniform(-2.0, 2.0)
         hr = max(40, int(self.base_hr + hr_variation + micro_noise))
 
-        # Power / cadence / speed are zeroed — only HR is used by the live bridge
-        power   = 0.0
-        cadence = 0.0
-        speed   = 0.0
-
-        # Pack into the 24-byte wire format: d(8) f(4) f(4) f(4) i(4) = 24 bytes
-        return struct.pack("dfffi", now, float(power), float(cadence), float(speed), int(hr))
+        # Pack into the 12-byte wire format: d(8) + i(4) = 12 bytes
+        return struct.pack("di", now, int(hr))
 
 
 class WahooBridgeServer:
@@ -221,14 +218,14 @@ class WahooBridgeServer:
                 LOG.info("Client disconnected %s", ws.remote_address)
 
     async def broadcast_loop(self):
-        """Continuously broadcast live data to all connected clients at ~20 Hz.
+        """Continuously broadcast live HR data to all connected clients at ~20 Hz.
 
         In *mock* mode, frames are generated by ``MockCyclingData`` each tick.
         In *live* mode, waits until ``_ble_hr`` is populated by the BLE task
         before sending anything.
 
         Each iteration:
-          1. Pack a 24-byte ``dfffi`` binary frame with the current HR value.
+          1. Pack a 12-byte ``di`` binary frame with the current HR value.
           2. Send the frame to every connected client; remove any that fail.
           3. Log the HR value once per second for monitoring.
 
@@ -249,12 +246,8 @@ class WahooBridgeServer:
                         if self._ble_hr is None:
                             await asyncio.sleep(0.05)
                             continue
-                        # Build the 24-byte binary frame:
-                        # d = timestamp (8 bytes), f = power (4), f = cadence (4),
-                        # f = speed (4), i = hr int32 (4) → total 24 bytes
-                        message = struct.pack(
-                            "dfffi", time.time(), 0.0, 0.0, 0.0, int(self._ble_hr)
-                        )
+                        # Build the 12-byte binary frame: d(8) + i(4) = 12 bytes
+                        message = struct.pack("di", time.time(), int(self._ble_hr))
 
                     if message is not None:
                         # Send to every client; on any error remove the offending client
@@ -276,10 +269,8 @@ class WahooBridgeServer:
                     if now != last_log and message is not None:
                         last_log = now
                         try:
-                            if len(message) >= 24:
-                                _ts, _power, _cadence, _speed, hr = struct.unpack(
-                                    "dfffi", message[:24]
-                                )
+                            if len(message) >= 12:
+                                _ts, hr = struct.unpack("di", message[:12])
                                 LOG.info("HR:%dbpm", hr)
                         except struct.error:
                             LOG.debug("Could not parse broadcast frame for logging")
@@ -365,9 +356,18 @@ class WahooBridgeServer:
                     pass
 
     # ── UDP trigger listener ─────────────────────────────────────────────────
-    # An Arduino or Unity script can send plain ASCII strings (e.g. "HALL_HIT")
-    # or JSON objects to this UDP port.  The listener normalises them into JSON
-    # event dicts and broadcasts them to all WebSocket clients.
+    # The Arduino (or any Unity script) can send plain ASCII strings
+    # (e.g. "HALL_HIT", "SWITCH_HIT") or JSON objects to UDP port 5005.
+    # The listener normalises them into JSON event dicts and broadcasts
+    # them to all WebSocket clients.
+    #
+    # Expected ASCII trigger strings:
+    #   HALL_HIT   / HIT        → {"event": "hall_hit",   ...}
+    #   SWITCH_HIT / Switch HIT → {"event": "switch_hit", ...}
+    #   <anything else>         → {"event": "<raw text>", ...}
+    #
+    # JSON objects are forwarded as-is (extra keys are preserved).
+    # Every relayed message also gets "source", "addr", and "timestamp" keys.
     class _UDPProtocol(asyncio.DatagramProtocol):
         """asyncio protocol that receives UDP datagrams and relays them as JSON events."""
 

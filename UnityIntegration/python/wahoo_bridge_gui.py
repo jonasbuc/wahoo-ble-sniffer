@@ -28,10 +28,10 @@ Graph features
 
 Wire format (from bridge server)
 ---------------------------------
-Binary frames: 24 bytes — ``struct.pack("dfffi", ts, power, cadence, speed, hr)``
-JSON frames  : ``{"power": …, "cadence": …, "speed": …, "heart_rate": …}``
-Handshake    : ``{"protocol": "wahoo-bridge/1"}`` (first JSON after connect)
-Trigger      : ``{"event": "spawn", "source": "unity", "timestamp": …}``
+Binary frames: 12 bytes — ``struct.pack("di", ts, hr)``
+JSON frames  : ``{"heart_rate": …}``
+Handshake    : ``{"protocol": "binary", "version": "1.0"}`` (first JSON after connect)
+Trigger      : ``{"event": "hall_hit", "source": "udp", "timestamp": …}``
 """
 
 import asyncio
@@ -470,9 +470,9 @@ class WahooBridgeGUI:
         str  frames: JSON parsed and dispatched based on keys:
                "protocol"      → server handshake; update bridge label
                "event"         → trigger marker (only if source is "udp"/"unity")
-               other           → cycling data {power, cadence, speed, heart_rate}
-        bytes frames: 24-byte binary; unpacked as ``struct.unpack("dfffi", …)``
-               fields: timestamp(d), power(f), cadence(f), speed(f), hr(i)
+               other           → cycling data {heart_rate}
+        bytes frames: 12-byte binary; unpacked as ``struct.unpack("di", …)``
+               fields: timestamp(d), hr(i)
         """
         uri = "ws://localhost:8765"
 
@@ -514,14 +514,14 @@ class WahooBridgeGUI:
                                     data.get("heart_rate", 0),
                                 )
                             else:
-                                # ── Binary frame (24 bytes) ────────────────
-                                # Format: double(8) + float(4) × 3 + int32(4) = 24 bytes
+                                # ── Binary frame (12 bytes) ────────────────
+                                # Format: double(8) + int32(4) = 12 bytes
                                 import struct
-                                if len(message) >= 24:
-                                    timestamp, power, cadence, speed, hr = (
-                                        struct.unpack("dfffi", message[:24])
+                                if len(message) >= 12:
+                                    timestamp, hr = (
+                                        struct.unpack("di", message[:12])
                                     )
-                                    self.root.after(0, self.update_data, power, cadence, speed, hr)
+                                    self.root.after(0, self.update_data, 0, 0.0, 0.0, hr)
                         except Exception:
                             # Parsing errors are non-fatal; ignore the frame and continue.
                             pass

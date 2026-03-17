@@ -19,7 +19,7 @@ Python-broen sender alt videre til Unity over WebSocket.
 
 | Fil | Beskrivelse |
 |-----|-------------|
-| `wahoo_unity_bridge.py` | TICKR HR + Arduino UDP → WebSocket server |
+| `bike_bridge.py` | TICKR HR + Arduino UDP → WebSocket server |
 | `mock_wahoo_bridge.py` | Mock server til test uden hardware |
 | `wahoo_bridge_gui.py` | Tkinter GUI monitor |
 | `ble_test_connect.py` | Test af TICKR FIT BLE forbindelse |
@@ -52,7 +52,7 @@ Python-broen sender alt videre til Unity over WebSocket.
 UnityIntegration/
 │
 ├── 🐍 PYTHON BRIDGE
-│   ├── python/wahoo_unity_bridge.py    # TICKR HR + Arduino UDP → WebSocket
+│   ├── python/bike_bridge.py    # TICKR HR + Arduino UDP → WebSocket
 │   ├── python/mock_wahoo_bridge.py     # Mock server (ingen hardware)
 │   ├── python/wahoo_bridge_gui.py      # GUI monitor
 │   ├── python/ble_test_connect.py      # TICKR BLE test
@@ -102,7 +102,7 @@ Arduino   ──UDP──► Python Bridge                       │
 ## 🚀 Opsætning - 4 Steps
 
 1. **Installer Python packages:** `pip install -r requirements.txt`
-2. **Start broen:** `python python/wahoo_unity_bridge.py --live`
+2. **Start broen:** `python python/bike_bridge.py --live`
 3. **Tilføj `WahooDataReceiver.cs`** til Unity scene
 4. **Tryk Play** i Unity
 

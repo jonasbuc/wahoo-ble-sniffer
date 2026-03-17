@@ -49,7 +49,7 @@ GUI_CMD="for i in {1..30}; do nc -z 127.0.0.1 8765 >/dev/null 2>&1 && break || s
 osascript -e "tell application \"Terminal\" to do script \"$GUI_CMD\""
 
 # Start canonical bridge in the current window (foreground)
-"$PYTHON" ../python/wahoo_unity_bridge.py --live
+"$PYTHON" ../python/bike_bridge.py --live
 
 echo ""
 echo "Bridge stopped."

@@ -80,7 +80,7 @@ Du ser:
 ## Step 5: Kør med Rigtig Hardware
 
 ```bash
-python3 UnityIntegration/python/wahoo_unity_bridge.py --live
+python3 UnityIntegration/python/bike_bridge.py --live
 ```
 
 (Kræver TICKR FIT på + Arduino tilsluttet og kørende)

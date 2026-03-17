@@ -5,8 +5,8 @@ Stream live cykeldata til Unity VR via en Wahoo TICKR FIT pulsmonitor (BLE) og e
 ## ⚡ Arkitektur
 
 ```
-Wahoo TICKR FIT  ──BLE──►  wahoo_unity_bridge.py  ──WS──►  Unity (WahooWsClient.cs)
-Arduino          ──UDP──►  wahoo_unity_bridge.py           BikeMovementController.cs
+Wahoo TICKR FIT  ──BLE──►  bike_bridge.py  ──WS──►  Unity (WahooWsClient.cs)
+Arduino          ──UDP──►  bike_bridge.py           BikeMovementController.cs
                                     │
                                     └──► collector_tail.py ──► SQLite / Parquet
 ```
@@ -73,7 +73,7 @@ Sørg for at din TICKR FIT er på (den aktiveres når den bæres mod huden).
 **Manuel:**
 
 ```bash
-python UnityIntegration/python/wahoo_unity_bridge.py --live
+python UnityIntegration/python/bike_bridge.py --live
 ```
 
 Du skal se:
@@ -214,7 +214,7 @@ WebSocket sender JSON-beskeder ved hver ny HR-opdatering:
 ```
 UnityIntegration/
 ├── python/                         # Python bridge scripts
-│   ├── wahoo_unity_bridge.py       #   TICKR HR + Arduino UDP → WebSocket
+│   ├── bike_bridge.py       #   TICKR HR + Arduino UDP → WebSocket
 │   ├── mock_wahoo_bridge.py        #   Mock server (ingen hardware nødvendig)
 │   ├── wahoo_bridge_gui.py         #   Tkinter status monitor
 │   ├── ble_test_connect.py         #   TICKR FIT BLE forbindelsestest

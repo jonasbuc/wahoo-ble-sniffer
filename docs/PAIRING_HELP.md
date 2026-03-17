@@ -1,57 +1,44 @@
-# IMPORTANT: macOS BLE Pairing Issue
+# macOS BLE Pairing — TICKR FIT
 
-## The Problem
-Your Wahoo devices are **already paired** with macOS:
-- TICKR FIT CCC1: `F0:13:C3:FD:EA:CB`
-- KICKR SNAP C041: `C7:52:A1:6F:EB:57`
+## Problemet
+Hvis din Wahoo TICKR FIT er **parret med macOS**, kan Bleak have svært ved at forbinde:
+- Parrede enheder bruger tilfældige UUIDs i stedet for MAC-adresser
+- De reklamerer ikke altid med deres navn
+- Bleak kan ikke forbinde pålideligt mens de er parret
 
-When BLE devices are paired with macOS, they:
-1. Use random UUIDs instead of MAC addresses
-2. Don't advertise their device names
-3. Can't be easily connected to via Bleak while paired
+## Løsning: Unpair fra macOS (ANBEFALET)
 
-## The Solution
-
-### Option 1: Unpair from macOS (RECOMMENDED)
-
-1. **Open System Settings → Bluetooth**
-2. **Find "KICKR SNAP C041"**
-   - Click the ⓘ (info) icon next to it
-   - Click **"Forget This Device"**
-3. **Find "TICKR FIT CCC1"**
-   - Click the ⓘ (info) icon next to it
-   - Click **"Forget This Device"**
-4. **Activate your devices:**
-   - Wear the TICKR (it needs to detect your heartbeat)
-   - Start pedaling on the KICKR
-5. **Run the logger:**
+1. **Åbn Systemindstillinger → Bluetooth**
+2. **Find "TICKR FIT CCC1"** (eller hvad din hedder)
+   - Klik ⓘ (info) ikonet
+   - Klik **"Forget This Device"** / **"Glem denne enhed"**
+3. **Aktivér TICKR FIT:**
+   - Sæt den på — den aktiveres når elektroder rører huden
+4. **Kør forbindelsestesten:**
    ```bash
-   python wahoo_ble_logger.py --show-all-devices
+   python UnityIntegration/python/ble_test_connect.py
    ```
 
-The devices should now appear with their actual names!
+Enheden bør nu dukke op med sit rigtige navn!
 
-### Option 2: Use CoreBluetooth (macOS Native)
+## Alternativ: Brug CoreBluetooth (macOS Native)
 
-If unpairing doesn't work, use CoreBluetooth (Apple's native BLE framework) instead of Bleak:
+Hvis unpairing ikke hjælper, kan du bruge CoreBluetooth (Apples native BLE framework):
 
-- Install `pyobjc-framework-CoreBluetooth`
-- Rewrite the BLE layer to use macOS native APIs
+- Installer `pyobjc-framework-CoreBluetooth`
+- Omskriv BLE-laget til macOS native API'er
 
-This approach bypasses the pairing system entirely but requires more setup.
+Dette omgår parring-systemet fuldstændigt, men kræver mere opsætning.
 
-### Option 3: Try the MAC addresses directly
+## Fejlfinding
 
-Even though macOS may use random UUIDs, it is worth trying:
+| Problem | Fix |
+|---------|-----|
+| TICKR ikke fundet | Sæt den på — elektroder skal røre huden |
+| Dukker op som UUID i stedet for navn | Unpair fra Systemindstillinger |
+| Forbinder men mister forbindelsen hurtigt | Flyt computer tættere på, tjek batteri |
+| Dukker ikke op overhovedet | Reset Bluetooth: hold Shift+Option, klik BT-ikon → Debug → Reset |
 
-```bash
-python wahoo_ble_logger.py --tickr-address F0:13:C3:FD:EA:CB --kickr-address C7:52:A1:6F:EB:57
-```
+## Anbefaling
 
-This may not work while the devices are still paired, but costs nothing to attempt.
-
-## Recommendation
-
-**Start with Option 1 (unpair)** — it takes about 2 minutes and resolves the
-issue in the vast majority of cases.  Only consider Option 2 (CoreBluetooth) if
-Option 1 doesn't help after a fresh scan.
+**Start med at unpaire** — det tager 2 minutter og løser problemet i langt de fleste tilfælde.

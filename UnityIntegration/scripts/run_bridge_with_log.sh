@@ -14,4 +14,4 @@ if [ "${1:-}" = "--venv" ]; then
 fi
 
 echo "Starting bridge with $PYTHON (stdout -> ~/bridge_live.log)"
-"$PYTHON" -u python/wahoo_unity_bridge.py --live 2>&1 | tee ~/bridge_live.log
+"$PYTHON" -u python/bike_bridge.py --live 2>&1 | tee ~/bridge_live.log

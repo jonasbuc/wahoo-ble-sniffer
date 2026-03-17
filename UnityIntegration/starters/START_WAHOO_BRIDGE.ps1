@@ -28,7 +28,7 @@ if (Test-Path $venvPy) {
 
 
 Write-Host "Starting Wahoo Bridge (new window)..."
-Start-Process -FilePath $python -ArgumentList "UnityIntegration\python\wahoo_unity_bridge.py", "--live" -WorkingDirectory $repoRoot
+Start-Process -FilePath $python -ArgumentList "UnityIntegration\python\bike_bridge.py", "--live" -WorkingDirectory $repoRoot
 
 Start-Sleep -Seconds 1
 
