@@ -90,6 +90,8 @@ class WahooBridgeGUI:
 
         # Bridge protocol label text — filled when the server handshake arrives.
         self.bridge_protocol: str | None = None
+        # WebSocket URL — overridable via --url CLI flag.
+        self.bridge_url: str | None = None
 
         # ── Build UI & start background thread ────────────────────────────────
         self.create_widgets()
@@ -475,7 +477,7 @@ class WahooBridgeGUI:
         bytes frames: 12-byte binary; unpacked as ``struct.unpack("di", …)``
                fields: timestamp(d), hr(i)
         """
-        uri = "ws://localhost:8765"
+        uri = "ws://localhost:8765" if self.bridge_url is None else self.bridge_url
 
         while True:
             try:
@@ -535,5 +537,16 @@ class WahooBridgeGUI:
 
 
 if __name__ == "__main__":
+    import argparse
+
+    p = argparse.ArgumentParser(description="Wahoo Bridge GUI monitor")
+    p.add_argument(
+        "--url",
+        default="ws://localhost:8765",
+        help="WebSocket URL of the bridge server (default: ws://localhost:8765)",
+    )
+    args = p.parse_args()
+
     app = WahooBridgeGUI()
+    app.bridge_url = args.url
     app.run()

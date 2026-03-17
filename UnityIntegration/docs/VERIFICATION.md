@@ -172,21 +172,21 @@ pip install bleak
 
 Du ved det virker når:
 
-**Mock Server:**
+**Mock Server (bridge log):**
 ```
-📡 Power: 165W | Cadence: 84rpm | Speed: 27.3km/h | HR: 145bpm
+INFO wahoo_bridge: Starting WahooBridgeServer (mock=True) on localhost:8765
+📡 HR: 72bpm (mock)
 ```
 
 **Unity Console:**
 ```
 [WahooData] ✓ Connected to Wahoo bridge!
-[WahooData] Power: 165W | Cadence: 84rpm | Speed: 27.3km/h | HR: 145bpm
+[WahooData] HR: 72bpm
 ```
 
 **VR Scene:**
 - Cykel bevæger sig
-- Hjul roterer
-- Hastighed ændres med power
+- HR vises korrekt
 
 ## 🎮 Next Steps
 
