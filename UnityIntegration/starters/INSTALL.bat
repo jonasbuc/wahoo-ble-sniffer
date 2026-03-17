@@ -2,7 +2,7 @@
 REM Wahoo Bridge Auto-Installer (Windows)
 REM Double-click to install everything automatically!
 
-cd /d "%~dp0\.."
+cd /d "%~dp0..\.."
 
 echo ============================================================
 echo   Wahoo Bridge - Auto Installer
@@ -40,7 +40,7 @@ REM Install dependencies
 echo [3/5] Installing dependencies...
 call .venv\Scripts\activate.bat
 python -m pip install --quiet --upgrade pip
-python -m pip install --quiet -r "%~dp0..\..\requirements.txt"
+python -m pip install --quiet -r requirements.txt
 
 echo OK: Dependencies installed
 echo.
