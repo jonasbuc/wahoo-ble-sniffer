@@ -1,205 +1,39 @@
 using UnityEngine;
 
-/// <summary>
-/// Controls bike/player movement using cycling sensor data
-/// Attach this to your bike/player GameObject
-/// REQUIRES: WahooDataReceiver component in the scene
-/// </summary>
-public class BikeMovementController : MonoBehaviour
-{
-    [Header("References")]
-    [SerializeField] private WahooDataReceiver wahooReceiver;
-    
-    [Header("Movement Settings")]
-    [SerializeField] private float speedMultiplier = 0.5f;  // How fast to move (adjust this!)
-    [SerializeField] private bool useRigidbody = false;     // Use physics or transform movement?
-    [SerializeField] private Transform bikeModel;           // Optional: rotate wheels based on speed
-    
-    [Header("Wheel Rotation (Optional)")]
-    [SerializeField] private Transform frontWheel;
-    [SerializeField] private Transform rearWheel;
-    [SerializeField] private float wheelRotationMultiplier = 100f;
-    
-    [Header("Debug")]
-    [SerializeField] private bool showDebugInfo = true;
-    
-    // Components
-    private Rigidbody rb;
-    private CharacterController characterController;
-    
-    // State
-    private float currentSpeed = 0f;  // km/h from sensor
-    private float currentCadence = 0f;
-    private float currentPower = 0f;
+public class BikeController : MonoBehaviour {
+    [SerializeField] private CharacterController characterController;
+    public GroundSensor groundSensor;
 
-    void Start()
-    {
-        // Auto-find WahooDataReceiver if not assigned
-        if (wahooReceiver == null)
-        {
-            wahooReceiver = FindObjectOfType<WahooDataReceiver>();
-            if (wahooReceiver == null)
-            {
-                Debug.LogError("[BikeMovement] No WahooDataReceiver found! Add one to the scene.");
-                enabled = false;
-                return;
-            }
-        }
-        
-        // Subscribe to data updates
-        wahooReceiver.OnDataReceived += OnWahooDataReceived;
-        
-        // Get components
-        rb = GetComponent<Rigidbody>();
-        characterController = GetComponent<CharacterController>();
-        
-    Debug.Log("[BikeMovement] ✓ Ready! Waiting for cycling data...");
-    }
+    [Header("Bike References")]
+    [SerializeField] private GameObject bikeSteerSteel;
 
-    void OnDestroy()
-    {
-        // Unsubscribe to prevent memory leaks
-        if (wahooReceiver != null)
-        {
-            wahooReceiver.OnDataReceived -= OnWahooDataReceived;
-        }
-    }
+    [Header("VR Headset References")]
+    [SerializeField] private Transform questControllerTransform;
+    [SerializeField] private Transform cameraRig;
 
-    /// <summary>
-    /// Called every time new data arrives from the cycling sensor
-    /// </summary>
-    private void OnWahooDataReceived(WahooDataReceiver.CyclingData data)
-    {
-        currentSpeed = data.speed;      // km/h
-        currentCadence = data.cadence;  // RPM
-        currentPower = data.power;      // Watts
-        
-        if (showDebugInfo)
-        {
-            Debug.Log($"[BikeMovement] Speed: {currentSpeed:F1} km/h | Cadence: {currentCadence:F0} rpm | Power: {currentPower} W");
-        }
-    }
+    [Header("Arduino Connectivity")]
+    [SerializeField] private ArduinoSerialReader arduinoSerialReader;
 
-    void Update()
-    {
-        // Use the smoothed values from receiver for smooth movement
-        float smoothSpeed = wahooReceiver.Speed;  // Already smoothed!
-        
-        // Convert km/h to Unity units per second (m/s in a 1:1 world scale).
-        // Formula: speed_m/s = speed_km/h ÷ 3.6
-        // speedMultiplier lets you scale the real-world speed to the virtual
-        // world (e.g. 0.5 means the avatar moves at half the real-world pace).
-        float moveSpeed = (smoothSpeed / 3.6f) * speedMultiplier;
-        
-        // Move forward based on speed
-        MoveForward(moveSpeed);
-        
-        // Rotate wheels (optional visual effect)
-        RotateWheels(smoothSpeed);
-        
-        // Debug display
-        if (showDebugInfo && Time.frameCount % 30 == 0)
-        {
-            Debug.Log($"[BikeMovement] Moving at {moveSpeed:F2} m/s (from {smoothSpeed:F1} km/h)");
-        }
-    }
+    private float speed => arduinoSerialReader != null ? arduinoSerialReader.speed : 0f;
 
-    /// <summary>
-    /// Move the bike forward
-    /// </summary>
-    private void MoveForward(float speed)
-    {
-        if (speed <= 0.01f)
-        {
-            // Stopped - no movement
-            return;
-        }
-        
-        // METHOD 1: Transform movement (simple, works always)
-        // Move the transform directly — no physics simulation involved.
-        if (!useRigidbody && characterController == null)
-        {
-            // Move forward in local space
-            transform.position += transform.forward * speed * Time.deltaTime;
-        }
-        
-        // METHOD 2: CharacterController (if you have one)
-        // CharacterController.SimpleMove handles collision response and gravity.
-        else if (characterController != null)
-        {
-            Vector3 moveDirection = transform.forward * speed;
-            characterController.SimpleMove(moveDirection);
-        }
-        
-        // METHOD 3: Rigidbody physics (if you have physics)
-        // Set velocity directly rather than using AddForce to match sensor speed
-        // exactly, while preserving the vertical component for gravity.
-        else if (useRigidbody && rb != null)
-        {
-            Vector3 velocity = transform.forward * speed;
-            velocity.y = rb.velocity.y;  // Preserve vertical velocity (gravity / jumping)
-            rb.velocity = velocity;
-        }
-    }
+    [Header("Bike Stats")]
+    public float speedMultiplier = 1f;
+    public float turnSpeedModifier;
 
-    /// <summary>
-    /// Rotate wheels based on speed (visual effect)
-    /// </summary>
-    private void RotateWheels(float speedKmh)
-    {
-        if (frontWheel == null && rearWheel == null)
-            return;
-        
-        // Calculate rotation based on speed
-        float rotationSpeed = speedKmh * wheelRotationMultiplier * Time.deltaTime;
-        
-        if (frontWheel != null)
-        {
-            frontWheel.Rotate(rotationSpeed, 0f, 0f, Space.Self);
-        }
-        
-        if (rearWheel != null)
-        {
-            rearWheel.Rotate(rotationSpeed, 0f, 0f, Space.Self);
-        }
-    }
+    float gravity = -9.81f;
 
-    /// <summary>
-    /// Optional: Use power to simulate resistance/difficulty
-    /// </summary>
-    public float GetCurrentPower()
-    {
-        return currentPower;
-    }
+    void Update() {
+        cameraRig.forward = transform.forward;
 
-    /// <summary>
-    /// Optional: Use cadence for animations
-    /// </summary>
-    public float GetCurrentCadence()
-    {
-        return currentCadence;
-    }
+        Vector3 move = groundSensor.isGrounded ?
+            bikeSteerSteel.transform.forward :
+            bikeSteerSteel.transform.forward + new Vector3(0,gravity,0);
 
-    void OnGUI()
-    {
-        if (!showDebugInfo) return;
-        
-        // Simple on-screen display
-        GUI.color = Color.white;
-        GUIStyle style = new GUIStyle();
-        style.fontSize = 24;
-        style.normal.textColor = Color.white;
-        
-        GUI.Label(new Rect(10, 10, 400, 30), $"Speed: {currentSpeed:F1} km/h", style);
-        GUI.Label(new Rect(10, 40, 400, 30), $"Cadence: {currentCadence:F0} rpm", style);
-        GUI.Label(new Rect(10, 70, 400, 30), $"Power: {currentPower} W", style);
-        
-        // Connection status
-        if (wahooReceiver != null)
-        {
-            GUI.color = wahooReceiver.IsConnected ? Color.green : Color.red;
-            GUI.Label(new Rect(10, 100, 400, 30), 
-                wahooReceiver.IsConnected ? "● Connected" : "● Disconnected", style);
-        }
+        characterController.Move(move * speed * speedMultiplier * Time.deltaTime);
+
+        Vector3 cross = Vector3.Cross(transform.forward, questControllerTransform.forward);
+
+        if(speed > 0.3f)
+            transform.rotation = Quaternion.Euler(0, cross.y * turnSpeedModifier * Time.deltaTime, 0);
     }
 }

@@ -29,10 +29,10 @@ Python-broen sender alt videre til Unity over WebSocket.
 
 | Fil | Beskrivelse |
 |-----|-------------|
-| `WahooDataReceiver.cs` | WebSocket klient (modtager bridge-data) |
-| `WahooDataReceiver_Optimized.cs` | Optimeret version |
-| `BikeMovementController.cs` | Cykelbevægelse fra sensordata |
-| `WahooWsClient.cs` | Low-level WebSocket klient |
+| `BikeController.cs` | Bevægelse + styring (ArduinoSerialReader + Quest-controller) |
+| `WahooWsClient.cs` | Low-level WebSocket klient — puls fra bridge |
+| `ArduinoSerialReader.cs` | Seriel hastighed fra Arduino |
+| `GroundSensor.cs` | Grounds-check for CharacterController |
 
 ### Session Logging (VRSF)
 
@@ -57,9 +57,10 @@ UnityIntegration/
 │   └── python/collector_tail.py        # VRSF → SQLite/Parquet
 │
 ├── 🎮 UNITY SCRIPTS
-│   ├── unity/WahooDataReceiver.cs      # WebSocket klient
-│   ├── unity/BikeMovementController.cs # Cykelbevægelse
-│   └── UnityClient/WahooWsClient.cs    # Low-level WS klient
+│   ├── unity/BikeController.cs         # Bevægelse + styring
+│   ├── unity/ArduinoSerialReader.cs    # Seriel hastighed fra Arduino
+│   ├── unity/GroundSensor.cs           # Grounds-check
+│   └── UnityClient/WahooWsClient.cs    # Puls fra Python-bro
 │
 ├── 📊 SESSION LOGGING (VRSF)
 │   ├── Assets/VrsLogging/VrsSessionLogger.cs
@@ -86,10 +87,10 @@ UnityIntegration/
 ## 🔌 Data Flow
 
 ```
-TICKR FIT ──BLE──► Python Bridge ──WebSocket──► Unity (WahooDataReceiver)
-Arduino   ──UDP──► Python Bridge                       │
-                        │                              ▼
-                        └──► collector_tail.py    BikeMovementController
+TICKR FIT ──BLE──► Python Bridge ──WebSocket──► WahooWsClient.cs (puls)
+Arduino   ──Serial──►                            ArduinoSerialReader.cs
+                        │                               ↓
+                        └──► collector_tail.py    BikeController.cs (bevægelse + styring)
                                     │
                                     ▼
                               SQLite / Parquet
@@ -101,7 +102,7 @@ Arduino   ──UDP──► Python Bridge                       │
 
 1. **Installer Python packages:** `pip install -r requirements.txt`
 2. **Start broen:** `python python/bike_bridge.py --live`
-3. **Tilføj `WahooDataReceiver.cs`** til Unity scene
+3. **Tilføj `BikeController.cs`** + `WahooWsClient.cs` til Unity scene
 4. **Tryk Play** i Unity
 
 ---
@@ -110,7 +111,7 @@ Arduino   ──UDP──► Python Bridge                       │
 
 - **Test i Editor først** — kør `bike_bridge.py` uden `--live` for mock-data uden hardware
 - **Brug Smoothing** — sæt smoothing factor til 0.3-0.5 for naturlig følelse
-- **Debug Overlay** — WahooDataReceiver har built-in debug display
+- **Debug Overlay** — `WahooWsClient` logger puls i Console
 - **Auto-reconnect** — broen håndterer disconnects automatisk
 
 ---

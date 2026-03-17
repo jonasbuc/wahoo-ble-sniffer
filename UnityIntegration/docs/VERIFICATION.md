@@ -48,12 +48,11 @@ INFO websockets.server: server listening on 127.0.0.1:8765
 ```
 
 **I Unity:**
-1. Tilføj `WahooDataReceiver.cs` til et GameObject
+1. Tilføj `WahooWsClient.cs` til et GameObject, URL: `ws://localhost:8765`
 2. Tryk Play
 3. Se Console:
 ```
-[WahooData] ✓ Connected to Wahoo bridge!
-[WahooData] HR: 72bpm
+[WahooWsClient] Connected
 ```
 
 **Result:** ✅ WebSocket kommunikation virker!
@@ -91,8 +90,8 @@ Found trainer at C7:52:A1:6F:EB:57
 | Mock server | ✅ Ready | Test uden hardware |
 | TICKR FIT BLE | ✅ Tested | HR UUID 0x2A37 |
 | Arduino UDP | ✅ Integrated | bike_bridge.py |
-| Unity C# scripts | ✅ Written | WahooDataReceiver.cs |
-| BikeMovementController | ✅ Complete | WebSocket-drevet bevægelse |
+| Unity C# scripts | ✅ Written | BikeController.cs + WahooWsClient.cs |
+| BikeController | ✅ Complete | ArduinoSerialReader + Quest-styring |
 
 ## 🎯 Anbefaling Baseret På Tests
 
@@ -117,13 +116,14 @@ Dette setup er baseret på **verified working code**:
 
 ```
 Wahoo TICKR FIT (BLE HR)
-Arduino (UDP bike data)
+Arduino (seriel hastighed)
     ↓
-UnityIntegration/python/bike_bridge.py   ← Bridge
-    ↓ (JSON over WebSocket)
-WahooDataReceiver.cs         ← Standard Unity WebSocket
+UnityIntegration/python/bike_bridge.py   ← Bridge (puls)
+    ↓ (binær 12-byte frame over WebSocket)
+WahooWsClient.cs             ← Puls i Unity
+ArduinoSerialReader.cs       ← Hastighed fra Arduino
     ↓
-BikeMovementController.cs    ← Unity cykelbevægelse
+BikeController.cs            ← Bevægelse + Quest-styring
 ```
 
 **BLE delen er testet** med TICKR FIT!
@@ -141,10 +141,10 @@ python3 UnityIntegration/python/bike_bridge.py
 
 Unity:
 1. New Scene
-2. GameObject → Create Empty → "WahooData"
-3. Add Component → WahooDataReceiver (træk scriptet hertil)
+2. GameObject → Create Empty → "WahooWsClient"
+3. Add Component → `WahooWsClient`, URL: `ws://localhost:8765`
 4. Play
-5. Se Console for data! 🎉
+5. Se Console for puls-data! 🎉
 
 ## ❓ Hvis Noget Ikke Virker
 
@@ -165,7 +165,7 @@ pip install bleak
 
 ### "No data in Unity"
 - Check Unity Console for errors
-- Er WahooDataReceiver.autoConnect = true?
+- Er `WahooWsClient` URL sat til `ws://localhost:8765`?
 - Prøv stop/start Python script
 
 ## ✅ Success Criteria

@@ -1,11 +1,16 @@
 # 🚴 Unity VR Bike Setup Guide
 
-## Problem: "Jeg får data, men objektet rykker sig ikke"
+## Arkitektur
 
-**Løsning:** Du skal bruge dataen til at flytte objektet!
+```
+TICKR armband  ──BLE──► bike_bridge.py  ──WS──► WahooWsClient.cs  (puls)
+Arduino        ──Serial──►                        ArduinoSerialReader.cs (hastighed)
+                                                        ↓
+                                                  BikeController.cs  (bevægelse)
+```
 
-`WahooDataReceiver` modtager kun data - den flytter ikke noget selv.
-Du skal bruge et **movement controller script** til at læse dataen og flytte cyklen.
+`BikeController` læser hastighed direkte fra `ArduinoSerialReader` og styring fra Quest-controlleren.
+`WahooWsClient` bruges separat til at modtage puls fra broen — de to scripts er uafhængige.
 
 ---
 
@@ -13,270 +18,109 @@ Du skal bruge et **movement controller script** til at læse dataen og flytte cy
 
 ### 1. Import Scripts til Unity
 
-Kopier disse 2 filer til din Unity projekt `Assets/Scripts/` mappe:
-- ✅ `WahooDataReceiver_Optimized.cs`
-- ✅ `BikeMovementController.cs` ← NY!
+Kopier disse filer til din Unity projekt `Assets/Scripts/` mappe:
+- ✅ `BikeController.cs` — bevægelse + styring
+- ✅ `WahooWsClient.cs` — puls fra Python-bro (valgfri)
+- ✅ `ArduinoSerialReader.cs` — seriel hastighed fra Arduino
+- ✅ `GroundSensor.cs` — grounds-check
 
 ### 2. Setup Scene
 
-#### A. Opret Data Receiver GameObject
-
-1. I Unity Hierarchy: Højreklik → Create Empty
-2. Navngiv: `WahooDataReceiver`
-3. Add Component → `WahooDataReceiver` script
-4. Indstillinger:
-   - Server URL: `ws://localhost:8765`
-   - Auto Connect: ✅
-   - Use Binary Protocol: ✅
-   - Instant Zero Detection: ✅
-
-#### B. Tilføj Movement til din Cykel
+#### A. Cykel GameObject
 
 1. Vælg dit **cykel/spiller GameObject** i Hierarchy
-2. Add Component → `BikeMovementController` script
-3. Indstillinger:
-   - Wahoo Receiver: Træk `WahooDataReceiver` GameObject hertil
-   - Speed Multiplier: `0.5` (juster senere!)
-   - Show Debug Info: ✅
+2. Add Component → `CharacterController`
+3. Add Component → `BikeController`
+4. Indstillinger i Inspector:
+   - **Character Controller**: trækkes auto-ind hvis på samme GO
+   - **Ground Sensor**: træk dit GroundSensor-objekt hertil
+   - **Bike Steer Steel**: træk styr-objektet hertil
+   - **Quest Controller Transform**: træk Quest-controller Transform hertil
+   - **Camera Rig**: træk kamera-riggen hertil
+   - **Arduino Serial Reader**: træk dit ArduinoSerialReader-objekt hertil
+   - **Speed Multiplier**: `1.0` (juster efter smag)
+   - **Turn Speed Modifier**: prøv `60`
+
+#### B. Arduino Serial Reader
+
+1. Opret tomt GameObject: `ArduinoSerialReader`
+2. Add Component → `ArduinoSerialReader`
+3. Sæt den korrekte COM-port / device path
+
+#### C. Puls (valgfri) — WahooWsClient
+
+1. Opret tomt GameObject: `WahooWsClient`
+2. Add Component → `WahooWsClient`
+3. Server URL: `ws://localhost:8765`
+4. Subscribe til `OnHeartRate` event i dit eget UI-script
 
 ### 3. Start Bridge & Test
 
-1. **Start Python bridge:**
+1. **Start Python bridge (mock uden hardware):**
    ```bash
-   # Test med mock data (uden hardware)
    ./starters/START_MOCK_BRIDGE.command
    ```
 
-2. **Start Unity:**
-   - Press Play ▶️
-   - Du skulle se i Console: `✓ Connected to Wahoo bridge!`
-   - Cyklen burde begynde at bevæge sig!
-
-3. **Se debug info:**
-   - Speed/Cadence/Power vises øverst til venstre på skærmen
-   - Console viser: `[BikeMovement] Moving at X m/s`
+2. **Start Unity → Press Play ▶️**
+   - Console: `[WahooWsClient] Connected` (puls)
+   - Cyklen skal bevæge sig når Arduino sender hastighed > 0
 
 ---
 
 ## ⚙️ Indstillinger
 
-### Speed Multiplier
+| Felt | Type | Beskrivelse |
+|------|------|-------------|
+| `speedMultiplier` | float | Skalér hastighed. `1.0` = 1:1 |
+| `turnSpeedModifier` | float | Styrefølsomhed. Prøv `60` |
+| `gravity` | float | Tyngdekraft ved luft (standard `-9.81`) |
 
-Denne værdi kontrollerer hvor hurtigt cyklen bevæger sig i Unity:
+### Bevægelseslogik
 
-- **0.5** = Realistisk (20 km/h i virkeligheden = langsom bevægelse i Unity)
-- **1.0** = Standard (1:1 forhold)
-- **2.0** = Dobbelt hastighed (20 km/h føles som 40 km/h)
-
-**Tip:** Start med 0.5 og juster indtil det føles rigtigt!
-
-### Movement Methods
-
-`BikeMovementController` understøtter 3 metoder:
-
-#### 1. Transform Movement (Standard)
 ```
-Use Rigidbody: ☐
+speed > 0.3 m/s  →  CharacterController.Move(forward * speed * multiplier)
+                    + rotation fra Quest-controller cross-produkt
+speed ≤ 0.3      →  ingen rotation, men stadig gravity
 ```
-- Simpel transform.position bevægelse
-- Virker altid
-- God til start
-
-#### 2. CharacterController
-```
-(Tilføj CharacterController component til cyklen)
-```
-- Bedre kollision detection
-- Automatisk gravity
-- God til first-person
-
-#### 3. Rigidbody Physics
-```
-Use Rigidbody: ✅
-(Tilføj Rigidbody component til cyklen)
-```
-- Fuld fysik simulation
-- Momentum og inerti
-- God til realistisk følelse
-
----
-
-## 🎨 Hjul Rotation (Visuelt)
-
-For at rotere hjulene baseret på hastighed:
-
-1. Find dine hjul GameObjects i Hierarchy
-2. I BikeMovementController:
-   - Front Wheel: Træk front hjul hertil
-   - Rear Wheel: Træk bag hjul hertil
-   - Wheel Rotation Multiplier: `100` (juster hvis de drejer for hurtigt/langsomt)
 
 ---
 
 ## 🐛 Troubleshooting
 
 ### "Cyklen bevæger sig ikke"
+- Er `ArduinoSerialReader` tilsluttet og sender data?
+- Er `ArduinoSerialReader`-feltet sat i `BikeController` Inspector?
+- Er `CharacterController` på samme GameObject?
 
-**Check 1: Er WahooDataReceiver connected?**
-```
-Console burde vise:
-✓ Connected to Wahoo bridge!
-```
-Hvis ikke:
-- Er Python bridge startet? (starters/START_MOCK_BRIDGE.command)
-- Kører den på port 8765?
+### "Styring virker ikke"
+- Er `questControllerTransform` sat?
+- Prøv at øge `turnSpeedModifier`
+- `speed` skal være > 0.3 for rotation
 
-**Check 2: Kommer data ind?**
-```
-Console burde vise:
-[BikeMovement] Speed: 15.3 km/h | Cadence: 75 rpm | Power: 120 W
-```
-Hvis ikke:
-- Er BikeMovementController.wahooReceiver sat korrekt?
-- Er "Show Debug Info" enabled?
-
-**Check 3: Er speedMultiplier for lav?**
-```
-Hvis Speed er 20 km/h men multiplier er 0.1:
-→ moveSpeed = (20/3.6) * 0.1 = 0.55 m/s (meget langsom!)
-
-Prøv højere værdi som 1.0 eller 2.0
-```
-
-### "Cyklen fortsætter selv når jeg stopper"
-
-✅ **FIKSET i version 2.0!**
-
-Zero detection er nu enabled:
-- Python sender zeros efter 1.2s uden pedal activity
-- Unity snapper instantly til zero (ingen smoothing ved stop)
-
-Hvis det stadig sker:
-- Check at `Instant Zero Detection` er ✅ i WahooDataReceiver
-- Kør seneste version af bridge
-
-### "Hastigheden er mærkelig"
-
-Unity bruger **meters per second**, trainers/sensors sender **km/h**.
-
-Konvertering:
-```csharp
-float speedKmh = 20f;  // Fra trainer/sensor
-float speedMs = speedKmh / 3.6f;  // = 5.55 m/s
-float moveSpeed = speedMs * speedMultiplier;
-```
-
-Juster `speedMultiplier` indtil det føles rigtigt!
-
----
-
-## 🎮 Avanceret: Brug Cadence til Animationer
-
-```csharp
-using UnityEngine;
-
-public class PedalAnimator : MonoBehaviour
-{
-    public BikeMovementController bikeController;
-    public Transform leftPedal;
-    public Transform rightPedal;
-    
-    void Update()
-    {
-        float cadence = bikeController.GetCurrentCadence(); // RPM
-        
-        // Konverter RPM til rotation speed
-        float rotationSpeed = cadence * 6f; // 360° / 60s
-        
-        // Roter pedalerne
-        leftPedal.Rotate(rotationSpeed * Time.deltaTime, 0, 0);
-        rightPedal.Rotate(rotationSpeed * Time.deltaTime + 180f, 0, 0);
-    }
-}
-```
-
----
-
-## 🎮 Avanceret: Brug Power til Sværhedsgrad
-
-```csharp
-using UnityEngine;
-
-public class ResistanceSimulator : MonoBehaviour
-{
-    public BikeMovementController bikeController;
-    
-    void Update()
-    {
-        float power = bikeController.GetCurrentPower(); // Watts
-        
-        // Højere power = hårdere at cykle
-        if (power < 100)
-        {
-            // Let terræn
-            bikeController.speedMultiplier = 1.0f;
-        }
-        else if (power < 200)
-        {
-            // Medium terræn
-            bikeController.speedMultiplier = 0.7f;
-        }
-        else
-        {
-            // Bakke - høj power men lavere hastighed
-            bikeController.speedMultiplier = 0.4f;
-        }
-    }
-}
-```
-
----
-
-## 📊 Data Reference
-
-Fra `WahooDataReceiver.CyclingData`:
-
-| Property | Type | Unit | Range | Description |
-|----------|------|------|-------|-------------|
-| `speed` | float | km/h | 0-100 | Hjul hastighed |
-| `cadence` | float | RPM | 0-180 | Pedal omdrejninger |
-| `power` | int | Watts | 0-1000+ | Kraft på pedalerne |
-| `heart_rate` | int | BPM | 0-220 | Puls (hvis HR armband tilsluttet) |
-| `timestamp` | double | seconds | - | Unix timestamp |
+### "Puls vises ikke"
+- Er Python bridge startet? (`START_MOCK_BRIDGE.command`)
+- Er `WahooWsClient` i scenen og URL korrekt (`ws://localhost:8765`)?
 
 ---
 
 ## ✅ Test Checklist
 
-- [ ] Python bridge kører (starters/START_MOCK_BRIDGE.command)
-- [ ] Unity Console viser "Connected to Wahoo bridge!"
-- [ ] Debug info viser Speed/Cadence/Power øverst på skærmen
-- [ ] Grøn "● Connected" status vises
-- [ ] Cyklen bevæger sig når Speed > 0
-- [ ] Cyklen stopper instant når Speed = 0
-- [ ] Hjul roterer (hvis configured)
+- [ ] Arduino sender hastighed (Console / Debug)
+- [ ] `BikeController` er på cykel-objektet med alle refs sat
+- [ ] Cyklen bevæger sig fremad med fart
+- [ ] Styring responderer på Quest-controller
+- [ ] (Valgfri) `WahooWsClient` viser puls fra bridge
 
 ---
 
 ## 🚀 Næste Skridt
 
-1. **Test med mock data først** - sørg for alt virker
-2. **Test med rigtig trainer/sensor** - start på cyklen og brug starters/START_WAHOO_BRIDGE.command
-3. **Juster speedMultiplier** til det føles naturligt
-4. **Tilføj hjul rotation** for visuel feedback
+1. **Test med mock bridge** — `START_MOCK_BRIDGE.command`
+2. **Test med rigtig TICKR** — `START_WAHOO_BRIDGE.command`
+3. **Juster `speedMultiplier`** til naturlig følelse
+4. **Juster `turnSpeedModifier`** til behagelig styring
 5. **Byg din VR verden** omkring cyklen!
 
 ---
 
-## 💡 Tips
-
-- Start altid med **mock data** for hurtig iteration
-- Brug **Debug Info** til at se hvad der sker
-- Juster **Speed Multiplier** indtil det føles rigtigt
-- Overvej **CharacterController** for bedre kollision
-- Brug **Cadence** til pedal animationer
-- Brug **Power** til sværhedsgrad/modstand simulation
-
----
-
-Held og lykke med din VR cykel simulator! 🚴‍♂️🎮
+Held og lykke med din VR cykel! 🚴‍♂️🎮

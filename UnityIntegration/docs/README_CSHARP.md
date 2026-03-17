@@ -12,8 +12,10 @@
 ## Aktuel Arkitektur
 
 ```
-TICKR FIT ──BLE──► bike_bridge.py ──WS──► WahooDataReceiver.cs
-Arduino   ──UDP──► bike_bridge.py           BikeMovementController.cs
+TICKR FIT ──BLE──► bike_bridge.py ──WS──► WahooWsClient.cs  (puls)
+Arduino   ──Serial──►                      ArduinoSerialReader.cs (hastighed)
+                                                   ↓
+                                             BikeController.cs (bevægelse + styring)
 ```
 
 Ingen Unity BLE plugin nødvendig.
