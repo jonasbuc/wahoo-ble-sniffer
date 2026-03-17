@@ -39,7 +39,7 @@ echo "[3/5] Installing dependencies..."
 source .venv/bin/activate
 
 pip install --quiet --upgrade pip
-pip install --quiet -r requirements.txt
+pip install --quiet -r "$(dirname "$0")/../../requirements.txt"
 
 echo "OK: Dependencies installed"
 echo ""
