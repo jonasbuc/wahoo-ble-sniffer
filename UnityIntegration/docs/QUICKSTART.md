@@ -43,25 +43,29 @@ Du ser:
 
 #### B. Tilføj Scripts
 
-1. Kopier `WahooDataReceiver.cs` til `Assets/Scripts/`
-2. Kopier `BikeMovementController.cs` til `Assets/Scripts/`
+1. Kopier `BikeController.cs` til `Assets/Scripts/`
+2. Kopier `WahooWsClient.cs` til `Assets/Scripts/`
+3. Kopier `ArduinoSerialReader.cs` + `GroundSensor.cs` til `Assets/Scripts/`
 
 #### C. Setup Scene
 
-**Wahoo Data Manager:**
-1. GameObject → Create Empty
-2. Omdøb til "WahooData"
-3. Add Component → `WahooDataReceiver`
-4. Sæt Server URL til: `ws://localhost:8765`
-5. Enable "Auto Connect"
-
-**VR Bike:**
-1. Importer din cykelmodel
-2. Add Component → Rigidbody
-3. Add Component → `BikeMovementController`
+**Cykel GameObject:**
+1. Vælg dit cykel-GameObject
+2. Add Component → `CharacterController`
+3. Add Component → `BikeController`
 4. I Inspector:
-   - Wahoo Data → træk "WahooData" GameObject hertil
-   - Bike Model → træk din cykelmodel hertil
+   - Ground Sensor → træk GroundSensor-objektet hertil
+   - Bike Steer Steel → træk styr-objektet hertil
+   - Quest Controller Transform → træk Quest-controller hertil
+   - Camera Rig → træk kamera-riggen hertil
+   - Arduino Serial Reader → træk ArduinoSerialReader-objektet hertil
+   - Speed Multiplier: `1.0`
+   - Turn Speed Modifier: prøv `60`
+
+**Puls (valgfri) — WahooWsClient:**
+1. GameObject → Create Empty → omdøb "WahooWsClient"
+2. Add Component → `WahooWsClient`
+3. Server URL: `ws://localhost:8765`
 
 ---
 
@@ -71,8 +75,7 @@ Du ser:
 2. Tryk **Play** i Unity
 3. Tjek Console:
    ```
-   [WahooData] ✓ Connected to bridge!
-   [WahooData] HR: 72bpm
+   [WahooWsClient] Connected
    ```
 
 ---

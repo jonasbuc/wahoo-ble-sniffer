@@ -8,7 +8,7 @@
 - ✅ **TICKR FIT BLE forbindelse** — testet og verificeret
 - ✅ **Arduino UDP modtagelse** — integreret i bridge
 - ✅ **Mock server** — test uden hardware
-- ✅ **Unity scripts klar** — WahooDataReceiver.cs + BikeMovementController.cs fungerer
+- ✅ **Unity scripts klar** — BikeController.cs + WahooWsClient.cs fungerer
 
 **Konklusion:** Setup er **VERIFICERET** og klar til brug! 🎯
 
@@ -25,10 +25,11 @@ python3 UnityIntegration/python/bike_bridge.py
 
 ### Step 2: I Unity
 
-1. Træk `WahooDataReceiver.cs` til et GameObject
-2. Server URL: `ws://localhost:8765`
-3. Tryk Play
-4. Se data i Console! ✅
+1. Tilføj `BikeController.cs` + `CharacterController` til cykel-objektet
+2. Sæt Inspector-referencer (se UNITY_SETUP_GUIDE.md)
+3. (Valgfri) Tilføj `WahooWsClient.cs` til et tomt objekt, URL: `ws://localhost:8765`
+4. Tryk Play
+5. Se data i Console! ✅
 
 ### Step 3: Test Med Rigtig Hardware
 
@@ -44,8 +45,9 @@ python3 UnityIntegration/python/bike_bridge.py --live
 
 ```
 ✅ bike_bridge.py        - Bridge: mock mode (ingen hardware) + live BLE mode
-✅ WahooDataReceiver.cs          - Unity WebSocket klient
-✅ BikeMovementController.cs     - VR bike bevægelse
+✅ BikeController.cs     - VR bike bevægelse + Quest-styring
+✅ WahooWsClient.cs      - Puls fra Python-bro (valgfri)
+✅ ArduinoSerialReader.cs - Hastighed fra Arduino seriel
 ```
 
 ---
@@ -72,8 +74,9 @@ Læs i denne rækkefølge:
 ## ✅ Action Items
 
 - [ ] Kør `bike_bridge.py` (mock mode)
-- [ ] Få data i Unity Console
-- [ ] Test BikeMovementController bevægelse
+- [ ] Sæt alle Inspector-referencer i `BikeController`
+- [ ] Test bevægelse med Arduino-data
+- [ ] (Valgfri) Test puls med `WahooWsClient`
 - [ ] Byg din VR world
 - [ ] Test med TICKR FIT + Arduino
 

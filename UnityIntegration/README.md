@@ -5,15 +5,17 @@ Stream live cykeldata til Unity VR via en Wahoo TICKR FIT pulsmonitor (BLE) og e
 ## ⚡ Arkitektur
 
 ```
-Wahoo TICKR FIT  ──BLE──►  bike_bridge.py  ──WS──►  Unity (WahooWsClient.cs)
-Arduino          ──UDP──►  bike_bridge.py           BikeMovementController.cs
-                                    │
-                                    └──► collector_tail.py ──► SQLite / Parquet
+Wahoo TICKR FIT  ──BLE──►  bike_bridge.py  ──WS──►  WahooWsClient.cs  (puls)
+Arduino          ──Serial──►                          ArduinoSerialReader.cs (hastighed)
+                                    │                        ↓
+                                    └──► collector_tail.py  BikeController.cs  (bevægelse + styring)
+                                                  ↓
+                                           SQLite / Parquet
 ```
 
-- **Puls**: Wahoo TICKR FIT via Bluetooth LE (Bleak)
-- **Cykeldata** (hastighed, kadence, styring, bremser): Arduino via UDP
-- **Unity klient**: WebSocket modtager binære frames og styrer VR-scenen
+- **Puls**: Wahoo TICKR FIT via Bluetooth LE → Python-bro → `WahooWsClient.cs`
+- **Hastighed**: Arduino seriel → `ArduinoSerialReader.cs` → `BikeController.cs`
+- **Styring**: Meta Quest-controller → `BikeController.cs`
 
 ---
 
@@ -50,14 +52,12 @@ pip install -r requirements.txt
 
 ### Step 3: Tilføj Scripts til Unity
 
-1. Kopier `WahooDataReceiver.cs` til `Assets/Scripts/`
-2. Kopier `BikeMovementController.cs` til `Assets/Scripts/`
-3. Opret et tomt GameObject i din scene: **GameObject → Create Empty**
-4. Omdøb det til "WahooData"
-5. Tilføj `WahooDataReceiver` komponenten
-6. Tilføj din cykelmodel til scenen
-7. Tilføj `BikeMovementController` til cyklen
-8. Sæt WahooDataReceiver-referencen i Inspector
+1. Kopier `BikeController.cs` til `Assets/Scripts/`
+2. Kopier `WahooWsClient.cs` til `Assets/Scripts/`
+3. Kopier `ArduinoSerialReader.cs` + `GroundSensor.cs` til `Assets/Scripts/`
+4. Tilføj `CharacterController` + `BikeController` komponenter til dit cykel-GameObject
+5. Sæt alle Inspector-referencer (se [UNITY_SETUP_GUIDE.md](docs/UNITY_SETUP_GUIDE.md))
+6. (Valgfri) Opret et tomt GameObject "WahooWsClient" til puls
 
 ### Step 4: Start broen (anbefalet)
 
@@ -226,9 +226,10 @@ UnityIntegration/
 │   └── db/                         #   DB utilities
 │
 ├── unity/                          # Unity C# controller scripts
-│   ├── WahooDataReceiver.cs        #   WebSocket klient (bridge → Unity)
-│   ├── WahooDataReceiver_Optimized.cs
-│   └── BikeMovementController.cs   #   Cykelbevægelse fra sensordata
+│   ├── BikeController.cs           #   Bevægelse + styring (ArduinoSerialReader + Quest)
+│   ├── WahooDataReceiver.cs        #   (legacy — ikke i brug)
+│   ├── WahooDataReceiver_Optimized.cs  #   (legacy — ikke i brug)
+│   └── BikeMovementController.cs   #   (alias for BikeController.cs)
 │
 ├── Assets/VrsLogging/              # VRSF session-logging bibliotek
 │   ├── VrsSessionLogger.cs
