@@ -197,6 +197,22 @@ class TestParseArgs:
         args = self._parse([])
         assert args.max_backoff == 30.0
 
+    def test_no_binary_default_false(self):
+        args = self._parse([])
+        assert args.no_binary is False
+
+    def test_no_binary_flag(self):
+        args = self._parse(["--no-binary"])
+        assert args.no_binary is True
+
+    def test_spawn_interval_default_none(self):
+        args = self._parse([])
+        assert args.spawn_interval is None
+
+    def test_spawn_interval_override(self):
+        args = self._parse(["--spawn-interval", "5.0"])
+        assert args.spawn_interval == 5.0
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Frame packing / protocol correctness
