@@ -1,6 +1,7 @@
 @echo off
 REM Wahoo Unity Bridge Starter (Windows)
 REM Double-click this file to start the bridge!
+REM For the GUI monitor, open START_GUI.bat in a separate window.
 
 cd /d "%~dp0"
 
@@ -11,8 +12,7 @@ echo.
 echo Starting Python bridge...
 echo.
 
-REM Check if Python is installed
-REM Prefer repository virtualenv (created by INSTALL.bat) if present
+REM Prefer repository virtualenv created by INSTALL.bat
 pushd "%~dp0..\.." >nul 2>&1
 set "REPO_ROOT=%CD%"
 popd >nul 2>&1
@@ -20,12 +20,16 @@ set "VENV_PY=%REPO_ROOT%\.venv\Scripts\python.exe"
 set "PYCMD=python"
 if exist "%VENV_PY%" (
     set "PYCMD=%VENV_PY%"
+) else (
+    echo NOTE: No .venv found - run INSTALL.bat first for best results.
+    echo Falling back to system Python...
+    echo.
 )
 
-REM Check if Python is available (either venv or system)
+REM Check if Python is available
 "%PYCMD%" --version >nul 2>&1
 if %errorlevel% neq 0 (
-    echo WARNING: Python not found (neither system Python nor .venv)!
+    echo WARNING: Python not found - neither system Python nor .venv!
     echo.
     echo Install Python or run INSTALL.bat to create the virtual environment.
     echo.
@@ -33,12 +37,10 @@ if %errorlevel% neq 0 (
     exit /b 1
 )
 
-REM Also remove the duplicate dependency-check comment
-REM Check if dependencies are installed; install via the chosen Python if missing
+REM Check if dependencies are installed; install if missing
 "%PYCMD%" -c "import bleak, websockets" >nul 2>&1
 if %errorlevel% neq 0 (
-    echo WARNING: Dependencies missing for %PYCMD%!
-    echo Installing bleak and websockets into environment used by %PYCMD%...
+    echo WARNING: Dependencies missing - installing now...
     echo.
     "%PYCMD%" -m pip install --upgrade pip
     "%PYCMD%" -m pip install bleak websockets
@@ -47,23 +49,18 @@ if %errorlevel% neq 0 (
 
 echo OK: Dependencies installed
 echo.
-echo Scanning for Wahoo BLE devices (e.g. TICKR)...
+echo Scanning for Wahoo BLE devices...
 echo TIP: Make sure your sensor is awake and nearby!
 echo.
 echo WebSocket server starting on ws://localhost:8765
+echo TIP: Open START_GUI.bat in a separate window to see live data.
 echo.
-echo ════════════════════════════════════════════════════════════
+echo ============================================================
 echo.
 
-REM Start bridge first, then GUI
-REM Start canonical bridge in a new window so it runs independently
-start "Wahoo Bridge" "%PYCMD%" "%~dp0..\python\bike_bridge.py" --live
-
-REM Give the bridge a moment to initialize, then start the GUI monitor in a separate window
-timeout /t 2 /nobreak >nul
-start "Wahoo Bridge GUI" "%PYCMD%" "%~dp0..\python\wahoo_bridge_gui.py" --url ws://localhost:8765
+REM Start bridge in this window (foreground - keep it open)
+"%PYCMD%" "%~dp0..\python\bike_bridge.py" --live
 
 echo.
-echo Bridge and GUI launched in separate windows.
-echo Close those windows to stop the bridge.
+echo Bridge stopped.
 pause

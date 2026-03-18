@@ -11,43 +11,56 @@ echo.
 echo This will install everything you need!
 echo.
 
-REM Check Python version
+REM ── [1/5] Find Python ────────────────────────────────────────
 echo [1/5] Checking Python...
-python --version >nul 2>&1
-if %errorlevel% neq 0 (
+set "PY="
+python  --version >nul 2>&1 && set "PY=python"
+if not defined PY (
+    python3 --version >nul 2>&1 && set "PY=python3"
+)
+if not defined PY (
     echo ERROR: Python not found!
-    echo Please install Python from: https://www.python.org/downloads/
-    echo Make sure to check "Add Python to PATH" during installation!
+    echo Please install Python 3.9 or newer from https://www.python.org/downloads/
+    echo During install: check "Add Python to PATH"
+    echo.
     pause
     exit /b 1
 )
-
-for /f "tokens=2" %%i in ('python --version') do set PYTHON_VERSION=%%i
-echo OK: Found Python %PYTHON_VERSION%
+for /f "tokens=2" %%i in ('"%PY%" --version') do set PYTHON_VERSION=%%i
+echo OK: Found Python %PYTHON_VERSION% via "%PY%"
 echo.
 
-REM Create virtual environment
+REM ── [2/5] Create virtual environment ─────────────────────────
 echo [2/5] Creating virtual environment...
-if exist .venv (
+if exist .venv\Scripts\python.exe (
     echo OK: Virtual environment already exists
 ) else (
-    python -m venv .venv
+    if exist .venv rmdir /s /q .venv
+    "%PY%" -m venv .venv
+    if not exist .venv\Scripts\python.exe (
+        echo ERROR: Failed to create virtual environment!
+        pause
+        exit /b 1
+    )
     echo OK: Virtual environment created
 )
 echo.
 
-REM Install dependencies
+REM ── [3/5] Install dependencies ───────────────────────────────
 echo [3/5] Installing dependencies...
-call .venv\Scripts\activate.bat
-python -m pip install --quiet --upgrade pip
-python -m pip install --quiet -r requirements.txt
-
+.venv\Scripts\python.exe -m pip install --quiet --upgrade pip
+.venv\Scripts\python.exe -m pip install --quiet -r requirements.txt
+if %errorlevel% neq 0 (
+    echo ERROR: pip install failed - check your internet connection.
+    pause
+    exit /b 1
+)
 echo OK: Dependencies installed
 echo.
 
-REM Verify installation
+REM ── [4/5] Verify ─────────────────────────────────────────────
 echo [4/5] Verifying installation...
-python -c "import bleak, websockets" >nul 2>&1
+.venv\Scripts\python.exe -c "import bleak, websockets" >nul 2>&1
 if %errorlevel% neq 0 (
     echo ERROR: Installation verification failed!
     pause
@@ -56,22 +69,18 @@ if %errorlevel% neq 0 (
 echo OK: All packages verified
 echo.
 
-REM Setup complete
-echo [5/5] Setting up starter scripts...
-echo OK: Starter scripts ready
+REM ── [5/5] Done ───────────────────────────────────────────────
+echo [5/5] Setup complete
 echo.
-
 echo ============================================================
 echo   INSTALLATION COMPLETE!
 echo ============================================================
 echo.
 echo Next steps:
-echo 1. Go to UnityIntegration folder
-echo 2. Double-click START_WAHOO_BRIDGE.bat (recommended) to start the GUI and bridge together
-echo    - The script starts both the GUI monitor and the bridge with the --live flag
-echo    - Or open PowerShell and run: .\START_WAHOO_BRIDGE.ps1
+echo 1. Double-click START_WAHOO_BRIDGE.bat to start the bridge
+echo 2. Double-click START_GUI.bat in a separate window to see live data
 echo 3. Start Unity and connect!
 echo.
-echo Happy cycling! :)
+echo Happy cycling!
 echo.
 pause

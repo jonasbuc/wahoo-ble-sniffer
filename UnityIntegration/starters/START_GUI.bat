@@ -12,6 +12,10 @@ set "VENV_PY=%REPO_ROOT%\.venv\Scripts\python.exe"
 set "PYCMD=python"
 if exist "%VENV_PY%" (
     set "PYCMD=%VENV_PY%"
+) else (
+    echo NOTE: No .venv found - run INSTALL.bat first for best results.
+    echo Falling back to system Python...
+    echo.
 )
 
 REM Check if Python is available
@@ -24,3 +28,7 @@ if %errorlevel% neq 0 (
 
 REM Launch GUI (use canonical python/ copy)
 "%PYCMD%" "%~dp0..\python\wahoo_bridge_gui.py" --url ws://localhost:8765
+
+echo.
+echo GUI closed.
+pause
