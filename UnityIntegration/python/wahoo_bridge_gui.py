@@ -498,15 +498,20 @@ class WahooBridgeGUI:
                                 # ── Trigger event (e.g. from Unity UDP) ───
                                 if isinstance(data, dict) and data.get("event"):
                                     # Only display triggers that originate from
-                                    # Unity/UDP — mock spawn events (source="mock")
-                                    # are filtered out to avoid clutter.
+                                    # Unity/UDP/bridge — mock spawn events
+                                    # (source="mock") are filtered out to avoid
+                                    # clutter.
                                     src = data.get("source")
-                                    if src in ("udp", "unity"):
+                                    if src in ("udp", "unity", "bridge"):
                                         evt_name = data.get("event")
                                         # Use supplied timestamp if available so
                                         # the marker aligns with the actual event time.
                                         ts = data.get("timestamp") or data.get("time") or time.time()
                                         self.root.after(0, self._add_trigger, evt_name, float(ts))
+                                    # Trigger events are NOT cycling data — skip
+                                    # the update_data() call below to avoid
+                                    # injecting a fake 0 BPM reading.
+                                    continue
 
                                 # ── Cycling data JSON ──────────────────────
                                 self.root.after(

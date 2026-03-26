@@ -447,6 +447,60 @@ class TestWebsocketClient:
 
         assert len(gui.triggers) == 0
 
+    @pytest.mark.asyncio
+    async def test_trigger_bridge_source_is_added(self, gui):
+        """Triggers with source='bridge' (from spawn_loop) must be displayed."""
+        self._sync_after(gui)
+        msg = json.dumps({
+            "event": "spawn", "source": "bridge",
+            "timestamp": time.time(),
+        })
+
+        cm = self._make_mock_ws([msg])
+
+        async def fake_sleep(n):
+            raise asyncio.CancelledError
+
+        with patch("websockets.connect", return_value=cm), \
+             patch("asyncio.sleep", side_effect=fake_sleep):
+            try:
+                await asyncio.wait_for(gui.websocket_client(), timeout=3.0)
+            except (asyncio.CancelledError, asyncio.TimeoutError):
+                pass
+
+        names = [name for (_, name) in gui.triggers]
+        assert "spawn" in names
+
+    @pytest.mark.asyncio
+    async def test_trigger_event_does_not_inject_hr_zero(self, gui):
+        """A trigger event must NOT fall through to update_data(0)."""
+        self._sync_after(gui)
+        # Pre-set HR to a known value so we can detect if update_data(0) fires.
+        gui.update_data(100)
+        hr_before = gui.heart_rate
+        history_len_before = len(gui.hr_history)
+
+        msg = json.dumps({
+            "event": "hall_hit", "source": "udp",
+            "timestamp": time.time(),
+        })
+
+        cm = self._make_mock_ws([msg])
+
+        async def fake_sleep(n):
+            raise asyncio.CancelledError
+
+        with patch("websockets.connect", return_value=cm), \
+             patch("asyncio.sleep", side_effect=fake_sleep):
+            try:
+                await asyncio.wait_for(gui.websocket_client(), timeout=3.0)
+            except (asyncio.CancelledError, asyncio.TimeoutError):
+                pass
+
+        # HR must be unchanged — the trigger must not have pushed 0 BPM.
+        assert gui.heart_rate == hr_before
+        assert len(gui.hr_history) == history_len_before
+
     # ── JSON cycling data ─────────────────────────────────────────────────────
 
     @pytest.mark.asyncio
