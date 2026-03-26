@@ -29,6 +29,67 @@ public class WahooWsClient : MonoBehaviour
     private CancellationTokenSource _cts;
     private readonly ConcurrentQueue<Action> _mainThreadQueue = new ConcurrentQueue<Action>();
 
+    // ── Public API: send trigger events from Unity → bridge → GUI ───────
+
+    /// <summary>
+    /// Send a named trigger event to the bridge server.  The bridge relays
+    /// the event JSON to all other connected clients (including the GUI),
+    /// which draws an orange vertical marker on the HR graph.
+    ///
+    /// Call this from any Unity trigger zone, collision handler, or game
+    /// event.  Example:
+    /// <code>
+    ///   wsClient.SendEvent("checkpoint_1");
+    ///   wsClient.SendEvent("lap_complete", extraJson: "{\"lap\":3}");
+    /// </code>
+    /// </summary>
+    /// <param name="eventName">Short event label (e.g. "spawn", "hall_hit", "lap_3")</param>
+    /// <param name="extraJson">Optional extra JSON fields merged into the message</param>
+    public void SendEvent(string eventName, string extraJson = null)
+    {
+        if (_ws == null || _ws.State != WebSocketState.Open)
+        {
+            Debug.LogWarning("WahooWsClient: cannot send event — not connected");
+            return;
+        }
+
+        // Build minimal JSON:  {"event":"<name>","source":"unity","timestamp":<epoch>}
+        double epoch = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() / 1000.0;
+        string json;
+        if (!string.IsNullOrEmpty(extraJson))
+        {
+            // Merge: strip outer braces from extraJson and append
+            var extra = extraJson.Trim();
+            if (extra.StartsWith("{")) extra = extra.Substring(1);
+            if (extra.EndsWith("}"))   extra = extra.Substring(0, extra.Length - 1);
+            json = $"{{\"event\":\"{eventName}\",\"source\":\"unity\",\"timestamp\":{epoch},{extra}}}";
+        }
+        else
+        {
+            json = $"{{\"event\":\"{eventName}\",\"source\":\"unity\",\"timestamp\":{epoch}}}";
+        }
+
+        var bytes = Encoding.UTF8.GetBytes(json);
+        var segment = new ArraySegment<byte>(bytes);
+
+        // Fire-and-forget send on the background thread
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                if (_ws != null && _ws.State == WebSocketState.Open)
+                {
+                    await _ws.SendAsync(segment, WebSocketMessageType.Text, true, CancellationToken.None);
+                    Debug.Log($"WahooWsClient: sent event '{eventName}'");
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"WahooWsClient: failed to send event: {ex.Message}");
+            }
+        });
+    }
+
     private void Start()
     {
         _cts = new CancellationTokenSource();
