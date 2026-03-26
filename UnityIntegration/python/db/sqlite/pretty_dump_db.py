@@ -16,8 +16,8 @@ import datetime
 from pathlib import Path
 from typing import Any
 
-# Default: db/ → python/ → UnityIntegration/ → repo_root/collector_out/vrs.sqlite
-_REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
+# Default: db/sqlite/ → db/ → python/ → UnityIntegration/ → repo_root/collector_out/vrs.sqlite
+_REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent.parent
 _DEFAULT_DB = str(_REPO_ROOT / "collector_out" / "vrs.sqlite")
 
 

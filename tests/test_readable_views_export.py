@@ -5,7 +5,7 @@ import sys
 
 
 def load_export_module():
-    path = Path('UnityIntegration/python/db/export_readable_views.py')
+    path = Path('UnityIntegration/python/db/sqlite/export_readable_views.py')
     spec = importlib.util.spec_from_file_location('export_readable_views', str(path))
     mod = importlib.util.module_from_spec(spec)
     sys.modules['export_readable_views'] = mod

@@ -59,6 +59,15 @@ from pathlib import Path
 from typing import DefaultDict, Dict, List, Optional, Tuple
 
 try:
+    from .db.mssql.mssql_flush import flush_session as _mssql_flush_session, HAVE_PYODBC
+except ImportError:
+    try:
+        from db.mssql.mssql_flush import flush_session as _mssql_flush_session, HAVE_PYODBC
+    except ImportError:
+        _mssql_flush_session = None  # type: ignore[assignment]
+        HAVE_PYODBC = False
+
+try:
     import pyarrow as pa
     import pyarrow.parquet as pq
     HAVE_PYARROW = True
@@ -238,6 +247,101 @@ class FileTail:
             # Advance cursor past this chunk so the next call starts after it.
             self.offset += HEADER_SIZE + payload_bytes
             return recv_ts_ns, parsed
+
+
+# ── JSONL Session Logger ──────────────────────────────────────────────────────
+
+class SessionLogger:
+    """Append one JSON line per parsed chunk to a session-specific ``.jsonl`` file.
+
+    The JSONL file acts as a crash-safe, append-only buffer that can be
+    replayed into MSSQL (via ``mssql_flush.flush_session``) when the session
+    finishes.
+
+    File format
+    -----------
+    Each line is a self-contained JSON object::
+
+        {"stream": 1, "ts_ns": 171…, "sid": 42, "data": {…}}
+
+    ``data`` differs per stream — see ``write_records()`` and
+    ``write_events()`` for the exact keys.
+    """
+
+    def __init__(self, logdir: str, session_id: int):
+        os.makedirs(logdir, exist_ok=True)
+        self.path = os.path.join(logdir, f"session_{session_id}.jsonl")
+        self.session_id = session_id
+        self._fh = open(self.path, "a", encoding="utf-8")  # noqa: SIM115
+        self._rows = 0
+
+    # ── fixed-size record streams (headpose / bike / hr) ──────────────
+    def write_records(self, stream_id: int, recv_ts_ns: int, recs: list) -> int:
+        """Unpack binary records and write one JSONL line per record.
+
+        Returns the number of lines written.
+        """
+        lines: list[str] = []
+        sid = self.session_id
+        if stream_id == 1:
+            for rec in recs:
+                seq, ut, px, py, pz, qx, qy, qz, qw = struct.unpack_from('<Iffffffff', rec)
+                lines.append(json.dumps({
+                    "stream": 1, "ts_ns": recv_ts_ns, "sid": sid,
+                    "data": {"seq": seq, "ut": ut, "px": px, "py": py, "pz": pz,
+                             "qx": qx, "qy": qy, "qz": qz, "qw": qw},
+                }))
+        elif stream_id == 2:
+            for rec in recs:
+                seq, ut, speed, steering = struct.unpack_from('<Ifff', rec)
+                bf, br = rec[16], rec[17]
+                lines.append(json.dumps({
+                    "stream": 2, "ts_ns": recv_ts_ns, "sid": sid,
+                    "data": {"seq": seq, "ut": ut, "speed": speed,
+                             "steering": steering, "bf": bf, "br": br},
+                }))
+        elif stream_id == 3:
+            for rec in recs:
+                seq, ut, hr_bpm = struct.unpack_from('<Iff', rec)
+                lines.append(json.dumps({
+                    "stream": 3, "ts_ns": recv_ts_ns, "sid": sid,
+                    "data": {"seq": seq, "ut": ut, "hr_bpm": hr_bpm},
+                }))
+        if lines:
+            self._fh.write("\n".join(lines) + "\n")
+            self._fh.flush()
+            self._rows += len(lines)
+        return len(lines)
+
+    # ── variable-length event stream ──────────────────────────────────
+    def write_events(self, recv_ts_ns: int, rec_tuples: list) -> int:
+        """Write pre-parsed event tuples as JSONL lines.
+
+        Parameters
+        ----------
+        rec_tuples : list of (seq, unity_t, json_str) tuples
+        """
+        lines: list[str] = []
+        sid = self.session_id
+        for seq, unity_t, js in rec_tuples:
+            lines.append(json.dumps({
+                "stream": 4, "ts_ns": recv_ts_ns, "sid": sid,
+                "data": {"seq": seq, "ut": unity_t, "json": js},
+            }))
+        if lines:
+            self._fh.write("\n".join(lines) + "\n")
+            self._fh.flush()
+            self._rows += len(lines)
+        return len(lines)
+
+    @property
+    def row_count(self) -> int:
+        return self._rows
+
+    def close(self) -> None:
+        """Close the underlying file handle."""
+        if self._fh and not self._fh.closed:
+            self._fh.close()
 
 
 # ── Database initialisation ───────────────────────────────────────────────────
@@ -484,6 +588,8 @@ def watch_sessions(
     stop_event: Optional[threading.Event] = None,
     sqlite_batch_size: int = 0,
     parquet_rows: int = 10000,
+    jsonl_dir: Optional[str] = None,
+    mssql_conn_str: Optional[str] = None,
 ):
     """Watch *logs_root* for new sessions and tail their VRSF files forever.
 
@@ -497,14 +603,17 @@ def watch_sessions(
     3. Insert parsed records into SQLite via ``insert_records_batch`` /
        ``insert_events_batch``.
     4. Optionally append the same records to the in-memory Parquet buffer.
-    5. Commit strategy:
+    5. Optionally write JSONL log lines via ``SessionLogger``.
+    6. Commit strategy:
        - ``sqlite_batch_size == 0`` (default): commit immediately after every
          chunk — lowest latency, each chunk is atomic.
        - ``sqlite_batch_size > 0``: accumulate ``pending_inserts`` across
          chunks and commit only when the threshold is reached — higher
          throughput for very high-Hz streams.
-    6. Print per-stream insertion counts once per second as a heartbeat.
-    7. Flush Parquet buffers to disk once per second.
+    7. Print per-stream insertion counts once per second as a heartbeat.
+    8. Flush Parquet buffers to disk once per second.
+    9. On session end (detected when a ``session_*/done`` marker appears):
+       flush the JSONL log to MSSQL if *mssql_conn_str* is provided.
 
     Parameters
     ----------
@@ -515,10 +624,17 @@ def watch_sessions(
                        cleanly (used by tests / GUI shutdown)
     sqlite_batch_size: see commit strategy above
     parquet_rows     : maximum rows per Parquet part file
+    jsonl_dir        : if given, write JSONL session logs to this directory
+    mssql_conn_str   : if given (along with jsonl_dir), flush JSONL → MSSQL
+                       when the session ends
     """
     conn = init_db(out_db)
     seen = set()   # set of session directories already registered
     tails = []     # flat list of all active FileTail objects
+    # SessionLogger instances keyed by session_id (created when jsonl_dir is set)
+    session_loggers: Dict[int, SessionLogger] = {}
+    # Track session directories by session_id for end-of-session detection
+    session_dirs: Dict[int, str] = {}
 
     def scan_once():
         """Discover any new session directories and create FileTail objects."""
@@ -537,6 +653,35 @@ def watch_sessions(
             tails.append(FileTail(os.path.join(d, 'hr.vrsf'),      3, sid, rec_size=12, variable=False))
             tails.append(FileTail(os.path.join(d, 'events.vrsf'),  4, sid, variable=True))
             seen.add(d)
+            session_dirs[sid] = d
+
+            # Create a JSONL logger for this session if enabled.
+            if jsonl_dir and sid not in session_loggers:
+                session_loggers[sid] = SessionLogger(jsonl_dir, sid)
+                LOG.info("JSONL logger started for session %s → %s",
+                         sid, session_loggers[sid].path)
+
+    def _finish_session(sid: int) -> None:
+        """Close the JSONL logger and optionally flush to MSSQL."""
+        logger = session_loggers.pop(sid, None)
+        if logger is None:
+            return
+        logger.close()
+        LOG.info("Session %s ended — %d JSONL rows written", sid, logger.row_count)
+
+        if mssql_conn_str and _mssql_flush_session is not None:
+            try:
+                counts_map = _mssql_flush_session(
+                    logger.path,
+                    mssql_conn_str,
+                    session_id=sid,
+                    started_ms=sid,  # session_id == started_unix_ms by convention
+                    session_dir=session_dirs.get(sid),
+                )
+                LOG.info("MSSQL flush OK for session %s: %s", sid, counts_map)
+            except Exception:
+                LOG.exception("MSSQL flush FAILED for session %s — JSONL preserved at %s",
+                              sid, logger.path)
 
     LOG.info("Collector: watching %s", logs_root)
     last_print        = time.time()
@@ -619,6 +764,17 @@ def watch_sessions(
                                 'seq': seq, 'unity_t': unity_t, 'json': js,
                             })
 
+                # ── JSONL logging ─────────────────────────────────────────
+                jlogger = session_loggers.get(sid)
+                if jlogger is not None:
+                    try:
+                        if t.stream_id == 4:
+                            jlogger.write_events(recv_ts_ns, parsed)
+                        else:
+                            jlogger.write_records(t.stream_id, recv_ts_ns, parsed)
+                    except Exception as e:
+                        LOG.error("JSONL write error for session %s: %s", sid, e)
+
             # ── Commit strategy ───────────────────────────────────────────
             if sqlite_batch_size <= 0:
                 # Default: commit every chunk for lowest latency.
@@ -648,11 +804,20 @@ def watch_sessions(
             flush_parquet_parts(out_parquet_dir, part_rows=parquet_rows)
             last_parquet_flush = time.time()
 
+        # ── Session-end detection ─────────────────────────────────────────
+        # When Unity finishes a session it writes a ``done`` marker file in
+        # the session directory.  We use that to trigger the MSSQL flush.
+        for sid in list(session_loggers.keys()):
+            sdir = session_dirs.get(sid)
+            if sdir and os.path.exists(os.path.join(sdir, "done")):
+                _finish_session(sid)
+
         time.sleep(0.1)  # poll interval — 100 ms keeps CPU usage negligible
 
     # ── Graceful shutdown ─────────────────────────────────────────────────────
     # Commit any rows that were buffered but not yet written (only possible
-    # when sqlite_batch_size > 0), then flush remaining Parquet data.
+    # when sqlite_batch_size > 0), then flush remaining Parquet data and
+    # finalize any open JSONL loggers.
     try:
         if pending_inserts > 0:
             conn.commit()
@@ -660,6 +825,9 @@ def watch_sessions(
         pass
     if out_parquet_dir and HAVE_PYARROW:
         flush_parquet_parts(out_parquet_dir, part_rows=parquet_rows)
+    # Close remaining JSONL loggers and flush to MSSQL.
+    for sid in list(session_loggers.keys()):
+        _finish_session(sid)
 
 
 def main():
@@ -680,6 +848,10 @@ def main():
                    help='If >0, commit DB every N records; 0 means commit per chunk (default)')
     p.add_argument('--parquet-rows', type=int, default=10000,
                    help='Maximum rows per Parquet part file (default: 10000)')
+    p.add_argument('--jsonl-dir', default=None,
+                   help='Directory for JSONL session logs (enables JSONL output)')
+    p.add_argument('--mssql-conn', default=None,
+                   help='pyodbc connection string; JSONL files are flushed to MSSQL on session end')
     p.add_argument('--verbose', action='store_true',
                    help='Enable DEBUG logging (default: INFO)')
     args = p.parse_args()
@@ -692,8 +864,11 @@ def main():
     out_dir = os.path.dirname(os.path.abspath(args.out))
     os.makedirs(out_dir, exist_ok=True)
     # Pass the same directory as the Parquet output so parts sit next to the DB.
-    watch_sessions(args.logs, args.out, out_parquet_dir=out_dir,
-                   sqlite_batch_size=args.sqlite_batch_size, parquet_rows=args.parquet_rows)
+    watch_sessions(
+        args.logs, args.out, out_parquet_dir=out_dir,
+        sqlite_batch_size=args.sqlite_batch_size, parquet_rows=args.parquet_rows,
+        jsonl_dir=args.jsonl_dir, mssql_conn_str=args.mssql_conn,
+    )
 
 
 if __name__ == '__main__':
