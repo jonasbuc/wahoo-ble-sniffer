@@ -501,6 +501,70 @@ class TestWebsocketClient:
         assert gui.heart_rate == hr_before
         assert len(gui.hr_history) == history_len_before
 
+    @pytest.mark.asyncio
+    async def test_mixed_stream_triggers_and_hr_correctly_separated(self, gui):
+        """Full pipeline: HR frames, triggers from multiple sources, and mock
+        events arrive interleaved.  Verify:
+          - HR data only comes from cycling-data frames (not triggers).
+          - Triggers with source udp/unity/bridge all produce markers.
+          - Triggers with source mock are silently filtered.
+          - No 0 BPM readings appear in hr_history from trigger messages.
+        """
+        self._sync_after(gui)
+        gui.triggers.clear()
+        gui.hr_history.clear()
+        now = time.time()
+
+        messages = [
+            # 1) Normal HR data
+            json.dumps({"heart_rate": 72}),
+            # 2) UDP trigger — should add marker, NOT add 0 BPM
+            json.dumps({"event": "hall_hit", "source": "udp", "timestamp": now + 1}),
+            # 3) More HR data
+            json.dumps({"heart_rate": 75}),
+            # 4) Unity trigger — should add marker
+            json.dumps({"event": "checkpoint", "source": "unity", "timestamp": now + 3}),
+            # 5) Bridge spawn trigger — should add marker
+            json.dumps({"event": "spawn", "source": "bridge", "timestamp": now + 4}),
+            # 6) Mock trigger — should NOT add marker
+            json.dumps({"event": "mock_spawn", "source": "mock", "timestamp": now + 5}),
+            # 7) Binary HR frame
+            struct.pack("di", now + 6, 80),
+            # 8) Final HR data
+            json.dumps({"heart_rate": 82}),
+        ]
+
+        cm = self._make_mock_ws(messages)
+
+        async def fake_sleep(n):
+            raise asyncio.CancelledError
+
+        with patch("websockets.connect", return_value=cm), \
+             patch("asyncio.sleep", side_effect=fake_sleep):
+            try:
+                await asyncio.wait_for(gui.websocket_client(), timeout=3.0)
+            except (asyncio.CancelledError, asyncio.TimeoutError):
+                pass
+
+        # ── Verify triggers ──────────────────────────────────────────────
+        trigger_names = [name for (_, name) in gui.triggers]
+        # Accepted sources: udp, unity, bridge
+        assert "hall_hit" in trigger_names,   f"udp trigger missing: {trigger_names}"
+        assert "checkpoint" in trigger_names, f"unity trigger missing: {trigger_names}"
+        assert "spawn" in trigger_names,      f"bridge trigger missing: {trigger_names}"
+        # Filtered: mock
+        assert "mock_spawn" not in trigger_names, f"mock trigger not filtered: {trigger_names}"
+        assert len(gui.triggers) == 3
+
+        # ── Verify HR data ───────────────────────────────────────────────
+        hr_values = [bpm for (_, bpm) in gui.hr_history]
+        # Should have exactly 4 HR readings: 72, 75, 80, 82
+        assert hr_values == [72, 75, 80, 82], f"Unexpected HR values: {hr_values}"
+        # No 0 BPM values injected by trigger events
+        assert 0 not in hr_values, f"0 BPM found in hr_history: {hr_values}"
+        # Final HR should be 82
+        assert gui.heart_rate == 82
+
     # ── JSON cycling data ─────────────────────────────────────────────────────
 
     @pytest.mark.asyncio
