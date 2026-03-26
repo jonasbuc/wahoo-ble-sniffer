@@ -17,7 +17,7 @@ _here = Path(__file__).resolve().parent
 _repo = _here.parent
 sys.path.insert(0, str(_repo / "UnityIntegration" / "python"))
 
-from db.mssql_flush import (  # noqa: E402
+from db.mssql.mssql_flush import (  # noqa: E402
     _build_row,
     _bulk_insert,
     _ensure_session,
@@ -227,8 +227,8 @@ class TestFlushSession:
         path = _write_logfile(tmp_path, lines)
         mock_pyodbc, conn, cursor = self._mock_pyodbc()
 
-        with mock.patch("db.mssql_flush.pyodbc", mock_pyodbc), \
-             mock.patch("db.mssql_flush.HAVE_PYODBC", True):
+        with mock.patch("db.mssql.mssql_flush.pyodbc", mock_pyodbc), \
+             mock.patch("db.mssql.mssql_flush.HAVE_PYODBC", True):
             result = flush_session(path, "FAKE_CONN", rename_done=False)
 
         assert result == {"headpose": 1, "bike": 1, "hr": 1, "events": 1}
@@ -239,8 +239,8 @@ class TestFlushSession:
         path = _write_logfile(tmp_path, lines)
         mock_pyodbc, conn, cursor = self._mock_pyodbc()
 
-        with mock.patch("db.mssql_flush.pyodbc", mock_pyodbc), \
-             mock.patch("db.mssql_flush.HAVE_PYODBC", True):
+        with mock.patch("db.mssql.mssql_flush.pyodbc", mock_pyodbc), \
+             mock.patch("db.mssql.mssql_flush.HAVE_PYODBC", True):
             flush_session(path, "FAKE_CONN", rename_done=True)
 
         assert not os.path.exists(path)
@@ -252,8 +252,8 @@ class TestFlushSession:
         mock_pyodbc, conn, cursor = self._mock_pyodbc()
         cursor.executemany.side_effect = Exception("DB error")
 
-        with mock.patch("db.mssql_flush.pyodbc", mock_pyodbc), \
-             mock.patch("db.mssql_flush.HAVE_PYODBC", True):
+        with mock.patch("db.mssql.mssql_flush.pyodbc", mock_pyodbc), \
+             mock.patch("db.mssql.mssql_flush.HAVE_PYODBC", True):
             with pytest.raises(Exception, match="DB error"):
                 flush_session(path, "FAKE_CONN", rename_done=False)
 
@@ -264,23 +264,23 @@ class TestFlushSession:
         path = _write_logfile(tmp_path, [""])
         mock_pyodbc, conn, cursor = self._mock_pyodbc()
 
-        with mock.patch("db.mssql_flush.pyodbc", mock_pyodbc), \
-             mock.patch("db.mssql_flush.HAVE_PYODBC", True):
+        with mock.patch("db.mssql.mssql_flush.pyodbc", mock_pyodbc), \
+             mock.patch("db.mssql.mssql_flush.HAVE_PYODBC", True):
             result = flush_session(path, "FAKE_CONN", rename_done=False)
 
         assert result == {"headpose": 0, "bike": 0, "hr": 0, "events": 0}
 
     def test_file_not_found(self, tmp_path):
         mock_pyodbc = mock.MagicMock()
-        with mock.patch("db.mssql_flush.pyodbc", mock_pyodbc), \
-             mock.patch("db.mssql_flush.HAVE_PYODBC", True):
+        with mock.patch("db.mssql.mssql_flush.pyodbc", mock_pyodbc), \
+             mock.patch("db.mssql.mssql_flush.HAVE_PYODBC", True):
             with pytest.raises(FileNotFoundError):
                 flush_session(tmp_path / "nope.jsonl", "FAKE_CONN")
 
     def test_import_error_without_pyodbc(self, tmp_path):
         lines = [_headpose_line(seq=1)]
         path = _write_logfile(tmp_path, lines)
-        with mock.patch("db.mssql_flush.HAVE_PYODBC", False):
+        with mock.patch("db.mssql.mssql_flush.HAVE_PYODBC", False):
             with pytest.raises(ImportError, match="pyodbc"):
                 flush_session(path, "FAKE_CONN")
 
@@ -289,8 +289,8 @@ class TestFlushSession:
         path = _write_logfile(tmp_path, lines)
         mock_pyodbc, conn, cursor = self._mock_pyodbc()
 
-        with mock.patch("db.mssql_flush.pyodbc", mock_pyodbc), \
-             mock.patch("db.mssql_flush.HAVE_PYODBC", True):
+        with mock.patch("db.mssql.mssql_flush.pyodbc", mock_pyodbc), \
+             mock.patch("db.mssql.mssql_flush.HAVE_PYODBC", True):
             flush_session(path, "FAKE_CONN", session_id=99, rename_done=False)
 
         # _ensure_session should have been called with sid=99
@@ -312,8 +312,8 @@ class TestFlushAll:
         conn.cursor.return_value = cursor
         mock_pyodbc.connect.return_value = conn
 
-        with mock.patch("db.mssql_flush.pyodbc", mock_pyodbc), \
-             mock.patch("db.mssql_flush.HAVE_PYODBC", True):
+        with mock.patch("db.mssql.mssql_flush.pyodbc", mock_pyodbc), \
+             mock.patch("db.mssql.mssql_flush.HAVE_PYODBC", True):
             n = flush_all(tmp_path, "FAKE_CONN")
 
         assert n == 3
@@ -327,8 +327,8 @@ class TestFlushAll:
         conn.cursor.return_value = cursor
         mock_pyodbc.connect.return_value = conn
 
-        with mock.patch("db.mssql_flush.pyodbc", mock_pyodbc), \
-             mock.patch("db.mssql_flush.HAVE_PYODBC", True):
+        with mock.patch("db.mssql.mssql_flush.pyodbc", mock_pyodbc), \
+             mock.patch("db.mssql.mssql_flush.HAVE_PYODBC", True):
             n = flush_all(tmp_path, "FAKE_CONN")
 
         assert n == 1
@@ -339,8 +339,8 @@ class TestFlushAll:
         mock_pyodbc = mock.MagicMock()
         mock_pyodbc.connect.side_effect = Exception("Connection refused")
 
-        with mock.patch("db.mssql_flush.pyodbc", mock_pyodbc), \
-             mock.patch("db.mssql_flush.HAVE_PYODBC", True):
+        with mock.patch("db.mssql.mssql_flush.pyodbc", mock_pyodbc), \
+             mock.patch("db.mssql.mssql_flush.HAVE_PYODBC", True):
             n = flush_all(tmp_path, "FAKE_CONN")
 
         assert n == 0

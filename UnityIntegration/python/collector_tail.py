@@ -59,10 +59,10 @@ from pathlib import Path
 from typing import DefaultDict, Dict, List, Optional, Tuple
 
 try:
-    from .db.mssql_flush import flush_session as _mssql_flush_session, HAVE_PYODBC
+    from .db.mssql.mssql_flush import flush_session as _mssql_flush_session, HAVE_PYODBC
 except ImportError:
     try:
-        from db.mssql_flush import flush_session as _mssql_flush_session, HAVE_PYODBC
+        from db.mssql.mssql_flush import flush_session as _mssql_flush_session, HAVE_PYODBC
     except ImportError:
         _mssql_flush_session = None  # type: ignore[assignment]
         HAVE_PYODBC = False

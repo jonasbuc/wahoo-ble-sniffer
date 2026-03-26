@@ -120,7 +120,7 @@ def test_collector_end_to_end(tmp_path):
     import importlib.util
     import sys
     spec = importlib.util.spec_from_file_location('create_readable_views', str(
-        Path('UnityIntegration/python/db/create_readable_views.py')))
+        Path('UnityIntegration/python/db/sqlite/create_readable_views.py')))
     mod = importlib.util.module_from_spec(spec)
     sys.modules['create_readable_views'] = mod
     spec.loader.exec_module(mod)

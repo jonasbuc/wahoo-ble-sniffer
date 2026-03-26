@@ -34,7 +34,7 @@ Usage
 -----
 As a library::
 
-    from UnityIntegration.python.db.mssql_flush import flush_session
+    from UnityIntegration.python.db.mssql.mssql_flush import flush_session
     flush_session("/path/to/session_42.jsonl", conn_str)
 
 CLI::

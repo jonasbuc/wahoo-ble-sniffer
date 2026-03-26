@@ -14,8 +14,8 @@ import csv
 from pathlib import Path
 from typing import Iterable, Tuple, List, Any
 
-# Default: db/ → python/ → UnityIntegration/ → repo_root/collector_out/vrs.sqlite
-_REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
+# Default: db/sqlite/ → db/ → python/ → UnityIntegration/ → repo_root/collector_out/vrs.sqlite
+_REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent.parent
 _DEFAULT_DB = _REPO_ROOT / "collector_out" / "vrs.sqlite"
 _DEFAULT_EXPORTS = _REPO_ROOT / "exports"
 

@@ -179,7 +179,7 @@ class TestSessionLoggerAppend:
 class TestSessionLoggerRoundtrip:
     def test_roundtrip_all_streams(self, tmp_path):
         """Write all 4 stream types and verify parse_jsonl reads them back."""
-        from db.mssql_flush import parse_jsonl
+        from db.mssql.mssql_flush import parse_jsonl
 
         logger = SessionLogger(str(tmp_path), 42)
         logger.write_records(1, 100, [_make_headpose_rec(seq=1), _make_headpose_rec(seq=2)])
