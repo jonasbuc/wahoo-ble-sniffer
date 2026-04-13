@@ -58,6 +58,15 @@ WahooBleLoggerCSharp/bin/
 WahooBleLoggerCSharp/obj/
 UnityIntegration/UnityCompileCheck/obj/
 
+# Live Analytics runtime data
+live_analytics/data/*.db
+live_analytics/data/*.db-shm
+live_analytics/data/*.db-wal
+live_analytics/data/sessions/*/
+!live_analytics/data/.gitkeep
+!live_analytics/data/sessions/.gitkeep
+live_analytics/.venv/
+
 # Ignore UnityCompileCheck runtime output
 UnityIntegration/UnityCompileCheck/*.dll
 UnityIntegration/UnityCompileCheck/*.pdb
