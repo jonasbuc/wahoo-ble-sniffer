@@ -8,15 +8,14 @@ machines we use the ``Xvfb`` virtual display if available, or skip via the
 ``DISPLAY`` environment variable check.  On macOS the Tk framework always
 works, so these tests run locally without any setup.
 
-Strategy: create a real ``WahooBridgeGUI`` instance but never call
-``root.mainloop()``.  The WebSocket background thread is a daemon and never
-manages to connect (no server running), so it is harmless.  After each test
-we destroy the Tk root to avoid resource leaks.
+Strategy: create a real ``WahooBridgeGUI`` instance but patch
+``threading.Thread`` so the WebSocket background thread never starts.
+After each test we destroy the Tk root to avoid resource leaks.
 """
 import time
 import tkinter as tk
 from collections import deque
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -41,10 +40,11 @@ pytestmark = pytest.mark.skipif(
 
 @pytest.fixture()
 def gui():
-    """Create a WahooBridgeGUI and tear it down after each test."""
+    """Create a WahooBridgeGUI with websocket thread disabled."""
     from UnityIntegration.python.wahoo_bridge_gui import WahooBridgeGUI
 
-    app = WahooBridgeGUI()
+    with patch("threading.Thread"):          # prevent background thread starting
+        app = WahooBridgeGUI()
     yield app
     try:
         app.root.destroy()

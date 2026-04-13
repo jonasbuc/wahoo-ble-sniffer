@@ -60,8 +60,6 @@ class TestMain:
         with patch("UnityIntegration.python.bike_bridge.asyncio.run") as mock_run, \
              patch("UnityIntegration.python.bike_bridge.WahooBridgeServer") as MockSrv, \
              patch("sys.argv", ["bike_bridge.py"]):
-            instance = MockSrv.return_value
-            instance.start = AsyncMock()
             mock_run.return_value = None
             main()
             mock_run.assert_called_once()
@@ -80,7 +78,6 @@ class TestMain:
         with patch("UnityIntegration.python.bike_bridge.asyncio.run"), \
              patch("UnityIntegration.python.bike_bridge.WahooBridgeServer") as MockSrv, \
              patch("sys.argv", ["bike_bridge.py", "--port", "9999"]):
-            MockSrv.return_value.start = AsyncMock()
             main()
             _, kwargs = MockSrv.call_args
             assert kwargs.get("port") == 9999 or MockSrv.call_args[0][1] == 9999 or True
