@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="da">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>System Check – VR Cykel Simulator</title>
+<style>
+/* ── Reset & Base ──────────────────────────────────────── */
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Segoe UI',system-ui,-apple-system,sans-serif;background:#0f172a;color:#e2e8f0;min-height:100vh}
+a{color:#60a5fa}
+
+/* ── Layout ────────────────────────────────────────────── */
+.app{max-width:960px;margin:0 auto;padding:1.5rem}
+header{display:flex;align-items:center;justify-content:space-between;margin-bottom:1.5rem;flex-wrap:wrap;gap:.75rem}
+header h1{font-size:1.6rem;font-weight:700;letter-spacing:-.02em}
+header h1 span{color:#38bdf8}
+.controls{display:flex;align-items:center;gap:.75rem}
+.controls label{font-size:.85rem;color:#94a3b8}
+.controls input[type=checkbox]{accent-color:#38bdf8}
+#btn-refresh{padding:.5rem 1.25rem;border:none;border-radius:.5rem;background:#2563eb;color:#fff;font-weight:600;cursor:pointer;font-size:.9rem;transition:background .15s}
+#btn-refresh:hover{background:#1d4ed8}
+#btn-refresh:disabled{opacity:.5;cursor:wait}
+
+/* ── Summary bar ───────────────────────────────────────── */
+.summary{display:flex;gap:.75rem;margin-bottom:1.25rem;flex-wrap:wrap}
+.summary .chip{padding:.35rem .85rem;border-radius:999px;font-size:.82rem;font-weight:600;display:flex;align-items:center;gap:.35rem}
+.chip.ok{background:#166534;color:#bbf7d0}
+.chip.warn{background:#854d0e;color:#fef08a}
+.chip.fail{background:#991b1b;color:#fecaca}
+.chip.loading{background:#1e3a5f;color:#93c5fd}
+
+/* ── Cards grid ────────────────────────────────────────── */
+.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:1rem}
+.card{background:#1e293b;border-radius:.75rem;padding:1.15rem;border:1px solid #334155;transition:border-color .2s}
+.card.ok{border-color:#22c55e}
+.card.fail{border-color:#ef4444}
+.card.warn{border-color:#eab308}
+.card.loading{border-color:#3b82f6}
+.card-head{display:flex;align-items:center;gap:.6rem;margin-bottom:.6rem}
+.card-head .icon{width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:1rem;flex-shrink:0}
+.card.ok .icon{background:#166534;color:#4ade80}
+.card.fail .icon{background:#7f1d1d;color:#f87171}
+.card.warn .icon{background:#713f12;color:#facc15}
+.card.loading .icon{background:#1e3a5f;color:#60a5fa}
+.card-head h3{font-size:.95rem;font-weight:600}
+.card-body{font-size:.82rem;color:#94a3b8;line-height:1.55}
+.card-body .detail{margin-top:.35rem}
+.tag{display:inline-block;padding:.12rem .45rem;border-radius:.25rem;font-size:.72rem;font-weight:600;margin-right:.25rem}
+.tag-ok{background:#166534;color:#bbf7d0}
+.tag-fail{background:#7f1d1d;color:#fca5a5}
+
+/* ── Sessions table ────────────────────────────────────── */
+.sessions{margin-top:1.5rem}
+.sessions h2{font-size:1.15rem;margin-bottom:.75rem;font-weight:600}
+.session-list{display:flex;flex-direction:column;gap:.6rem}
+.session-card{background:#1e293b;border-radius:.6rem;padding:.85rem 1rem;border:1px solid #334155}
+.session-card.complete{border-color:#22c55e}
+.session-card.incomplete{border-color:#eab308}
+.session-card .meta{display:flex;justify-content:space-between;flex-wrap:wrap;gap:.5rem;font-size:.82rem;margin-bottom:.4rem}
+.session-card .meta b{color:#e2e8f0}
+.session-card .files{display:flex;flex-wrap:wrap;gap:.3rem}
+
+/* ── Loading spinner ───────────────────────────────────── */
+@keyframes spin{to{transform:rotate(360deg)}}
+.spinner{width:18px;height:18px;border:2.5px solid #334155;border-top-color:#60a5fa;border-radius:50%;animation:spin .7s linear infinite;display:inline-block}
+
+/* ── Footer ────────────────────────────────────────────── */
+footer{margin-top:2rem;text-align:center;font-size:.78rem;color:#475569}
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <h1>🔍 <span>System Check</span> – VR Cykel Simulator</h1>
+    <div class="controls">
+      <label><input type="checkbox" id="chk-auto" checked> Auto-opdatering (5 s)</label>
+      <button id="btn-refresh">⟳ Kør check</button>
+    </div>
+  </header>
+
+  <div class="summary" id="summary"></div>
+  <div class="cards" id="cards"></div>
+  <div class="sessions" id="sessions-section" style="display:none">
+    <h2>📁 Seneste VRS-sessioner</h2>
+    <div class="session-list" id="session-list"></div>
+  </div>
+
+  <footer>System Check GUI · Port <span id="port"></span> · Sidst opdateret: <span id="last-update">—</span></footer>
+</div>
+
+<script>
+/* ================================================================
+   System Check SPA – polls /api/check/all every 5 s
+   ================================================================ */
+const BASE = location.origin;
+const $cards   = document.getElementById("cards");
+const $summary = document.getElementById("summary");
+const $sessions = document.getElementById("sessions-section");
+const $sessionList = document.getElementById("session-list");
+const $lastUpdate  = document.getElementById("last-update");
+const $btnRefresh  = document.getElementById("btn-refresh");
+const $chkAuto     = document.getElementById("chk-auto");
+document.getElementById("port").textContent = location.port || "80";
+
+let autoTimer = null;
+
+/* ── Check definitions ─────────────────────────────────── */
+const CHECKS = [
+  { key: "quest_headset",     label: "Meta Quest 3 Headset", iconOk: "🥽", iconFail: "🥽" },
+  { key: "analytics_db",      label: "Analytics Database",   iconOk: "🗄️", iconFail: "🗄️" },
+  { key: "questionnaire_db",  label: "Spørgeskema Database", iconOk: "🗄️", iconFail: "🗄️" },
+  { key: "bridge_connection", label: "BLE Bridge / Puls",    iconOk: "📡", iconFail: "📡" },
+  { key: "analytics_api",     label: "Analytics API",        iconOk: "⚡", iconFail: "⚡" },
+  { key: "questionnaire_api", label: "Spørgeskema API",      iconOk: "📋", iconFail: "📋" },
+  { key: "vrsf_logs",         label: "VRS Logfiler",         iconOk: "📁", iconFail: "📁" },
+];
+
+/* ── Helpers ───────────────────────────────────────────── */
+function cls(ok) { return ok === true ? "ok" : ok === false ? "fail" : "warn"; }
+function fmtBytes(b) {
+  if (b == null) return "—";
+  if (b < 1024) return b + " B";
+  if (b < 1024*1024) return (b/1024).toFixed(1) + " KB";
+  return (b/(1024*1024)).toFixed(1) + " MB";
+}
+
+/* ── Render a single card ──────────────────────────────── */
+function renderCard(def, data) {
+  if (!data) return `<div class="card loading"><div class="card-head"><div class="icon"><span class="spinner"></span></div><h3>${def.label}</h3></div><div class="card-body">Checker…</div></div>`;
+  const s = cls(data.ok);
+  const icon = data.ok ? def.iconOk : def.iconFail;
+  let body = `<div class="detail">${data.detail || data.message || "—"}</div>`;
+
+  /* Extra details per check */
+  if (def.key.endsWith("_db") && data.tables != null) {
+    const tc = Array.isArray(data.tables) ? data.tables.length : data.tables;
+    body += `<div class="detail">Tabeller: ${tc} · Størrelse: ${data.size_kb != null ? data.size_kb + " KB" : "—"}</div>`;
+  }
+  if (def.key === "quest_headset" && data.model) {
+    body += `<div class="detail">Model: ${data.model}</div>`;
+  }
+  if (def.key === "bridge_connection" && data.protocol) {
+    body += `<div class="detail">Protokol: ${data.protocol}</div>`;
+  }
+  if (def.key === "vrsf_logs" && data.total_sessions != null) {
+    body += `<div class="detail">Sessioner fundet: ${data.total_sessions}</div>`;
+  }
+
+  return `<div class="card ${s}"><div class="card-head"><div class="icon">${icon}</div><h3>${def.label}</h3></div><div class="card-body">${body}</div></div>`;
+}
+
+/* ── Render sessions ───────────────────────────────────── */
+function renderSessions(logsData) {
+  if (!logsData || !logsData.sessions || logsData.sessions.length === 0) {
+    $sessions.style.display = "none";
+    return;
+  }
+  $sessions.style.display = "";
+  $sessionList.innerHTML = logsData.sessions.map(sess => {
+    const complete = sess.complete;
+    const files = (sess.files_present || []).map(f => `<span class="tag tag-ok">${f}</span>`).join("")
+                + (sess.missing_files || []).map(f => `<span class="tag tag-fail">✗ ${f}</span>`).join("");
+    const manifest = sess.started_unix_ms ? ` · Startet: ${new Date(sess.started_unix_ms).toLocaleString("da-DK")}` : "";
+    return `<div class="session-card ${complete ? "complete" : "incomplete"}">
+      <div class="meta"><b>${sess.dir}</b><span>${complete ? "✅ Komplet" : "⚠️ Ufuldstændig"}${manifest}</span></div>
+      <div class="files">${files}</div>
+    </div>`;
+  }).join("");
+}
+
+/* ── Render summary chips ──────────────────────────────── */
+function renderSummary(data) {
+  if (!data || !data._summary) { $summary.innerHTML = ""; return; }
+  const s = data._summary;
+  $summary.innerHTML = [
+    `<div class="chip ${s.all_ok ? "ok" : "fail"}">${s.all_ok ? "✅" : "❌"} ${s.passed}/${s.total} bestået</div>`,
+    s.all_ok ? "" : `<div class="chip fail">⚠ ${s.failed} fejl</div>`,
+    `<div class="chip loading">⏱ ${s.elapsed_s.toFixed(2)} s</div>`,
+  ].join("");
+}
+
+/* ── Fetch & render ────────────────────────────────────── */
+async function runChecks() {
+  $btnRefresh.disabled = true;
+  // Show loading state
+  $cards.innerHTML = CHECKS.map(d => renderCard(d, null)).join("");
+  $summary.innerHTML = `<div class="chip loading"><span class="spinner"></span> Kører checks…</div>`;
+
+  try {
+    const resp = await fetch(BASE + "/api/check/all");
+    if (!resp.ok) throw new Error("HTTP " + resp.status);
+    const data = await resp.json();
+
+    $cards.innerHTML = CHECKS.map(def => renderCard(def, data[def.key])).join("");
+    renderSummary(data);
+    renderSessions(data.vrsf_logs);
+    $lastUpdate.textContent = new Date().toLocaleTimeString("da-DK");
+  } catch (err) {
+    $summary.innerHTML = `<div class="chip fail">❌ Fejl: ${err.message}</div>`;
+  } finally {
+    $btnRefresh.disabled = false;
+  }
+}
+
+/* ── Auto-refresh ──────────────────────────────────────── */
+function toggleAuto() {
+  clearInterval(autoTimer);
+  if ($chkAuto.checked) autoTimer = setInterval(runChecks, 5000);
+}
+
+$btnRefresh.addEventListener("click", runChecks);
+$chkAuto.addEventListener("change", toggleAuto);
+
+// Initial run
+runChecks();
+toggleAuto();
+</script>
+</body>
+</html>
