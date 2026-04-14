@@ -10,6 +10,7 @@ Hosts:
 from __future__ import annotations
 
 import logging
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 import uvicorn
@@ -41,18 +42,22 @@ logging.basicConfig(
 )
 logger = logging.getLogger("questionnaire")
 
-# ── App ───────────────────────────────────────────────────────────────
-app = FastAPI(title="Questionnaire Service", version="0.1.0")
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
-
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 
 
-@app.on_event("startup")
-async def _startup() -> None:
+# ── Lifespan ──────────────────────────────────────────────────────────
+@asynccontextmanager
+async def lifespan(app: FastAPI):  # noqa: ARG001
+    """Startup / shutdown logic for the questionnaire service."""
     ensure_dirs()
     init_db(DB_PATH)
     logger.info("Questionnaire service ready on %s:%d", HOST, PORT)
+    yield
+
+
+# ── App ───────────────────────────────────────────────────────────────
+app = FastAPI(title="Questionnaire Service", version="0.1.0", lifespan=lifespan)
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 
 # ── Serve SPA ─────────────────────────────────────────────────────────

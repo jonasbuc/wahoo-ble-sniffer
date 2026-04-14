@@ -60,9 +60,10 @@ analysis/
 
 # Ignore UnityCompileCheck build artifacts
 UnityIntegration/UnityCompileCheck/bin/
-WahooBleLoggerCSharp/bin/
-WahooBleLoggerCSharp/obj/
 UnityIntegration/UnityCompileCheck/obj/
+
+# Legacy C# project build artifacts
+WahooBleLoggerCSharp/
 
 # Live Analytics runtime data
 live_analytics/data/*.db

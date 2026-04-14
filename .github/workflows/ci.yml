@@ -11,48 +11,35 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Cache pip
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cache/pip
-            ./.wheelhouse
-          key: ${{ runner.os }}-pip-wheelhouse-${{ hashFiles('**/requirements.txt') }}
-          restore-keys: |
-            ${{ runner.os }}-pip-wheelhouse-
+
       - name: Set up Python 3.11
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - name: Create venv and build wheelhouse
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Install dependencies
         run: |
-          python -m venv .venv
-          . .venv/bin/activate
           python -m pip install --upgrade pip
-          mkdir -p ./.wheelhouse
-          if [ -f requirements.txt ]; then
-            # attempt to build wheels into local wheelhouse (cached across runs)
-            pip wheel --wheel-dir=./.wheelhouse -r requirements.txt || true
-            # prefer installing from local wheelhouse; fall back to index if a wheel is missing
-            pip install --no-index --find-links=./.wheelhouse -r requirements.txt || pip install -r requirements.txt
-          fi
-          # Ensure pyarrow is available for parquet tests; prefer wheelhouse
-          pip install --no-index --find-links=./.wheelhouse pyarrow || pip install pyarrow || true
-      - name: Run tests
-        run: |
-          . .venv/bin/activate
-          .venv/bin/pytest -q
-        env:
-          PYTHONUNBUFFERED: 1
+          pip install -r requirements.txt
+          pip install -e '.[dev]'
+
+      - name: Lint (flake8)
+        run: flake8 . --max-line-length=120
 
       - name: Type check (mypy)
+        run: python -m mypy UnityIntegration --ignore-missing-imports
+
+      - name: Run tests with coverage
         run: |
-          # Activate the venv created earlier and ensure mypy is available
-          . .venv/bin/activate
-          python -m pip install --upgrade pip
-          python -m pip install mypy
-          # Limit type checking to the UnityIntegration package to avoid
-          # failing on large untyped scripts at the repo root.
-          python -m mypy UnityIntegration --ignore-missing-imports
+          coverage run -m pytest -q
+          coverage xml -i
         env:
           PYTHONUNBUFFERED: 1

@@ -1,6 +1,14 @@
 bleak>=0.21.0
 websockets>=12.0
 
+# Live Analytics pipeline
+fastapi>=0.104,<1
+uvicorn[standard]>=0.24,<1
+pydantic>=2,<3
+requests>=2.31,<3
+streamlit>=1.29,<2
+numpy>=1.26,<2
+
 # Dev / CI
 pytest>=7.0
 pytest-asyncio>=0.21.0

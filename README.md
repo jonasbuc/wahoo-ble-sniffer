@@ -52,8 +52,7 @@ Arduino          ──UDP──►  bike_bridge.py           BikeMovementContro
 │
 ├── pyproject.toml                 # Build config, dependencies, pytest settings
 ├── requirements.txt               # pip dependencies (used by CI)
-├── .flake8                        # Linter config
-└── Blu Sniffer.sln                # .NET solution placeholder
+└── .flake8                        # Linter config
 ```
 
 ## Quick Start
@@ -179,10 +178,12 @@ For detailed BLE pairing help on macOS, see [`docs/PAIRING_HELP.md`](docs/PAIRIN
 
 ## CI
 
-Two GitHub Actions workflows run on push to `main`:
+A GitHub Actions workflow (`ci.yml`) runs on push to `main`:
 
-- **`ci.yml`** — Installs dependencies, runs pytest, runs mypy on `UnityIntegration/`
-- **`python-app.yml`** — Editable install, flake8 lint, pytest with coverage
+- Installs all dependencies (BLE bridge + live analytics)
+- Lints with **flake8**
+- Type-checks `UnityIntegration/` with **mypy**
+- Runs the full **pytest** suite with coverage
 
 ## License
 

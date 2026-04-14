@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from contextlib import asynccontextmanager
 
 import uvicorn
 from fastapi import FastAPI
@@ -35,14 +36,11 @@ logging.basicConfig(
 )
 logger = logging.getLogger("live_analytics")
 
-# ── FastAPI app ───────────────────────────────────────────────────────
-app = FastAPI(title="Live Analytics", version="0.1.0")
-app.include_router(sessions_router)
-app.add_api_websocket_route("/ws/dashboard", dashboard_ws)
 
-
-@app.on_event("startup")
-async def _startup() -> None:
+# ── Lifespan ──────────────────────────────────────────────────────────
+@asynccontextmanager
+async def lifespan(app: FastAPI):  # noqa: ARG001
+    """Startup / shutdown logic for the FastAPI application."""
     ensure_dirs()
     init_db(DB_PATH)
     set_raw_writer(RawWriter(SESSIONS_DIR))
@@ -50,6 +48,13 @@ async def _startup() -> None:
 
     # Start the ingest WS server as a background task
     asyncio.create_task(start_ingest_server())
+    yield
+
+
+# ── FastAPI app ───────────────────────────────────────────────────────
+app = FastAPI(title="Live Analytics", version="0.1.0", lifespan=lifespan)
+app.include_router(sessions_router)
+app.add_api_websocket_route("/ws/dashboard", dashboard_ws)
 
 
 def main() -> None:
