@@ -2,8 +2,13 @@
 System health-check functions.
 
 Each check returns a dict with at least:
-  { "ok": bool, "label": str, "detail": str }
+  { "ok": bool, "label": str, "detail": str, "severity": str }
 plus optional extra keys.
+
+**Severity levels** (tri-state):
+  - ``"ok"``    – everything works (green)
+  - ``"warn"``  – not online / not connected *yet* (yellow)
+  - ``"error"`` – real failure: corruption, crash, timeout (red)
 """
 
 from __future__ import annotations
@@ -37,7 +42,8 @@ def check_quest_headset() -> dict[str, Any]:
     # Check if adb is available
     adb = shutil.which("adb")
     if not adb:
-        return {"ok": False, "label": label, "detail": "ADB ikke fundet i PATH. Installér Android SDK Platform Tools.",
+        return {"ok": False, "severity": "warn", "label": label,
+                "detail": "ADB ikke fundet i PATH. Installér Android SDK Platform Tools.",
                 "hint": "brew install --cask android-platform-tools"}
 
     try:
@@ -66,25 +72,25 @@ def check_quest_headset() -> dict[str, Any]:
             serial = connected[0]["serial"]
             # Try to get model name
             model = _adb_get_model(adb, serial)
-            return {"ok": True, "label": label,
+            return {"ok": True, "severity": "ok", "label": label,
                     "detail": f"Forbundet: {model or serial}",
                     "serial": serial, "model": model, "devices": devices}
 
         if devices:
             # Devices present but not authorized
             unauthorized = [d for d in devices if d["status"] != "device"]
-            return {"ok": False, "label": label,
+            return {"ok": False, "severity": "error", "label": label,
                     "detail": f"Headset fundet men status: {unauthorized[0]['status']}. Godkend forbindelsen på headsettet.",
                     "devices": devices}
 
-        return {"ok": False, "label": label,
+        return {"ok": False, "severity": "warn", "label": label,
                 "detail": "Ingen headset fundet. Tænd Quest 3 og tilslut USB.",
                 "devices": []}
 
     except subprocess.TimeoutExpired:
-        return {"ok": False, "label": label, "detail": "ADB timeout – prøv igen"}
+        return {"ok": False, "severity": "error", "label": label, "detail": "ADB timeout – prøv igen"}
     except Exception as e:
-        return {"ok": False, "label": label, "detail": f"ADB fejl: {e}"}
+        return {"ok": False, "severity": "error", "label": label, "detail": f"ADB fejl: {e}"}
 
 
 def _adb_get_model(adb: str, serial: str) -> str | None:
@@ -109,7 +115,7 @@ def check_database(db_path: Path, db_name: str = "Database") -> dict[str, Any]:
     label = f"Database: {db_name}"
 
     if not db_path.exists():
-        return {"ok": False, "label": label,
+        return {"ok": False, "severity": "warn", "label": label,
                 "detail": f"Fil ikke fundet: {db_path}",
                 "path": str(db_path)}
 
@@ -124,18 +130,18 @@ def check_database(db_path: Path, db_name: str = "Database") -> dict[str, Any]:
         conn.close()
 
         size_kb = db_path.stat().st_size / 1024
-        return {"ok": True, "label": label,
+        return {"ok": True, "severity": "ok", "label": label,
                 "detail": f"OK – {len(table_names)} tabeller, {size_kb:.1f} KB",
                 "path": str(db_path),
                 "tables": table_names,
                 "size_kb": round(size_kb, 1)}
 
     except sqlite3.Error as e:
-        return {"ok": False, "label": label,
+        return {"ok": False, "severity": "error", "label": label,
                 "detail": f"SQLite fejl: {e}",
                 "path": str(db_path)}
     except Exception as e:
-        return {"ok": False, "label": label,
+        return {"ok": False, "severity": "error", "label": label,
                 "detail": f"Fejl: {e}",
                 "path": str(db_path)}
 
@@ -173,15 +179,15 @@ def check_bridge_connection(ws_url: str = "ws://localhost:8765") -> dict[str, An
         except Exception:
             detail += " (handshake fejlede, men port er åben)"
 
-        return {"ok": True, "label": label, "detail": detail,
+        return {"ok": True, "severity": "ok", "label": label, "detail": detail,
                 "url": ws_url, "protocol": protocol}
 
     except (socket.timeout, ConnectionRefusedError, OSError):
-        return {"ok": False, "label": label,
+        return {"ok": False, "severity": "warn", "label": label,
                 "detail": f"Ingen forbindelse til bridge på {ws_url}. Start bike_bridge.py først.",
                 "url": ws_url}
     except Exception as e:
-        return {"ok": False, "label": label,
+        return {"ok": False, "severity": "error", "label": label,
                 "detail": f"Fejl: {e}", "url": ws_url}
 
 
@@ -228,7 +234,7 @@ def check_vrsf_logs(
         expected_files = ["headpose.vrsf", "bike.vrsf", "hr.vrsf", "events.vrsf", "manifest.json"]
 
     if not log_base.exists():
-        return {"ok": False, "label": label,
+        return {"ok": False, "severity": "warn", "label": label,
                 "detail": f"Logmappe ikke fundet: {log_base}",
                 "path": str(log_base), "sessions": []}
 
@@ -240,7 +246,7 @@ def check_vrsf_logs(
     )
 
     if not session_dirs:
-        return {"ok": False, "label": label,
+        return {"ok": False, "severity": "warn", "label": label,
                 "detail": "Ingen session-mapper fundet. Kør en simulering først.",
                 "path": str(log_base), "sessions": []}
 
@@ -277,14 +283,17 @@ def check_vrsf_logs(
     if latest["complete"] and latest["finished"]:
         detail = f"✓ Seneste session komplet: {latest['dir']} ({latest['total_kb']} KB)"
         ok = True
+        severity = "ok"
     elif latest["complete"]:
         detail = f"Session kører: {latest['dir']} ({len(latest['files_present'])} filer)"
         ok = True
+        severity = "ok"
     else:
         detail = f"Seneste session ufuldstændig: mangler {', '.join(latest['missing_files'])}"
         ok = False
+        severity = "error"
 
-    return {"ok": ok, "label": label, "detail": detail,
+    return {"ok": ok, "severity": severity, "label": label, "detail": detail,
             "path": str(log_base), "sessions": sessions,
             "total_sessions": len(session_dirs)}
 
@@ -466,13 +475,13 @@ def check_service_http(url: str, name: str = "Service") -> dict[str, Any]:
             with urllib.request.urlopen(req, timeout=2) as resp:
                 status = resp.status
                 body = resp.read().decode("utf-8", errors="ignore")[:200]
-                return {"ok": True, "label": label,
+                return {"ok": True, "severity": "ok", "label": label,
                         "detail": f"OK – HTTP {status} på {url}{path}",
                         "url": url, "status": status}
         except Exception:
             continue
 
-    return {"ok": False, "label": label,
+    return {"ok": False, "severity": "warn", "label": label,
             "detail": f"Ingen svar fra {url}. Start serveren først.",
             "url": url}
 
@@ -525,11 +534,15 @@ def run_all_checks(
 
     elapsed = time.time() - t0
     checks_only = {k: v for k, v in results.items() if isinstance(v, dict) and "ok" in v}
-    all_ok = all(r["ok"] for r in checks_only.values())
+    passed  = sum(1 for r in checks_only.values() if r.get("ok"))
+    warned  = sum(1 for r in checks_only.values() if not r.get("ok") and r.get("severity") == "warn")
+    failed  = sum(1 for r in checks_only.values() if not r.get("ok") and r.get("severity") == "error")
+    all_ok  = all(r["ok"] for r in checks_only.values())
     results["_summary"] = {
         "all_ok": all_ok,
-        "passed": sum(1 for r in checks_only.values() if r.get("ok")),
-        "failed": sum(1 for r in checks_only.values() if not r.get("ok")),
+        "passed": passed,
+        "warned": warned,
+        "failed": failed,
         "total": len(checks_only),
         "elapsed_s": round(elapsed, 3),
         "timestamp": time.time(),

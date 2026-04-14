@@ -82,6 +82,7 @@ class TestCheckDatabase:
     def test_valid_db(self, sample_db: Path) -> None:
         result = check_database(sample_db, "Test DB")
         assert result["ok"] is True
+        assert result["severity"] == "ok"
         assert "Test DB" in result["label"]
         assert len(result["tables"]) == 2
         assert result["size_kb"] > 0
@@ -89,6 +90,7 @@ class TestCheckDatabase:
     def test_missing_db(self, tmp_path: Path) -> None:
         result = check_database(tmp_path / "does_not_exist.db", "Missing")
         assert result["ok"] is False
+        assert result["severity"] == "warn"
         assert "ikke fundet" in result["detail"]
 
     def test_corrupt_db(self, tmp_path: Path) -> None:
@@ -96,6 +98,7 @@ class TestCheckDatabase:
         bad_db.write_bytes(b"not a database file at all!")
         result = check_database(bad_db, "Corrupt")
         assert result["ok"] is False
+        assert result["severity"] == "error"
         assert "fejl" in result["detail"].lower() or "sqlite" in result["detail"].lower()
 
 
@@ -108,6 +111,7 @@ class TestCheckQuestHeadset:
         with patch("shutil.which", return_value=None):
             result = check_quest_headset()
         assert result["ok"] is False
+        assert result["severity"] == "warn"
         assert "ADB" in result["detail"]
 
     def test_device_connected(self) -> None:
@@ -126,6 +130,7 @@ class TestCheckQuestHeadset:
              patch("subprocess.run", side_effect=fake_run):
             result = check_quest_headset()
         assert result["ok"] is True
+        assert result["severity"] == "ok"
         assert result["model"] == "Quest 3"
         assert result["serial"] == "1WMHH1234567"
 
@@ -141,6 +146,7 @@ class TestCheckQuestHeadset:
              patch("subprocess.run", side_effect=fake_run):
             result = check_quest_headset()
         assert result["ok"] is False
+        assert result["severity"] == "warn"
         assert "Ingen headset" in result["detail"]
 
     def test_unauthorized_device(self) -> None:
@@ -155,6 +161,7 @@ class TestCheckQuestHeadset:
              patch("subprocess.run", side_effect=fake_run):
             result = check_quest_headset()
         assert result["ok"] is False
+        assert result["severity"] == "error"
         assert "unauthorized" in result["detail"]
 
     def test_adb_timeout(self) -> None:
@@ -163,6 +170,7 @@ class TestCheckQuestHeadset:
              patch("subprocess.run", side_effect=subprocess.TimeoutExpired("adb", 5)):
             result = check_quest_headset()
         assert result["ok"] is False
+        assert result["severity"] == "error"
         assert "timeout" in result["detail"].lower()
 
 
@@ -174,6 +182,7 @@ class TestCheckBridgeConnection:
     def test_connection_refused(self) -> None:
         result = check_bridge_connection("ws://127.0.0.1:19999")
         assert result["ok"] is False
+        assert result["severity"] == "warn"
         assert "Ingen forbindelse" in result["detail"]
 
     def test_port_open_mock(self) -> None:
@@ -182,6 +191,7 @@ class TestCheckBridgeConnection:
              patch("live_analytics.system_check.checks._ws_probe", return_value=None):
             result = check_bridge_connection("ws://localhost:8765")
         assert result["ok"] is True
+        assert result["severity"] == "ok"
         assert "Bridge" in result["detail"]
 
     def test_port_open_with_protocol(self) -> None:
@@ -190,6 +200,7 @@ class TestCheckBridgeConnection:
              patch("live_analytics.system_check.checks._ws_probe", return_value="binary"):
             result = check_bridge_connection("ws://localhost:8765")
         assert result["ok"] is True
+        assert result["severity"] == "ok"
         assert result["protocol"] == "binary"
 
 
@@ -202,12 +213,14 @@ class TestCheckVrsfLogs:
         expected = ["headpose.vrsf", "bike.vrsf", "hr.vrsf", "events.vrsf", "manifest.json"]
         result = check_vrsf_logs(session_dirs, expected)
         assert result["ok"] is True
+        assert result["severity"] == "ok"
         assert result["total_sessions"] == 2
         assert len(result["sessions"]) == 2
 
     def test_no_log_dir(self, tmp_path: Path) -> None:
         result = check_vrsf_logs(tmp_path / "nonexistent")
         assert result["ok"] is False
+        assert result["severity"] == "warn"
         assert "ikke fundet" in result["detail"]
 
     def test_empty_log_dir(self, tmp_path: Path) -> None:
@@ -215,6 +228,7 @@ class TestCheckVrsfLogs:
         logs.mkdir()
         result = check_vrsf_logs(logs)
         assert result["ok"] is False
+        assert result["severity"] == "warn"
         assert "Ingen session" in result["detail"]
 
     def test_incomplete_latest(self, tmp_path: Path) -> None:
@@ -228,6 +242,7 @@ class TestCheckVrsfLogs:
         expected = ["headpose.vrsf", "bike.vrsf", "hr.vrsf", "events.vrsf", "manifest.json"]
         result = check_vrsf_logs(logs, expected)
         assert result["ok"] is False
+        assert result["severity"] == "error"
         assert "ufuldstændig" in result["detail"].lower()
 
     def test_session_metadata(self, session_dirs: Path) -> None:
@@ -245,6 +260,7 @@ class TestCheckServiceHttp:
     def test_service_unreachable(self) -> None:
         result = check_service_http("http://127.0.0.1:19999", "Fake")
         assert result["ok"] is False
+        assert result["severity"] == "warn"
         assert "Ingen svar" in result["detail"]
 
     def test_service_reachable_mock(self) -> None:
@@ -257,6 +273,7 @@ class TestCheckServiceHttp:
         with patch("urllib.request.urlopen", return_value=fake_resp):
             result = check_service_http("http://localhost:8080", "Analytics")
         assert result["ok"] is True
+        assert result["severity"] == "ok"
         assert result["status"] == 200
 
 
@@ -284,9 +301,15 @@ class TestRunAllChecks:
         assert "_summary" in result
         assert isinstance(result["_summary"]["total"], int)
         assert result["_summary"]["total"] == 7
+        assert "warned" in result["_summary"]
         assert "quest_headset" in result
         assert "analytics_db" in result
         assert "bridge_connection" in result
+        # All non-ok checks here should be warnings (not started), not errors
+        for key in ["quest_headset", "bridge_connection", "analytics_api",
+                     "questionnaire_api", "vrsf_logs"]:
+            if not result[key]["ok"]:
+                assert result[key]["severity"] == "warn", f"{key} should be warn, not error"
 
     def test_summary_counts(self, sample_db: Path, session_dirs: Path) -> None:
         with patch("shutil.which", return_value=None):
@@ -304,6 +327,9 @@ class TestRunAllChecks:
         assert result["questionnaire_db"]["ok"] is True
         assert result["vrsf_logs"]["ok"] is True
         assert s["passed"] >= 3
+        assert s["warned"] >= 0
+        assert s["failed"] >= 0
+        assert s["passed"] + s["warned"] + s["failed"] == s["total"]
         assert s["elapsed_s"] >= 0
 
 
