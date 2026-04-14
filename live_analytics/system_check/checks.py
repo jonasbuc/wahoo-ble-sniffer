@@ -290,6 +290,168 @@ def check_vrsf_logs(
 
 
 # ═══════════════════════════════════════════════════════════════════════
+#  4b. Verify a specific session by ID
+# ═══════════════════════════════════════════════════════════════════════
+
+def check_session_by_id(
+    session_id: str,
+    log_base: Path,
+    expected_files: list[str] | None = None,
+) -> dict[str, Any]:
+    """Verify that a **specific** session has the correct log files.
+
+    The *session_id* is matched against:
+      1. Directory name  (``session_{session_id}``)
+      2. ``manifest.json`` → ``session_id`` field  (numeric or string)
+      3. ``manifest.json`` → ``display_id`` field
+      4. ``sessions_history.ndjson`` → ``display_id`` or ``session_id``
+
+    Returns a detailed status dict for that single session.
+    """
+    label = f"Session: {session_id}"
+
+    if expected_files is None:
+        expected_files = [
+            "headpose.vrsf", "bike.vrsf", "hr.vrsf",
+            "events.vrsf", "manifest.json",
+        ]
+
+    if not log_base.exists():
+        return {
+            "ok": False, "label": label,
+            "detail": f"Logmappe ikke fundet: {log_base}",
+            "session_id": session_id, "found": False,
+        }
+
+    # ── 1. Try direct directory match ─────────────────────────────────
+    direct = log_base / f"session_{session_id}"
+    if direct.is_dir():
+        return _verify_session_dir(direct, session_id, expected_files, label)
+
+    # ── 2. Scan manifest.json in every session_* dir ──────────────────
+    session_dirs = [
+        d for d in log_base.iterdir()
+        if d.is_dir() and d.name.startswith("session_")
+    ]
+    for sd in session_dirs:
+        manifest_path = sd / "manifest.json"
+        if not manifest_path.exists():
+            continue
+        try:
+            with open(manifest_path) as f:
+                manifest = json.loads(f.read())
+            m_sid = manifest.get("session_id")
+            m_did = manifest.get("display_id")
+            # Match against session_id (could be numeric string) or display_id
+            if str(m_sid) == session_id or m_did == session_id:
+                return _verify_session_dir(sd, session_id, expected_files, label)
+        except Exception:
+            continue
+
+    # ── 3. Check sessions_history.ndjson ──────────────────────────────
+    history_path = log_base / "sessions_history.ndjson"
+    history_match: dict[str, Any] | None = None
+    if history_path.exists():
+        try:
+            with open(history_path) as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    entry = json.loads(line)
+                    e_sid = entry.get("session_id")
+                    e_did = entry.get("display_id")
+                    if str(e_sid) == session_id or e_did == session_id:
+                        history_match = entry
+                        # Try the dir recorded in history
+                        hist_dir_name = entry.get("dir")
+                        if hist_dir_name:
+                            candidate = Path(hist_dir_name)
+                            if not candidate.is_absolute():
+                                candidate = log_base / candidate
+                            if candidate.is_dir():
+                                return _verify_session_dir(
+                                    candidate, session_id, expected_files, label,
+                                    history_entry=history_match,
+                                )
+        except Exception:
+            pass
+
+    # ── Not found ─────────────────────────────────────────────────────
+    detail = f"Session '{session_id}' ikke fundet."
+    if history_match:
+        detail += f" Fundet i historik men mappe mangler: {history_match.get('dir', '?')}"
+    return {
+        "ok": False, "label": label, "detail": detail,
+        "session_id": session_id, "found": False,
+        "history_entry": history_match,
+    }
+
+
+def _verify_session_dir(
+    session_dir: Path,
+    session_id: str,
+    expected_files: list[str],
+    label: str,
+    history_entry: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Check that a found session directory contains all expected files."""
+    files_present = [f.name for f in session_dir.iterdir() if f.is_file()]
+    missing = [f for f in expected_files if f not in files_present]
+    has_end = "manifest_end.json" in files_present
+    total_bytes = sum(f.stat().st_size for f in session_dir.iterdir() if f.is_file())
+
+    # Read manifest for extra info
+    manifest_info: dict[str, Any] = {}
+    manifest_path = session_dir / "manifest.json"
+    if manifest_path.exists():
+        try:
+            with open(manifest_path) as f:
+                manifest_info = json.loads(f.read())
+        except Exception:
+            pass
+
+    # Check that each .vrsf file is non-empty
+    empty_files = [
+        f for f in expected_files
+        if f.endswith(".vrsf") and f in files_present
+        and (session_dir / f).stat().st_size == 0
+    ]
+
+    complete = len(missing) == 0 and len(empty_files) == 0
+    ok = complete
+
+    if complete and has_end:
+        detail = f"✓ Session '{session_id}' komplet og afsluttet ({len(files_present)} filer, {round(total_bytes/1024, 1)} KB)"
+    elif complete:
+        detail = f"Session '{session_id}' har alle filer men er ikke afsluttet (mangler manifest_end.json)"
+    elif missing:
+        detail = f"Session '{session_id}' mangler: {', '.join(missing)}"
+        if empty_files:
+            detail += f" · Tomme filer: {', '.join(empty_files)}"
+    else:
+        detail = f"Session '{session_id}' har tomme filer: {', '.join(empty_files)}"
+
+    return {
+        "ok": ok,
+        "label": label,
+        "detail": detail,
+        "session_id": session_id,
+        "found": True,
+        "dir": session_dir.name,
+        "path": str(session_dir),
+        "files_present": files_present,
+        "missing_files": missing,
+        "empty_files": empty_files,
+        "complete": complete,
+        "finished": has_end,
+        "total_kb": round(total_bytes / 1024, 1),
+        "manifest": manifest_info,
+        "history_entry": history_entry,
+    }
+
+
+# ═══════════════════════════════════════════════════════════════════════
 #  5. Analytics service
 # ═══════════════════════════════════════════════════════════════════════
 

@@ -50,6 +50,25 @@ header h1 span{color:#38bdf8}
 .tag-ok{background:#166534;color:#bbf7d0}
 .tag-fail{background:#7f1d1d;color:#fca5a5}
 
+/* ── Session lookup ─────────────────────────────────────── */
+.session-lookup{margin-top:1.5rem;background:#1e293b;border-radius:.75rem;padding:1.15rem;border:1px solid #334155}
+.session-lookup h2{font-size:1.1rem;font-weight:600;margin-bottom:.75rem}
+.session-lookup .input-row{display:flex;gap:.6rem;align-items:center;flex-wrap:wrap}
+.session-lookup input[type=text]{flex:1;min-width:160px;padding:.5rem .85rem;border:1px solid #475569;border-radius:.5rem;background:#0f172a;color:#e2e8f0;font-size:.9rem;font-family:inherit}
+.session-lookup input[type=text]::placeholder{color:#64748b}
+.session-lookup input[type=text]:focus{outline:none;border-color:#38bdf8}
+#btn-session-check{padding:.5rem 1.25rem;border:none;border-radius:.5rem;background:#8b5cf6;color:#fff;font-weight:600;cursor:pointer;font-size:.9rem;transition:background .15s;white-space:nowrap}
+#btn-session-check:hover{background:#7c3aed}
+#btn-session-check:disabled{opacity:.5;cursor:wait}
+.session-result{margin-top:.85rem;display:none}
+.session-result.visible{display:block}
+.session-result .result-card{background:#0f172a;border-radius:.6rem;padding:.85rem 1rem;border:1px solid #334155}
+.session-result .result-card.ok{border-color:#22c55e}
+.session-result .result-card.fail{border-color:#ef4444}
+.session-result .result-head{display:flex;align-items:center;gap:.5rem;margin-bottom:.5rem;font-weight:600;font-size:.95rem}
+.session-result .result-body{font-size:.82rem;color:#94a3b8;line-height:1.6}
+.session-result .result-body .row{margin-top:.25rem}
+
 /* ── Sessions table ────────────────────────────────────── */
 .sessions{margin-top:1.5rem}
 .sessions h2{font-size:1.15rem;margin-bottom:.75rem;font-weight:600}
@@ -81,6 +100,17 @@ footer{margin-top:2rem;text-align:center;font-size:.78rem;color:#475569}
 
   <div class="summary" id="summary"></div>
   <div class="cards" id="cards"></div>
+
+  <!-- Session ID lookup -->
+  <div class="session-lookup">
+    <h2>🔎 Verificér session via ID</h2>
+    <div class="input-row">
+      <input type="text" id="session-id-input" placeholder="Indtast session-ID eller display-ID (f.eks. SUBJ-001 eller 1713000000000)">
+      <button id="btn-session-check">Tjek session</button>
+    </div>
+    <div class="session-result" id="session-result"></div>
+  </div>
+
   <div class="sessions" id="sessions-section" style="display:none">
     <h2>📁 Seneste VRS-sessioner</h2>
     <div class="session-list" id="session-list"></div>
@@ -211,6 +241,70 @@ function toggleAuto() {
 
 $btnRefresh.addEventListener("click", runChecks);
 $chkAuto.addEventListener("change", toggleAuto);
+
+/* ── Session ID lookup ─────────────────────────────────── */
+const $sessionInput  = document.getElementById("session-id-input");
+const $btnSessionChk = document.getElementById("btn-session-check");
+const $sessionResult = document.getElementById("session-result");
+
+async function checkSession() {
+  const sid = $sessionInput.value.trim();
+  if (!sid) { $sessionResult.className = "session-result"; return; }
+
+  $btnSessionChk.disabled = true;
+  $sessionResult.className = "session-result visible";
+  $sessionResult.innerHTML = `<div class="result-card loading" style="border-color:#3b82f6"><div class="result-head"><span class="spinner"></span> Checker session '${sid}'…</div></div>`;
+
+  try {
+    const resp = await fetch(BASE + "/api/check/session/" + encodeURIComponent(sid));
+    if (!resp.ok) throw new Error("HTTP " + resp.status);
+    const d = await resp.json();
+
+    const s = d.ok ? "ok" : "fail";
+    let body = `<div class="row">${d.detail || "—"}</div>`;
+
+    if (d.found) {
+      body += `<div class="row"><b>Mappe:</b> ${d.dir}</div>`;
+      body += `<div class="row"><b>Størrelse:</b> ${d.total_kb} KB</div>`;
+      body += `<div class="row"><b>Afsluttet:</b> ${d.finished ? "✅ Ja" : "⏳ Nej"}</div>`;
+
+      /* File tags */
+      const fileTags = (d.files_present || []).map(f => {
+        const isMissing = (d.missing_files || []).includes(f);
+        const isEmpty = (d.empty_files || []).includes(f);
+        if (isEmpty) return `<span class="tag tag-fail">${f} (tom)</span>`;
+        return `<span class="tag tag-ok">${f}</span>`;
+      }).join("");
+      const missingTags = (d.missing_files || []).map(f => `<span class="tag tag-fail">✗ ${f}</span>`).join("");
+      body += `<div class="row" style="margin-top:.4rem">${fileTags}${missingTags}</div>`;
+
+      /* Manifest info */
+      if (d.manifest && d.manifest.session_id) {
+        body += `<div class="row"><b>Session ID (numerisk):</b> ${d.manifest.session_id}</div>`;
+      }
+      if (d.manifest && d.manifest.display_id) {
+        body += `<div class="row"><b>Display ID:</b> ${d.manifest.display_id}</div>`;
+      }
+      if (d.manifest && d.manifest.started_unix_ms) {
+        body += `<div class="row"><b>Startet:</b> ${new Date(d.manifest.started_unix_ms).toLocaleString("da-DK")}</div>`;
+      }
+
+      /* History info */
+      if (d.history_entry && d.history_entry.subject) {
+        body += `<div class="row"><b>Forsøgsperson:</b> ${d.history_entry.subject}</div>`;
+      }
+    }
+
+    $sessionResult.innerHTML = `<div class="result-card ${s}"><div class="result-head">${d.ok ? "✅" : "❌"} ${d.label}</div><div class="result-body">${body}</div></div>`;
+  } catch (err) {
+    $sessionResult.innerHTML = `<div class="result-card fail"><div class="result-head">❌ Fejl</div><div class="result-body">${err.message}</div></div>`;
+  } finally {
+    $btnSessionChk.disabled = false;
+  }
+}
+
+$btnSessionChk.addEventListener("click", checkSession);
+$sessionInput.addEventListener("keydown", e => { if (e.key === "Enter") checkSession(); });
 
 // Initial run
 runChecks();

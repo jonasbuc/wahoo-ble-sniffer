@@ -30,6 +30,7 @@ from live_analytics.system_check.checks import (
     check_database,
     check_bridge_connection,
     check_vrsf_logs,
+    check_session_by_id,
     check_service_http,
     run_all_checks,
 )
@@ -100,6 +101,12 @@ async def api_check_questionnaire_api() -> dict:
 @app.get("/api/check/vrsf-logs")
 async def api_check_vrsf_logs() -> dict:
     return check_vrsf_logs(VRS_LOG_BASE, EXPECTED_VRSF_FILES)
+
+
+@app.get("/api/check/session/{session_id}")
+async def api_check_session(session_id: str) -> dict:
+    """Verify a specific session by its ID (display_id or numeric session_id)."""
+    return check_session_by_id(session_id, VRS_LOG_BASE, EXPECTED_VRSF_FILES)
 
 
 # ── Run all checks at once ────────────────────────────────────────────

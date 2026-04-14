@@ -17,6 +17,7 @@ from live_analytics.system_check.checks import (
     check_database,
     check_quest_headset,
     check_service_http,
+    check_session_by_id,
     check_vrsf_logs,
     run_all_checks,
 )
@@ -355,3 +356,164 @@ class TestAppEndpoints:
         assert resp.status_code == 200
         data = resp.json()
         assert "ok" in data
+
+    def test_check_session_endpoint(self) -> None:
+        resp = self.client.get("/api/check/session/NONEXISTENT")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "ok" in data
+        assert data["found"] is False
+
+
+# ═══════════════════════════════════════════════════════════════════════
+#  check_session_by_id
+# ═══════════════════════════════════════════════════════════════════════
+
+@pytest.fixture()
+def rich_session_dirs(tmp_path: Path) -> Path:
+    """Logs/ with sessions using display_id naming + sessions_history.ndjson."""
+    logs = tmp_path / "Logs"
+    logs.mkdir()
+
+    # Session with display_id "SUBJ-001"
+    s1 = logs / "session_SUBJ-001"
+    s1.mkdir()
+    for fname in ["headpose.vrsf", "bike.vrsf", "hr.vrsf", "events.vrsf"]:
+        (s1 / fname).write_bytes(b"\x00" * 64)
+    manifest1 = {
+        "session_id": 1713000000000,
+        "display_id": "SUBJ-001",
+        "started_unix_ms": 1713000000000,
+        "files": ["headpose.vrsf", "bike.vrsf", "hr.vrsf", "events.vrsf"],
+    }
+    (s1 / "manifest.json").write_text(json.dumps(manifest1))
+    (s1 / "manifest_end.json").write_text(json.dumps({"ended": True}))
+
+    # Session with numeric-only id, no display_id
+    s2 = logs / "session_1713000060000"
+    s2.mkdir()
+    for fname in ["headpose.vrsf", "bike.vrsf"]:
+        (s2 / fname).write_bytes(b"\x00" * 32)
+    manifest2 = {
+        "session_id": 1713000060000,
+        "started_unix_ms": 1713000060000,
+        "files": ["headpose.vrsf", "bike.vrsf"],
+    }
+    (s2 / "manifest.json").write_text(json.dumps(manifest2))
+
+    # Session with empty .vrsf file
+    s3 = logs / "session_SUBJ-002"
+    s3.mkdir()
+    for fname in ["headpose.vrsf", "bike.vrsf", "hr.vrsf", "events.vrsf"]:
+        (s3 / fname).write_bytes(b"\x00" * 64 if fname != "hr.vrsf" else b"")
+    manifest3 = {
+        "session_id": 1713000120000,
+        "display_id": "SUBJ-002",
+        "started_unix_ms": 1713000120000,
+    }
+    (s3 / "manifest.json").write_text(json.dumps(manifest3))
+
+    # sessions_history.ndjson
+    history = [
+        {"display_id": "SUBJ-001", "session_id": 1713000000000, "subject": "Jonas",
+         "started_unix_ms": 1713000000000, "ended_unix_ms": 1713000050000,
+         "dir": "session_SUBJ-001"},
+        {"display_id": "SUBJ-002", "session_id": 1713000120000, "subject": "Alice",
+         "started_unix_ms": 1713000120000, "ended_unix_ms": 0,
+         "dir": "session_SUBJ-002"},
+    ]
+    ndjson = "\n".join(json.dumps(e) for e in history) + "\n"
+    (logs / "sessions_history.ndjson").write_text(ndjson)
+
+    return logs
+
+
+class TestCheckSessionById:
+    def test_find_by_dir_name(self, rich_session_dirs: Path) -> None:
+        """Lookup by the display_id that's part of the directory name."""
+        result = check_session_by_id("SUBJ-001", rich_session_dirs)
+        assert result["ok"] is True
+        assert result["found"] is True
+        assert result["complete"] is True
+        assert result["finished"] is True
+        assert result["dir"] == "session_SUBJ-001"
+
+    def test_find_by_numeric_session_id(self, rich_session_dirs: Path) -> None:
+        """Lookup by the numeric session_id stored in manifest.json."""
+        result = check_session_by_id("1713000000000", rich_session_dirs)
+        assert result["ok"] is True
+        assert result["found"] is True
+        assert result["manifest"]["session_id"] == 1713000000000
+
+    def test_find_by_numeric_dir(self, rich_session_dirs: Path) -> None:
+        """Lookup for a session whose dir IS the numeric id."""
+        result = check_session_by_id("1713000060000", rich_session_dirs)
+        assert result["found"] is True
+        assert result["ok"] is False  # missing hr.vrsf and events.vrsf
+        assert len(result["missing_files"]) > 0
+
+    def test_not_found(self, rich_session_dirs: Path) -> None:
+        result = check_session_by_id("NONEXISTENT", rich_session_dirs)
+        assert result["ok"] is False
+        assert result["found"] is False
+
+    def test_no_log_dir(self, tmp_path: Path) -> None:
+        result = check_session_by_id("123", tmp_path / "nope")
+        assert result["ok"] is False
+        assert result["found"] is False
+
+    def test_empty_vrsf_detected(self, rich_session_dirs: Path) -> None:
+        """Session SUBJ-002 has an empty hr.vrsf — should be flagged."""
+        result = check_session_by_id("SUBJ-002", rich_session_dirs)
+        assert result["found"] is True
+        assert result["ok"] is False
+        assert "hr.vrsf" in result["empty_files"]
+
+    def test_history_subject(self, rich_session_dirs: Path) -> None:
+        """When found via history, subject info should be available."""
+        # SUBJ-001 is found directly by dir, but SUBJ-002 also has history
+        result = check_session_by_id("SUBJ-001", rich_session_dirs)
+        # Direct match – history_entry is None (found by dir)
+        assert result["found"] is True
+
+    def test_find_via_manifest_display_id(self, rich_session_dirs: Path) -> None:
+        """Rename dir so it doesn't match, forcing manifest scan."""
+        # Create a session with a non-matching dir name
+        logs = rich_session_dirs
+        s = logs / "session_abc123"
+        s.mkdir()
+        for fname in ["headpose.vrsf", "bike.vrsf", "hr.vrsf", "events.vrsf"]:
+            (s / fname).write_bytes(b"\x00" * 64)
+        manifest = {
+            "session_id": 9999999999999,
+            "display_id": "PILOT-X",
+            "started_unix_ms": 1713000200000,
+        }
+        (s / "manifest.json").write_text(json.dumps(manifest))
+
+        # Look up by display_id "PILOT-X" – won't match dir name, must scan manifests
+        result = check_session_by_id("PILOT-X", logs)
+        assert result["found"] is True
+        assert result["dir"] == "session_abc123"
+
+    def test_find_via_history_ndjson(self, tmp_path: Path) -> None:
+        """Session dir exists but has no manifest; found via history.ndjson dir field."""
+        logs = tmp_path / "Logs"
+        logs.mkdir()
+        s = logs / "session_HIST-01"
+        s.mkdir()
+        for fname in ["headpose.vrsf", "bike.vrsf", "hr.vrsf", "events.vrsf", "manifest.json"]:
+            (s / fname).write_bytes(b"\x00" * 32)
+
+        history = [
+            {"display_id": "HIST-01", "session_id": 5555555555555, "subject": "Bob",
+             "started_unix_ms": 5555555555555, "ended_unix_ms": 0,
+             "dir": "session_HIST-01"},
+        ]
+        (logs / "sessions_history.ndjson").write_text(json.dumps(history[0]) + "\n")
+
+        # Look up by numeric id "5555555555555" — not in dir name, not in manifest (binary),
+        # but present in history.ndjson
+        result = check_session_by_id("5555555555555", logs)
+        assert result["found"] is True
+        assert result["history_entry"]["subject"] == "Bob"
