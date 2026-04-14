@@ -12,5 +12,6 @@ pyarrow>=10.0.0
 
 # Coverage tool used by CI
 coverage>=7.2.0
-sqlalchemy
-pandas
+
+# Used by live_analytics dashboard
+pandas>=2.0

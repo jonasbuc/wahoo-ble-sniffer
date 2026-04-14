@@ -6,7 +6,7 @@ This repository contains a **Unity VR cycling simulator** with BLE (Bluetooth Lo
 
 ## Key principles
 
-1. **Additive changes only** – live analytics code lives in `live_analytics/` and `Assets/Scripts/LiveAnalytics/`. Do not modify existing gameplay, VRS logging, or BLE bridge code unless strictly required.
+1. **Separate concerns** – live analytics code lives in `live_analytics/` and `Assets/Scripts/LiveAnalytics/`. BLE bridge code lives in `UnityIntegration/python/`. Do not mix the two unless strictly required.
 2. **Local-first architecture** – everything must run on a single Windows machine without cloud dependencies. SQLite is the primary store; JSONL files provide raw durability.
 3. **Preserve readability** – prefer small, well-documented modules over monoliths. Use docstrings, type hints, and clear naming.
 4. **Simple deployment** – PowerShell scripts in `live_analytics/scripts/` are the canonical way to start services. No Docker or container orchestration is required for local use.
@@ -30,11 +30,15 @@ This repository contains a **Unity VR cycling simulator** with BLE (Bluetooth Lo
 | FastAPI HTTP | 8080 |
 | Unity ingest WebSocket | 8765 |
 | Streamlit dashboard | 8501 |
+| Questionnaire API | 8090 |
+| System Check GUI | 8095 |
 
 ## Folder conventions
 
 - `live_analytics/app/` – FastAPI analytics server
 - `live_analytics/dashboard/` – Streamlit dashboard
+- `live_analytics/questionnaire/` – Pre/post-session questionnaire server
+- `live_analytics/system_check/` – System health-check GUI
 - `live_analytics/tests/` – pytest tests for analytics modules
 - `live_analytics/scripts/` – PowerShell launch scripts
 - `live_analytics/data/` – runtime data (SQLite DB, session JSONL)

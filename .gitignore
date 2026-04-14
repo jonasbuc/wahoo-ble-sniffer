@@ -52,6 +52,12 @@ wahoo_bridge_capture_*/
 .mypy_cache/
 .pytest_cache/
 
+# Generated collector output (runtime artifacts)
+collector_out/
+
+# Analysis artifacts (removed)
+analysis/
+
 # Ignore UnityCompileCheck build artifacts
 UnityIntegration/UnityCompileCheck/bin/
 WahooBleLoggerCSharp/bin/

@@ -1,6 +1,6 @@
 # Blu Sniffer — Bike VR Data Bridge
 
-Stream live bike-sensor data into Unity VR using a Wahoo TICKR FIT heart-rate monitor (BLE) and an Arduino for speed / cadence / steering / brake signals. Data is relayed over WebSocket, logged to SQLite/Parquet, and visualised in post-session analysis notebooks.
+Stream live bike-sensor data into Unity VR using a Wahoo TICKR FIT heart-rate monitor (BLE) and an Arduino for speed / cadence / steering / brake signals. Data is relayed over WebSocket, logged to SQLite/Parquet, and processed by the live analytics pipeline.
 
 ## Architecture
 
@@ -21,12 +21,12 @@ Arduino          ──UDP──►  bike_bridge.py           BikeMovementContro
 .
 ├── UnityIntegration/              # Unity ↔ Python bridge & C# scripts
 │   ├── python/                    #   Bridge, mock server, GUI, collector
-│   │   ├── bike_bridge.py  #     WebSocket bridge (TICKR HR + Arduino → Unity)
-│   │   ├── mock_wahoo_bridge.py   #     Mock server for testing without hardware
-│   │   ├── wahoo_bridge_gui.py    #     Tkinter GUI monitor
-│   │   ├── ble_test_connect.py    #     TICKR FIT BLE connection test
-│   │   ├── collector_tail.py      #     VRSF binary collector → SQLite/Parquet
-│   │   └── db/                    #     DB utilities (views, export, validation)
+│   │   ├── bike_bridge.py         #   WebSocket bridge (TICKR HR + Arduino → Unity)
+│   │   ├── mock_wahoo_bridge.py   #   Mock server for testing without hardware
+│   │   ├── wahoo_bridge_gui.py    #   Tkinter GUI monitor
+│   │   ├── ble_test_connect.py    #   TICKR FIT BLE connection test
+│   │   ├── collector_tail.py      #   VRSF binary collector → SQLite/Parquet
+│   │   └── db/                    #   DB utilities (views, export, validation)
 │   ├── unity/                     #   Unity C# controllers
 │   ├── Assets/VrsLogging/         #   VRS session-logging C# scripts
 │   ├── UnityClient/               #   WahooWsClient.cs WebSocket client
@@ -34,17 +34,21 @@ Arduino          ──UDP──►  bike_bridge.py           BikeMovementContro
 │   ├── scripts/                   #   Shell helpers (capture logs, check port, …)
 │   └── docs/                      #   Guides (QUICKSTART, OVERSIGT, UNITY_SETUP, …)
 │
-├── analysis/                      # Data analysis notebooks & plot scripts
-│   ├── quick_analysis.ipynb       #   Jupyter notebook with overview plots
-│   ├── run_quick_plots.py         #   Programmatic plot generation
-│   └── generate_mock_data.py      #   Generate realistic mock Parquet data
+├── live_analytics/                # Real-time analytics pipeline
+│   ├── app/                       #   FastAPI ingest & REST API (port 8080)
+│   ├── dashboard/                 #   Streamlit dashboard (port 8501)
+│   ├── questionnaire/             #   Pre/post-session questionnaire (port 8090)
+│   ├── system_check/              #   System Check GUI (port 8095)
+│   ├── scripts/                   #   PowerShell launch scripts
+│   └── tests/                     #   pytest tests for analytics modules
+│
+├── Assets/Scripts/LiveAnalytics/  # Unity C# telemetry publisher
 │
 ├── tests/                         # pytest suite
 │                                  #   BLE parsing, VRSF format, collector,
 │                                  #   Parquet export, mock integration, end-to-end
 ├── docs/                          # Top-level docs
 │   └── PAIRING_HELP.md            #   macOS BLE pairing troubleshooting
-├── collector_out/                  # Generated test data (Parquet + SQLite)
 │
 ├── pyproject.toml                 # Build config, dependencies, pytest settings
 ├── requirements.txt               # pip dependencies (used by CI)
@@ -135,21 +139,11 @@ See [`UnityIntegration/README.md`](UnityIntegration/README.md) for the full Unit
 | `WahooWsClient.cs`           | `UnityIntegration/UnityClient/`       | Low-level WebSocket client                 |
 | `VrsSessionLogger.cs`        | `UnityIntegration/Assets/VrsLogging/` | Binary session logging (VRSF format)       |
 
-## Analysis
-
-The `analysis/` folder contains Jupyter notebooks and scripts for post-session data exploration:
-
-```bash
-# Generate mock data for analysis
-python analysis/generate_mock_data.py
-
-# Run plots (outputs PNGs to analysis/figs/)
-python analysis/run_quick_plots.py
-```
-
 ## Data Storage
 
 The Unity bridge collector (`collector_tail.py`) writes VRSF binary sessions to SQLite and optionally exports to Parquet. See [`UnityIntegration/python/db/SQL_CHEATSHEET.md`](UnityIntegration/python/db/SQL_CHEATSHEET.md) for query examples.
+
+The live analytics pipeline stores telemetry in its own SQLite database under `live_analytics/data/`.
 
 ## Platform Notes
 
