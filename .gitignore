@@ -52,6 +52,9 @@ wahoo_bridge_capture_*/
 .mypy_cache/
 .pytest_cache/
 
+# PyInstaller
+*.spec
+
 # Generated collector output (runtime artifacts)
 collector_out/
 

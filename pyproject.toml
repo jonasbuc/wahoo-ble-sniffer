@@ -31,6 +31,9 @@ dev = [
   "coverage>=7.2.0",
 ]
 
+[project.scripts]
+system-check = "live_analytics.system_check.run_checks:main"
+
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["UnityIntegration*", "live_analytics*"]
