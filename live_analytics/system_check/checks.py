@@ -264,7 +264,7 @@ def check_vrsf_logs(
         manifest_path = sd / "manifest.json"
         if manifest_path.exists():
             try:
-                with open(manifest_path) as f:
+                with open(manifest_path, encoding="utf-8") as f:
                     manifest = json.loads(f.read())
                 session_info["session_id"] = manifest.get("session_id")
                 session_info["started_unix_ms"] = manifest.get("started_unix_ms")
@@ -347,7 +347,7 @@ def check_session_by_id(
         if not manifest_path.exists():
             continue
         try:
-            with open(manifest_path) as f:
+            with open(manifest_path, encoding="utf-8") as f:
                 manifest = json.loads(f.read())
             m_sid = manifest.get("session_id")
             m_did = manifest.get("display_id")
@@ -362,7 +362,7 @@ def check_session_by_id(
     history_match: dict[str, Any] | None = None
     if history_path.exists():
         try:
-            with open(history_path) as f:
+            with open(history_path, encoding="utf-8") as f:
                 for line in f:
                     line = line.strip()
                     if not line:
@@ -415,7 +415,7 @@ def _verify_session_dir(
     manifest_path = session_dir / "manifest.json"
     if manifest_path.exists():
         try:
-            with open(manifest_path) as f:
+            with open(manifest_path, encoding="utf-8") as f:
                 manifest_info = json.loads(f.read())
         except Exception:
             pass

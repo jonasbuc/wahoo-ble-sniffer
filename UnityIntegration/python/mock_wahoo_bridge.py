@@ -53,5 +53,5 @@ class MockWahooBridge(WahooBridgeServer):
 __all__ = ["MockWahooBridge", "main"]
 
 if __name__ == "__main__":
-    print("\n🚴 Mock Wahoo Bridge (→ bike_bridge mock mode)\n")
+    print("\nMock Wahoo Bridge (-> bike_bridge mock mode)\n")
     main()

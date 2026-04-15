@@ -23,7 +23,7 @@ async def simulate(duration_sec: float = 45.0, hz: float = 20.0) -> None:
     interval = 1.0 / hz
     batch_size = 10  # send 10 records per WS message
 
-    print(f"▶  Simulating session '{session_id}' for {duration_sec}s at {hz} Hz")
+    print(f">  Simulating session '{session_id}' for {duration_sec}s at {hz} Hz")
     print(f"   Server: {uri}")
     print()
 
@@ -131,7 +131,7 @@ async def simulate(duration_sec: float = 45.0, hz: float = 20.0) -> None:
             await asyncio.sleep(interval * batch_size * 0.3)  # 0.3 = 3× faster than real-time
 
     print()
-    print(f"✅  Done! Sent {records_sent} records for session '{session_id}'")
+    print(f"*  Done! Sent {records_sent} records for session '{session_id}'")
     print(f"    Check the dashboard at http://127.0.0.1:8501")
 
 

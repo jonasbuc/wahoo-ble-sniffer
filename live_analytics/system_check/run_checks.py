@@ -18,9 +18,17 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import time
 from typing import Any
+
+# ── Force UTF-8 on Windows ───────────────────────────────────────────
+if sys.platform == "win32":
+    os.system("")  # enable VT100 ANSI on Windows 10+
+    if sys.stdout.encoding and sys.stdout.encoding.lower().replace("-", "") != "utf8":
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[attr-defined]
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[attr-defined]
 
 from live_analytics.system_check import (
     ANALYTICS_API_URL,
@@ -51,9 +59,9 @@ _RED = "\033[31m"
 _DIM = "\033[2m"
 
 _ICON = {
-    "ok": f"{_GREEN}✓{_RESET}",
-    "warn": f"{_YELLOW}⚠{_RESET}",
-    "error": f"{_RED}✗{_RESET}",
+    "ok": f"{_GREEN}*{_RESET}",
+    "warn": f"{_YELLOW}!{_RESET}",
+    "error": f"{_RED}x{_RESET}",
 }
 
 
@@ -86,18 +94,18 @@ def _print_summary(summary: dict[str, Any]) -> None:
     if warned:
         parts.append(f"{_YELLOW}{warned} warn{_RESET}")
     if failed:
-        parts.append(f"{_RED}{failed} fejl{_RESET}")
+        parts.append(f"{_RED}{failed} error{_RESET}")
 
-    bar = " · ".join(parts)
+    bar = " | ".join(parts)
     print()
-    print(f"  {_BOLD}Resultat:{_RESET}  {bar}  ({total} checks, {elapsed:.2f}s)")
+    print(f"  {_BOLD}Result:{_RESET}  {bar}  ({total} checks, {elapsed:.2f}s)")
 
     if summary.get("all_ok"):
-        print(f"\n  {_GREEN}{_BOLD}Alt er klar! 🚀{_RESET}")
+        print(f"\n  {_GREEN}{_BOLD}All clear!{_RESET}")
     elif failed:
-        print(f"\n  {_RED}{_BOLD}Der er fejl der skal løses.{_RESET}")
+        print(f"\n  {_RED}{_BOLD}There are errors that need fixing.{_RESET}")
     else:
-        print(f"\n  {_YELLOW}{_BOLD}Advarsler – men ingen kritiske fejl.{_RESET}")
+        print(f"\n  {_YELLOW}{_BOLD}Warnings - but no critical errors.{_RESET}")
 
 
 # ── Single-check dispatch ────────────────────────────────────────────
@@ -155,9 +163,9 @@ def main() -> None:
 
     # ── Run all checks ────────────────────────────────────────────────
     print()
-    print(f"  {_BOLD}╔══════════════════════════════════════╗{_RESET}")
-    print(f"  {_BOLD}║       🔍  System Check  🔍          ║{_RESET}")
-    print(f"  {_BOLD}╚══════════════════════════════════════╝{_RESET}")
+    print(f"  {_BOLD}======================================{_RESET}")
+    print(f"  {_BOLD}         System Check{_RESET}")
+    print(f"  {_BOLD}======================================{_RESET}")
     print()
 
     results = run_all_checks()

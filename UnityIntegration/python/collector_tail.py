@@ -644,7 +644,7 @@ def watch_sessions(
             manifest = os.path.join(d, 'manifest.json')
             if not os.path.exists(manifest):
                 continue  # session may still be initialising
-            with open(manifest, 'r') as f:
+            with open(manifest, 'r', encoding='utf-8') as f:
                 m = json.load(f)
             sid = m.get('session_id')
             # One FileTail per stream file in this session directory.

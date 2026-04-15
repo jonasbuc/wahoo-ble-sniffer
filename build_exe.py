@@ -39,7 +39,7 @@ def main() -> None:
     if args.clean:
         for d in [DIST_DIR, BUILD_DIR]:
             if d.exists():
-                print(f"  Removing {d} …")
+                print(f"  Removing {d} ...")
                 shutil.rmtree(d)
         spec = ROOT / f"{EXE_NAME}.spec"
         if spec.exists():
@@ -49,7 +49,7 @@ def main() -> None:
     try:
         import PyInstaller  # noqa: F401
     except ImportError:
-        print("❌  PyInstaller not installed.  Run:  pip install pyinstaller")
+        print("ERROR: PyInstaller not installed.  Run:  pip install pyinstaller")
         sys.exit(1)
 
     cmd = [
@@ -72,7 +72,7 @@ def main() -> None:
     ]
 
     print()
-    print(f"  Building {EXE_NAME} …")
+    print(f"  Building {EXE_NAME} ...")
     print(f"  Entry point: {ENTRY_POINT}")
     print(f"  Platform:    {platform.system()} {platform.machine()}")
     print()
@@ -80,7 +80,7 @@ def main() -> None:
     result = subprocess.run(cmd, cwd=str(ROOT))
 
     if result.returncode != 0:
-        print(f"\n❌  Build failed (exit {result.returncode})")
+        print(f"\nERROR: Build failed (exit {result.returncode})")
         sys.exit(result.returncode)
 
     # Show result
@@ -92,17 +92,17 @@ def main() -> None:
     if exe_path.exists():
         size_mb = exe_path.stat().st_size / (1024 * 1024)
         print()
-        print(f"  ✅  Build OK!")
-        print(f"  📦  {exe_path}  ({size_mb:.1f} MB)")
+        print(f"  Build OK!")
+        print(f"  Output: {exe_path}  ({size_mb:.1f} MB)")
         print()
-        print(f"  Kør med:")
+        print(f"  Run with:")
         print(f"    {exe_path}")
         print(f"    {exe_path} --help")
         print(f"    {exe_path} --check quest")
         print(f"    {exe_path} --json")
         print()
     else:
-        print(f"\n❌  Exe not found at {exe_path}")
+        print(f"\nERROR: Exe not found at {exe_path}")
         sys.exit(1)
 
 

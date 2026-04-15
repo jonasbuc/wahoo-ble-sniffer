@@ -79,7 +79,8 @@ def main():
     os.makedirs(sd, exist_ok=True)
     manifest = {'session_id': sid, 'started_unix_ms': int(
         time.time()*1000), 'files': ['headpose.vrsf', 'bike.vrsf', 'hr.vrsf', 'events.vrsf']}
-    open(os.path.join(sd, 'manifest.json'), 'w').write(json.dumps(manifest))
+    with open(os.path.join(sd, 'manifest.json'), 'w', encoding='utf-8') as _mf:
+        _mf.write(json.dumps(manifest))
 
     # write some records
     head_recs = [make_headpose_record(i, 0.01*i) for i in range(10)]
