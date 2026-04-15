@@ -80,8 +80,7 @@ Arduino --------UDP-->  bridge.py |  System Check GUI :8095            |
 │                                  #   collector DB, parquet export, mock, e2e)
 ├── build_exe.py                   # PyInstaller build script (system-check exe)
 ├── pyproject.toml                 # Build config, deps, pytest settings
-├── requirements.txt               # pip dependencies (used by CI)
-└── .github/workflows/ci.yml      # GitHub Actions: lint + mypy + pytest
+└── requirements.txt               # pip dependencies
 ```
 
 ## Quick Start
@@ -291,15 +290,6 @@ See [`UnityIntegration/python/db/SQL_CHEATSHEET.md`](UnityIntegration/python/db/
 | Services won't start | Run `starters/INSTALL` first, check `python --version` >= 3.11 |
 
 For detailed BLE pairing help on macOS, see [`docs/PAIRING_HELP.md`](docs/PAIRING_HELP.md).
-
-## CI
-
-GitHub Actions (`ci.yml`) runs on every push to `main`:
-
-1. Installs all dependencies (BLE bridge + live analytics)
-2. Lints with **flake8**
-3. Type-checks `UnityIntegration/` with **mypy**
-4. Runs the full **pytest** suite (482 tests) with coverage
 
 ## License
 
