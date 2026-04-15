@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-🚴  Bike VR – Master Launcher
-═══════════════════════════════════════════════════════════════════
+Bike VR - Master Launcher
+=================================================================
 
 Starts **all** services in the correct order, then opens a live
 status dashboard in the terminal that turns green as each service
@@ -12,7 +12,7 @@ Services started:
   2. Questionnaire API    (FastAPI, port 8090)
   3. System Check GUI     (FastAPI, port 8095)
   4. Streamlit Dashboard  (port 8501)
-  5. Wahoo BLE Bridge     (WebSocket, port 8765 – optional with --bridge)
+  5. Wahoo BLE Bridge     (WebSocket, port 8765 - optional with --bridge)
 
 Usage:
     python starters/launcher.py                # start all (no BLE bridge)
@@ -34,6 +34,28 @@ import time
 from pathlib import Path
 from typing import Any
 
+# ── Force UTF-8 on Windows so print() never crashes ──────────────────
+if sys.platform == "win32":
+    os.system("")  # enables VT100 ANSI on Windows 10+
+    if sys.stdout.encoding and sys.stdout.encoding.lower().replace("-", "") != "utf8":
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[attr-defined]
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[attr-defined]
+
+# Detect if the terminal can handle unicode box-drawing / emoji
+def _supports_unicode() -> bool:
+    """Return True if stdout likely supports unicode glyphs."""
+    if sys.platform != "win32":
+        return True
+    # Windows Terminal and modern consoles set WT_SESSION or use utf-8
+    enc = (sys.stdout.encoding or "").lower().replace("-", "")
+    if enc == "utf8":
+        return True
+    if os.environ.get("WT_SESSION"):  # Windows Terminal
+        return True
+    return False
+
+_UNICODE = _supports_unicode()
+
 # ── Resolve paths ─────────────────────────────────────────────────────
 ROOT = Path(__file__).resolve().parent.parent
 VENV_PYTHON = ROOT / ".venv" / ("Scripts" if sys.platform == "win32" else "bin") / "python"
@@ -49,10 +71,6 @@ _RED = "\033[31m"
 _CYAN = "\033[36m"
 _CLEAR_LINE = "\033[2K"
 _CURSOR_UP = "\033[A"
-
-# On Windows enable ANSI escape sequences
-if sys.platform == "win32":
-    os.system("")  # enables VT100 on Windows 10+
 
 
 # ── Service definitions ──────────────────────────────────────────────
@@ -196,25 +214,31 @@ def build_services(args: argparse.Namespace) -> list[Service]:
 # ── Live status display ──────────────────────────────────────────────
 
 _STATUS_ICON = {
-    "starting": f"{_YELLOW}◌{_RESET}",
-    "ok":       f"{_GREEN}●{_RESET}",
-    "error":    f"{_RED}✗{_RESET}",
-    "skipped":  f"{_DIM}○{_RESET}",
+    "starting": f"{_YELLOW}o{_RESET}" if not _UNICODE else f"{_YELLOW}\u25cc{_RESET}",
+    "ok":       f"{_GREEN}*{_RESET}" if not _UNICODE else f"{_GREEN}\u25cf{_RESET}",
+    "error":    f"{_RED}x{_RESET}" if not _UNICODE else f"{_RED}\u2717{_RESET}",
+    "skipped":  f"{_DIM}o{_RESET}" if not _UNICODE else f"{_DIM}\u25cb{_RESET}",
 }
 
 _STATUS_LABEL = {
-    "starting": f"{_YELLOW}starter …{_RESET}",
-    "ok":       f"{_GREEN}kører{_RESET}",
-    "error":    f"{_RED}fejl{_RESET}",
-    "skipped":  f"{_DIM}sprunget over{_RESET}",
+    "starting": f"{_YELLOW}starting ...{_RESET}",
+    "ok":       f"{_GREEN}running{_RESET}",
+    "error":    f"{_RED}error{_RESET}",
+    "skipped":  f"{_DIM}skipped{_RESET}",
 }
+
+_CHECK = "*" if not _UNICODE else "\u2713"
+_WARN  = "!" if not _UNICODE else "\u26a0"
+_CROSS = "x" if not _UNICODE else "\u2717"
+_ARROW = "->" if not _UNICODE else "\u2192"
+_DOTS  = "..." if not _UNICODE else "\u2026"
 
 
 def _print_header() -> None:
     print()
-    print(f"  {_BOLD}╔══════════════════════════════════════════════╗{_RESET}")
-    print(f"  {_BOLD}║     🚴  Bike VR – Master Launcher  🚴      ║{_RESET}")
-    print(f"  {_BOLD}╚══════════════════════════════════════════════╝{_RESET}")
+    print(f"  {_BOLD}================================================{_RESET}")
+    print(f"  {_BOLD}     Bike VR - Master Launcher{_RESET}")
+    print(f"  {_BOLD}================================================{_RESET}")
     print()
 
 
@@ -231,7 +255,7 @@ def _print_status(services: list[Service], elapsed: float) -> int:
     ok_count = sum(1 for s in services if s.status == "ok")
     total = len(services)
     if ok_count == total:
-        summary = f"  {_GREEN}{_BOLD}✓ Alle {total} services kører!{_RESET}  ({elapsed:.0f}s)"
+        summary = f"  {_GREEN}{_BOLD}{_CHECK} All {total} services running!{_RESET}  ({elapsed:.0f}s)"
     else:
         summary = f"  {_DIM}{ok_count}/{total} klar  ({elapsed:.0f}s){_RESET}"
 
@@ -257,16 +281,16 @@ def main() -> None:
         description="Start all Bike VR services",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=textwrap.dedent("""\
-            Services startet:
-              • Analytics API       http://127.0.0.1:8080
-              • Questionnaire API   http://127.0.0.1:8090
-              • System Check GUI    http://127.0.0.1:8095
-              • Streamlit Dashboard http://127.0.0.1:8501
-              • Wahoo BLE Bridge    ws://127.0.0.1:8765  (med --bridge)
+            Services started:
+              - Analytics API       http://127.0.0.1:8080
+              - Questionnaire API   http://127.0.0.1:8090
+              - System Check GUI    http://127.0.0.1:8095
+              - Streamlit Dashboard http://127.0.0.1:8501
+              - Wahoo BLE Bridge    ws://127.0.0.1:8765  (with --bridge)
         """),
     )
-    parser.add_argument("--bridge", action="store_true", help="Start Wahoo BLE bridge også")
-    parser.add_argument("--mock", action="store_true", help="Brug mock bridge i stedet for ægte BLE")
+    parser.add_argument("--bridge", action="store_true", help="Also start Wahoo BLE bridge")
+    parser.add_argument("--mock", action="store_true", help="Use mock bridge instead of real BLE")
     parser.add_argument("--no-dashboard", action="store_true", help="Skip Streamlit dashboard")
     args = parser.parse_args()
 
@@ -275,13 +299,13 @@ def main() -> None:
     _print_header()
 
     # Init DB before starting services
-    print(f"  {_DIM}Initialiserer databaser …{_RESET}")
+    print(f"  {_DIM}Initialising databases {_DOTS}{_RESET}")
     subprocess.run(
         [PYTHON, str(ROOT / "live_analytics" / "scripts" / "init_db.py")],
         cwd=str(ROOT),
         capture_output=True,
     )
-    print(f"  {_GREEN}✓{_RESET} Databaser klar")
+    print(f"  {_GREEN}{_CHECK}{_RESET} Databases ready")
     print()
 
     # Start all services
@@ -327,12 +351,12 @@ def main() -> None:
         print()
         if all_ok:
             print(f"  {_BOLD}URLs:{_RESET}")
-            print(f"    System Check  → {_CYAN}http://127.0.0.1:8095{_RESET}")
-            print(f"    Dashboard     → {_CYAN}http://127.0.0.1:8501{_RESET}")
-            print(f"    Analytics API → {_CYAN}http://127.0.0.1:8080{_RESET}")
-            print(f"    Questionnaire → {_CYAN}http://127.0.0.1:8090{_RESET}")
+            print(f"    System Check  {_ARROW} {_CYAN}http://127.0.0.1:8095{_RESET}")
+            print(f"    Dashboard     {_ARROW} {_CYAN}http://127.0.0.1:8501{_RESET}")
+            print(f"    Analytics API {_ARROW} {_CYAN}http://127.0.0.1:8080{_RESET}")
+            print(f"    Questionnaire {_ARROW} {_CYAN}http://127.0.0.1:8090{_RESET}")
             print()
-        print(f"  {_DIM}Tryk Ctrl+C for at stoppe alle services{_RESET}")
+        print(f"  {_DIM}Press Ctrl+C to stop all services{_RESET}")
         print()
 
         # Keep running until Ctrl+C
@@ -345,21 +369,21 @@ def main() -> None:
                     svc.status = "error"
                     any_down = True
             if any_down:
-                print(f"\n  {_RED}{_BOLD}⚠ En service er stoppet!{_RESET}")
+                print(f"\n  {_RED}{_BOLD}{_WARN} A service has stopped!{_RESET}")
                 for svc in services:
                     if svc.status == "error":
-                        print(f"    {_RED}✗ {svc.name}{_RESET}")
+                        print(f"    {_RED}{_CROSS} {svc.name}{_RESET}")
                 print()
 
     except KeyboardInterrupt:
         pass
     finally:
         print()
-        print(f"  {_DIM}Stopper services …{_RESET}")
+        print(f"  {_DIM}Stopping services {_DOTS}{_RESET}")
         for svc in reversed(services):
             if svc.process:
                 svc.stop()
-        print(f"  {_GREEN}✓{_RESET} Alle services stoppet.")
+        print(f"  {_GREEN}{_CHECK}{_RESET} All services stopped.")
         print()
 
 

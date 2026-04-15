@@ -1,18 +1,19 @@
 @echo off
-REM ════════════════════════════════════════════════════════════════
-REM  Bike VR – Full Installer (Windows)
+chcp 65001 >nul 2>&1
+REM ----------------------------------------------------------------
+REM  Bike VR - Full Installer (Windows)
 REM  Double-click this file to set up everything.
-REM ════════════════════════════════════════════════════════════════
+REM ----------------------------------------------------------------
 
 cd /d "%~dp0.."
 
 echo.
-echo   ╔══════════════════════════════════════════════╗
-echo   ║     Bike VR – Installer                      ║
-echo   ╚══════════════════════════════════════════════╝
+echo   ================================================
+echo      Bike VR - Installer
+echo   ================================================
 echo.
 
-REM ── 1. Find Python ──────────────────────────────────────────
+REM -- 1. Find Python ------------------------------------------------
 echo   [1/4] Tjekker Python ...
 set "PY="
 python  --version >nul 2>&1 && set "PY=python"
@@ -30,7 +31,7 @@ for /f "tokens=2" %%i in ('"%PY%" --version') do set PYTHON_VERSION=%%i
 echo   OK  Python %PYTHON_VERSION%
 echo.
 
-REM ── 2. Virtual environment ──────────────────────────────────
+REM -- 2. Virtual environment -----------------------------------------
 echo   [2/4] Opretter virtual environment ...
 if exist .venv\Scripts\python.exe (
     echo   OK  .venv eksisterer allerede
@@ -46,7 +47,7 @@ if exist .venv\Scripts\python.exe (
 )
 echo.
 
-REM ── 3. Installér afhængigheder ──────────────────────────────
+REM -- 3. Install dependencies ----------------------------------------
 echo   [3/4] Installerer afhaengigheder ...
 .venv\Scripts\python.exe -m pip install --quiet --upgrade pip
 .venv\Scripts\python.exe -m pip install --quiet -r requirements.txt
@@ -59,7 +60,7 @@ if %errorlevel% neq 0 (
 echo   OK  Alle pakker installeret
 echo.
 
-REM ── 4. Verificér ────────────────────────────────────────────
+REM -- 4. Verify ------------------------------------------------------
 echo   [4/4] Verificerer installation ...
 .venv\Scripts\python.exe -c "import bleak, websockets, fastapi, uvicorn, pydantic, streamlit; print('  OK  Alle moduler OK')"
 if %errorlevel% neq 0 (
@@ -69,9 +70,9 @@ if %errorlevel% neq 0 (
 )
 echo.
 
-echo   ╔══════════════════════════════════════════════╗
-echo   ║     INSTALLATION FAERDIG!                     ║
-echo   ╚══════════════════════════════════════════════╝
+echo   ================================================
+echo      INSTALLATION FAERDIG!
+echo   ================================================
 echo.
 echo   Naeste trin:
 echo     Double-click  starters\START_ALL.bat
