@@ -119,8 +119,11 @@ class Service:
 
         if self.health_url:
             return self._check_http()
-        if self.health_tcp:
+        if self.health_tcp and self.port:
             return self._check_tcp()
+        # No health endpoint — just check process is alive
+        if self.process and self.process.poll() is None:
+            return True
         return False
 
     def _check_tcp(self) -> bool:
@@ -208,6 +211,19 @@ def build_services(args: argparse.Namespace) -> list[Service]:
             health_tcp=True,
         ))
 
+        # 6. Bridge → Analytics forwarder (replaces Unity's role for testing)
+        forwarder_script = str(ROOT / "bridge" / "forward_to_analytics.py")
+        services.append(Service(
+            name="HR Forwarder",
+            cmd=[
+                PYTHON, forwarder_script,
+                "--bridge-url", "ws://localhost:8765",
+                "--ingest-url", "ws://localhost:8766",
+            ],
+            port=0,          # no dedicated port to health-check
+            health_tcp=False,
+        ))
+
     return services
 
 
@@ -248,7 +264,7 @@ def _print_status(services: list[Service], elapsed: float) -> int:
     for svc in services:
         icon = _STATUS_ICON.get(svc.status, "?")
         label = _STATUS_LABEL.get(svc.status, svc.status)
-        port_str = f"{_DIM}:{svc.port}{_RESET}"
+        port_str = f"{_DIM}:{svc.port}{_RESET}" if svc.port else f"{_DIM}     {_RESET}"
         lines.append(f"  {icon}  {_BOLD}{svc.name:<25}{_RESET} {port_str:>18}   {label}")
 
     # Summary line

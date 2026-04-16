@@ -121,6 +121,14 @@ def main() -> None:
         asyncio.run(forward(args.bridge_url, args.ingest_url, session_id))
     except KeyboardInterrupt:
         LOG.info("Forwarder stopped.")
+    except Exception as exc:
+        LOG.error("Forwarder error: %s — retrying in 3s", exc)
+        import time as _t
+        _t.sleep(3)
+        try:
+            asyncio.run(forward(args.bridge_url, args.ingest_url, session_id))
+        except KeyboardInterrupt:
+            LOG.info("Forwarder stopped.")
 
 
 if __name__ == "__main__":
