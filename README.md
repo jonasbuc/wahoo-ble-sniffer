@@ -239,7 +239,8 @@ See [`docs/QUICKSTART.md`](docs/QUICKSTART.md) for the full setup guide.
 
 | Script | Location | Purpose |
 |--------|----------|---------|
-| `WahooWsClient.cs` | `unity/` | Low-level WebSocket client |
+| `WahooWsClient.cs` | `unity/` | Low-level WebSocket client + `SendEvent()` API |
+| `SpawnZoneTrigger.cs` | `unity/` | Sends timestamped event to GUI graph on collider hit |
 | `BikeMovementController.cs` | `unity/` | Translates sensor data to bike movement |
 | `VrsSessionLogger.cs` | `unity/VrsLogging/` | Binary session logging (VRSF format) |
 | `TelemetryPublisher.cs` | `unity/LiveAnalytics/` | Real-time telemetry publisher |
