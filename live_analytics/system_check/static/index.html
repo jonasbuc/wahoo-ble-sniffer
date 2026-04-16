@@ -80,6 +80,9 @@ header h1 span{color:#38bdf8}
 .session-card .meta b{color:#e2e8f0}
 .session-card .files{display:flex;flex-wrap:wrap;gap:.3rem}
 
+/* ── Utility ────────────────────────────────────────────── */
+.hidden{display:none}
+
 /* ── Loading spinner ───────────────────────────────────── */
 @keyframes spin{to{transform:rotate(360deg)}}
 .spinner{width:18px;height:18px;border:2.5px solid #334155;border-top-color:#60a5fa;border-radius:50%;animation:spin .7s linear infinite;display:inline-block}
@@ -111,7 +114,7 @@ footer{margin-top:2rem;text-align:center;font-size:.78rem;color:#475569}
     <div class="session-result" id="session-result"></div>
   </div>
 
-  <div class="sessions" id="sessions-section" style="display:none">
+  <div class="sessions hidden" id="sessions-section">
     <h2>📁 Seneste VRS-sessioner</h2>
     <div class="session-list" id="session-list"></div>
   </div>
