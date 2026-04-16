@@ -78,7 +78,6 @@ Arduino --------UDP-->  bridge.py |  System Check GUI :8095            |
 │
 ├── tests/                         #   pytest suite (BLE parsing, VRSF format,
 │                                  #   collector DB, parquet export, mock, e2e)
-├── build_exe.py                   # PyInstaller build script (system-check exe)
 ├── pyproject.toml                 # Build config, deps, pytest settings
 └── requirements.txt               # pip dependencies
 ```
@@ -216,13 +215,6 @@ python -m live_analytics.system_check                    # all checks
 python -m live_analytics.system_check --check bridge     # single check
 python -m live_analytics.system_check --session SIM_123  # verify session
 python -m live_analytics.system_check --json             # JSON output
-```
-
-**Standalone executable:**
-
-```bash
-python build_exe.py         # build with PyInstaller
-./dist/system-check         # run without Python installed
 ```
 
 ## Testing
