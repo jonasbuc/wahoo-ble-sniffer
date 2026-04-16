@@ -62,12 +62,6 @@ collector_out/
 analysis/
 
 # Ignore UnityCompileCheck build artifacts
-UnityIntegration/UnityCompileCheck/bin/
-UnityIntegration/UnityCompileCheck/obj/
-
-# Legacy C# project build artifacts
-WahooBleLoggerCSharp/
-
 # Live Analytics runtime data
 live_analytics/data/*.db
 live_analytics/data/*.db-shm
@@ -76,7 +70,3 @@ live_analytics/data/sessions/*/
 !live_analytics/data/.gitkeep
 !live_analytics/data/sessions/.gitkeep
 live_analytics/.venv/
-
-# Ignore UnityCompileCheck runtime output
-UnityIntegration/UnityCompileCheck/*.dll
-UnityIntegration/UnityCompileCheck/*.pdb

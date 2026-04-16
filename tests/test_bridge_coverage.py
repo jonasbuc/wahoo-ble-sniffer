@@ -23,7 +23,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from UnityIntegration.python.bike_bridge import (
+from bridge.bike_bridge import (
     MockCyclingData,
     WahooBridgeServer,
     main,
@@ -57,8 +57,8 @@ class TestMain:
 
     def test_main_calls_asyncio_run(self):
         """main() should call asyncio.run(server.start())."""
-        with patch("UnityIntegration.python.bike_bridge.asyncio.run") as mock_run, \
-             patch("UnityIntegration.python.bike_bridge.WahooBridgeServer") as MockSrv, \
+        with patch("bridge.bike_bridge.asyncio.run") as mock_run, \
+             patch("bridge.bike_bridge.WahooBridgeServer") as MockSrv, \
              patch("sys.argv", ["bike_bridge.py"]):
             mock_run.return_value = None
             main()
@@ -66,17 +66,17 @@ class TestMain:
 
     def test_main_keyboard_interrupt_is_swallowed(self):
         """main() catches KeyboardInterrupt and exits cleanly."""
-        with patch("UnityIntegration.python.bike_bridge.asyncio.run",
+        with patch("bridge.bike_bridge.asyncio.run",
                    side_effect=KeyboardInterrupt), \
-             patch("UnityIntegration.python.bike_bridge.WahooBridgeServer"), \
+             patch("bridge.bike_bridge.WahooBridgeServer"), \
              patch("sys.argv", ["bike_bridge.py"]):
             # Should not raise
             main()
 
     def test_main_passes_args_to_server(self):
         """main() forwards parsed CLI args to WahooBridgeServer constructor."""
-        with patch("UnityIntegration.python.bike_bridge.asyncio.run"), \
-             patch("UnityIntegration.python.bike_bridge.WahooBridgeServer") as MockSrv, \
+        with patch("bridge.bike_bridge.asyncio.run"), \
+             patch("bridge.bike_bridge.WahooBridgeServer") as MockSrv, \
              patch("sys.argv", ["bike_bridge.py", "--port", "9999"]):
             main()
             _, kwargs = MockSrv.call_args
@@ -86,8 +86,8 @@ class TestMain:
     def test_main_verbose_flag_sets_debug_level(self):
         """--verbose flag reaches logging.basicConfig as DEBUG."""
         import logging
-        with patch("UnityIntegration.python.bike_bridge.asyncio.run"), \
-             patch("UnityIntegration.python.bike_bridge.WahooBridgeServer"), \
+        with patch("bridge.bike_bridge.asyncio.run"), \
+             patch("bridge.bike_bridge.WahooBridgeServer"), \
              patch("sys.argv", ["bike_bridge.py", "--verbose"]), \
              patch("logging.basicConfig") as mock_log:
             main()
@@ -105,7 +105,7 @@ class TestStartBleNobleak:
     @pytest.mark.asyncio
     async def test_returns_without_bleak(self):
         server = _make_server(mock=False)
-        with patch("UnityIntegration.python.bike_bridge.HAVE_BLEAK", False):
+        with patch("bridge.bike_bridge.HAVE_BLEAK", False):
             # Should complete without raising
             await asyncio.wait_for(server._start_ble(), timeout=1.0)
 

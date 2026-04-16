@@ -33,7 +33,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from UnityIntegration.python.bike_bridge import (
+from bridge.bike_bridge import (
     MockCyclingData,
     WahooBridgeServer,
     parse_args,

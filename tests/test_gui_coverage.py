@@ -43,7 +43,7 @@ pytestmark = pytest.mark.skipif(
 @pytest.fixture()
 def gui():
     """Create a WahooBridgeGUI with websocket thread disabled."""
-    from UnityIntegration.python.wahoo_bridge_gui import WahooBridgeGUI
+    from bridge.wahoo_bridge_gui import WahooBridgeGUI
     with patch("threading.Thread"):          # prevent background thread starting
         app = WahooBridgeGUI()
     yield app
@@ -672,7 +672,7 @@ class TestMainArgparse:
     def _run_main_block(self, argv):
         """Execute the __main__ block inline, with WahooBridgeGUI patched."""
         import argparse
-        from UnityIntegration.python.wahoo_bridge_gui import WahooBridgeGUI
+        from bridge.wahoo_bridge_gui import WahooBridgeGUI
 
         p = argparse.ArgumentParser(description="Wahoo Bridge GUI monitor")
         p.add_argument("--url", default="ws://localhost:8765")
@@ -695,7 +695,7 @@ class TestMainArgparse:
 
     def test_gui_constructed_with_url(self):
         """WahooBridgeGUI is instantiated with the parsed url= kwarg."""
-        from UnityIntegration.python.wahoo_bridge_gui import WahooBridgeGUI
+        from bridge.wahoo_bridge_gui import WahooBridgeGUI
         with patch("sys.argv", ["wahoo_bridge_gui.py", "--url", "ws://10.0.0.1:9999"]), \
              patch.object(WahooBridgeGUI, "__init__", return_value=None) as mock_init, \
              patch.object(WahooBridgeGUI, "run", return_value=None):

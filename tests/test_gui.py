@@ -41,7 +41,7 @@ pytestmark = pytest.mark.skipif(
 @pytest.fixture()
 def gui():
     """Create a WahooBridgeGUI with websocket thread disabled."""
-    from UnityIntegration.python.wahoo_bridge_gui import WahooBridgeGUI
+    from bridge.wahoo_bridge_gui import WahooBridgeGUI
 
     with patch("threading.Thread"):          # prevent background thread starting
         app = WahooBridgeGUI()

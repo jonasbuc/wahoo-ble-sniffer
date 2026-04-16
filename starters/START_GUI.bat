@@ -19,5 +19,5 @@ if not exist "%PYTHON%" (
     exit /b 1
 )
 
-"%PYTHON%" UnityIntegration\python\wahoo_bridge_gui.py --url ws://localhost:8765
+"%PYTHON%" bridge\wahoo_bridge_gui.py --url ws://localhost:8765
 pause

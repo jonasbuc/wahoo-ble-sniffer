@@ -2,7 +2,7 @@ import struct
 import zlib
 from pathlib import Path
 
-from UnityIntegration.python.collector_tail import FileTail, init_db
+from bridge.collector_tail import FileTail, init_db
 
 
 def make_header(payload: bytes, version: int = 1, stream_id: int = 1) -> bytes:
@@ -95,11 +95,11 @@ def test_collector_end_to_end(tmp_path):
             # insert_events_batch expects list of tuples (seq, unity_t, js)
             cur = conn.cursor()
             inserted = 0
-            from UnityIntegration.python.collector_tail import insert_events_batch, insert_records_batch
+            from bridge.collector_tail import insert_events_batch, insert_records_batch
             inserted = insert_events_batch(conn, session_id, recv_ns, parsed)
             conn.commit()
         else:
-            from UnityIntegration.python.collector_tail import insert_records_batch
+            from bridge.collector_tail import insert_records_batch
             inserted = insert_records_batch(conn, ft.stream_id, session_id, recv_ns, parsed)
             conn.commit()
         assert inserted > 0
@@ -120,7 +120,7 @@ def test_collector_end_to_end(tmp_path):
     import importlib.util
     import sys
     spec = importlib.util.spec_from_file_location('create_readable_views', str(
-        Path('UnityIntegration/python/db/sqlite/create_readable_views.py')))
+        Path('bridge/db/sqlite/create_readable_views.py')))
     mod = importlib.util.module_from_spec(spec)
     sys.modules['create_readable_views'] = mod
     spec.loader.exec_module(mod)

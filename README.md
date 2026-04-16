@@ -63,21 +63,23 @@ Arduino --------UDP-->  bridge.py |  System Check GUI :8095            |
 │   │   └── simulate_ride.py       #     Simulate telemetry for testing
 │   └── tests/                     #   pytest tests for analytics modules
 │
-├── UnityIntegration/              # Unity <-> Python bridge & C# scripts
-│   ├── python/                    #   Bridge, mock server, GUI, collector
-│   │   ├── bike_bridge.py         #     WebSocket bridge (HR + Arduino -> Unity)
-│   │   ├── mock_wahoo_bridge.py   #     Mock server (no hardware needed)
-│   │   ├── wahoo_bridge_gui.py    #     Tkinter GUI monitor
-│   │   ├── collector_tail.py      #     VRSF binary collector -> SQLite/Parquet
-│   │   └── db/                    #     DB utilities (views, export, validation)
-│   ├── unity/                     #   Unity C# controllers
-│   ├── Assets/VrsLogging/         #   VRS session-logging C# scripts
-│   ├── UnityClient/               #   WahooWsClient.cs WebSocket client
-│   ├── scripts/                   #   Shell helpers (capture logs, check port)
-│   └── docs/                      #   Guides (QUICKSTART, UNITY_SETUP, etc.)
+├── bridge/                        # Python BLE bridge & data collector
+│   ├── bike_bridge.py             #   WebSocket bridge (HR + Arduino -> Unity)
+│   ├── mock_wahoo_bridge.py       #   Mock server (no hardware needed)
+│   ├── wahoo_bridge_gui.py        #   Tkinter GUI monitor
+│   ├── collector_tail.py          #   VRSF binary collector -> SQLite/Parquet
+│   └── db/                        #   DB utilities (views, export, validation)
 │
-├── tests/                         #   pytest suite (BLE parsing, VRSF format,
+├── unity/                         # Unity C# scripts (all in one place)
+│   ├── BikeMovementController.cs  #   Translates sensor data to bike movement
+│   ├── WahooWsClient.cs           #   Low-level WebSocket client
+│   ├── VrsLogging/                #   VRSF binary session logging
+│   └── LiveAnalytics/             #   Telemetry publisher
+│
+├── tests/                         # pytest suite (BLE parsing, VRSF format,
 │                                  #   collector DB, parquet export, mock, e2e)
+├── scripts/                       # Shell helpers (capture logs, check port)
+├── docs/                          # All documentation
 ├── pyproject.toml                 # Build config, deps, pytest settings
 └── requirements.txt               # pip dependencies
 ```
@@ -160,7 +162,7 @@ The bridge scripts automatically open the GUI monitor alongside.
 **Manual:**
 
 ```bash
-python UnityIntegration/python/bike_bridge.py --live --verbose
+python bridge/bike_bridge.py --live --verbose
 ```
 
 Bridge options:
@@ -176,7 +178,7 @@ Bridge options:
 ### 4. Test without hardware (mock bridge)
 
 ```bash
-python UnityIntegration/python/mock_wahoo_bridge.py
+python bridge/mock_wahoo_bridge.py
 ```
 
 Generates realistic fake sensor data on the same WebSocket interface - perfect for Unity development without hardware.
@@ -231,15 +233,16 @@ Tests cover: BLE parsing, VRSF binary format, collector DB, parquet export, mock
 
 ## Unity Integration
 
-See [`UnityIntegration/README.md`](UnityIntegration/README.md) for the full Unity setup guide.
+See [`docs/QUICKSTART.md`](docs/QUICKSTART.md) for the full setup guide.
 
 **Key C# scripts:**
 
 | Script | Location | Purpose |
 |--------|----------|---------|
-| `WahooWsClient.cs` | `UnityIntegration/UnityClient/` | Low-level WebSocket client |
-| `BikeMovementController.cs` | `UnityIntegration/unity/` | Translates sensor data to bike movement |
-| `VrsSessionLogger.cs` | `UnityIntegration/Assets/VrsLogging/` | Binary session logging (VRSF format) |
+| `WahooWsClient.cs` | `unity/` | Low-level WebSocket client |
+| `BikeMovementController.cs` | `unity/` | Translates sensor data to bike movement |
+| `VrsSessionLogger.cs` | `unity/VrsLogging/` | Binary session logging (VRSF format) |
+| `TelemetryPublisher.cs` | `unity/LiveAnalytics/` | Real-time telemetry publisher |
 
 ## Data Storage
 
@@ -247,7 +250,7 @@ See [`UnityIntegration/README.md`](UnityIntegration/README.md) for the full Unit
 - **VRSF sessions**: Binary files written by Unity, tailed by `collector_tail.py` into SQLite / Parquet
 - **Questionnaire**: SQLite under `live_analytics/questionnaire/data/`
 
-See [`UnityIntegration/python/db/SQL_CHEATSHEET.md`](UnityIntegration/python/db/SQL_CHEATSHEET.md) for query examples.
+See [`bridge/db/SQL_CHEATSHEET.md`](bridge/db/SQL_CHEATSHEET.md) for query examples.
 
 ## Platform Notes
 

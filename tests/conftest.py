@@ -5,5 +5,5 @@ import sys
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if ROOT not in sys.path:
-    # Prepend repo root so local packages like `UnityIntegration` are importable during discovery
+    # Prepend repo root so local packages like `bridge` are importable during discovery
     sys.path.insert(0, ROOT)

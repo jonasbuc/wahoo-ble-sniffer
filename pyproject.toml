@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "wahoo-ble-sniffer"
 version = "0.1.0"
 description = "Wahoo BLE -> WebSocket bridge and Unity integration tools"
-readme = "UnityIntegration/README.md"
+readme = "README.md"
 license = { text = "MIT" }
 authors = [ { name = "jonasbuc" } ]
 requires-python = ">=3.11"
@@ -33,7 +33,7 @@ system-check = "live_analytics.system_check.run_checks:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["UnityIntegration*", "live_analytics*"]
+include = ["bridge*", "live_analytics*"]
 
 [tool.pytest.ini_options]
 testpaths = [

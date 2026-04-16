@@ -195,7 +195,7 @@ def build_services(args: argparse.Namespace) -> list[Service]:
 
     # 5. Wahoo Bridge (optional)
     if args.bridge:
-        bridge_script = str(ROOT / "UnityIntegration" / "python" / (
+        bridge_script = str(ROOT / "bridge" / (
             "mock_wahoo_bridge.py" if args.mock else "bike_bridge.py"
         ))
         bridge_cmd = [PYTHON, bridge_script]

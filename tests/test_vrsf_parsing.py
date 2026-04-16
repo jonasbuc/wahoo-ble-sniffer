@@ -2,7 +2,7 @@ import struct
 import zlib
 from pathlib import Path
 
-from UnityIntegration.python.collector_tail import FileTail, HEADER_SIZE
+from bridge.collector_tail import FileTail, HEADER_SIZE
 
 
 def make_header(payload: bytes, version: int = 1, stream_id: int = 1) -> bytes:

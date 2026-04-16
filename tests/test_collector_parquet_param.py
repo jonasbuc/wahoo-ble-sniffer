@@ -4,7 +4,7 @@ import time
 import threading
 import json
 import pytest
-from UnityIntegration.python import collector_tail as ct
+from bridge import collector_tail as ct
 
 
 def crc32(b):

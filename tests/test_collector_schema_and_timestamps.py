@@ -4,7 +4,7 @@ import time
 import threading
 import json
 import sqlite3
-from UnityIntegration.python.collector_tail import watch_sessions, init_db
+from bridge.collector_tail import watch_sessions, init_db
 
 
 def crc32(b):

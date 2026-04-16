@@ -1,13 +1,13 @@
 import struct
 from pathlib import Path
 
-from UnityIntegration.python import collector_tail as ct
+from bridge import collector_tail as ct
 import importlib.util
 import sys
 
 
 def load_validate_db():
-    path = Path('UnityIntegration/python/db/sqlite/validate_db.py')
+    path = Path('bridge/db/sqlite/validate_db.py')
     spec = importlib.util.spec_from_file_location('validate_db', str(path))
     mod = importlib.util.module_from_spec(spec)
     sys.modules['validate_db'] = mod

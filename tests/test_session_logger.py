@@ -16,7 +16,7 @@ import pytest
 # ── Ensure the package is importable ──────────────────────────────────────────
 _here = Path(__file__).resolve().parent
 _repo = _here.parent
-sys.path.insert(0, str(_repo / "UnityIntegration" / "python"))
+sys.path.insert(0, str(_repo / "bridge"))
 
 from collector_tail import SessionLogger  # noqa: E402
 

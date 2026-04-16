@@ -1,6 +1,6 @@
 import pytest
 
-from UnityIntegration.python import collector_tail as ct
+from bridge import collector_tail as ct
 
 
 @pytest.mark.skipif(not ct.HAVE_PYARROW, reason="pyarrow not available")

@@ -4,7 +4,7 @@ import json
 import pytest
 import websockets
 
-from UnityIntegration.python.mock_wahoo_bridge import MockWahooBridge
+from bridge.mock_wahoo_bridge import MockWahooBridge
 
 
 @pytest.mark.asyncio

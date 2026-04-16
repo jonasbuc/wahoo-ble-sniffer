@@ -50,8 +50,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 # ── Import under-test modules ─────────────────────────────────────────────────
-from UnityIntegration.python import collector_tail as ct
-from UnityIntegration.python.bike_bridge import MockCyclingData, WahooBridgeServer
+from bridge import collector_tail as ct
+from bridge.bike_bridge import MockCyclingData, WahooBridgeServer
 
 try:
     import websockets
@@ -180,7 +180,7 @@ class TestBridgeMockMode:
     @pytest.mark.asyncio
     async def test_server_starts_in_mock_mode_without_bleak(self):
         """Server must start successfully even when HAVE_BLEAK is False."""
-        import UnityIntegration.python.bike_bridge as bridge_mod
+        import bridge.bike_bridge as bridge_mod
 
         port = _free_port()
         original = bridge_mod.HAVE_BLEAK
@@ -806,7 +806,7 @@ class TestFileTailDisconnections:
 
     def test_payload_crc_mismatch_skips_whole_chunk(self, tmp_path):
         """Payload CRC mismatch must skip the entire chunk (offset += HEADER_SIZE + payload)."""
-        from UnityIntegration.python.collector_tail import HEADER_SIZE
+        from bridge.collector_tail import HEADER_SIZE
 
         payload = make_headpose_rec(0)
         p = tmp_path / "paycrc.vrsf"
@@ -817,7 +817,7 @@ class TestFileTailDisconnections:
 
     def test_bad_chunk_then_good_chunk_second_is_parsed(self, tmp_path):
         """After a chunk with bad magic the byte-resync must eventually reach the good chunk."""
-        from UnityIntegration.python.collector_tail import HEADER_SIZE
+        from bridge.collector_tail import HEADER_SIZE
 
         good_payload = make_headpose_rec(42)
         bad_hdr = _vrsf_header(good_payload, stream_id=1, bad_magic=True)

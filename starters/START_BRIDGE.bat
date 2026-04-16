@@ -25,7 +25,7 @@ echo   WebSocket server - ws://localhost:8765
 echo   TIP: Open START_GUI.bat to see live data.
 echo.
 
-"%PYTHON%" UnityIntegration\python\bike_bridge.py --live
+"%PYTHON%" bridge\bike_bridge.py --live
 
 echo.
 echo   Bridge stoppet.

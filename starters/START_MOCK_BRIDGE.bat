@@ -25,7 +25,7 @@ echo   Sender simuleret cykeldata ...
 echo   WebSocket server - ws://localhost:8765
 echo.
 
-"%PYTHON%" UnityIntegration\python\bike_bridge.py
+"%PYTHON%" bridge\bike_bridge.py
 
 echo.
 echo   Mock bridge stoppet.

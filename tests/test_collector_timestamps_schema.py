@@ -1,4 +1,4 @@
-from UnityIntegration.python import collector_tail as ct
+from bridge import collector_tail as ct
 
 
 def test_recv_ts_ns_precision(tmp_path):

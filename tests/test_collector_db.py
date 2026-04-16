@@ -1,6 +1,6 @@
 import struct
 import time
-from UnityIntegration.python import collector_tail as ct
+from bridge import collector_tail as ct
 
 
 def make_headpose_rec(seq, unity_t=1.0, px=0.1, py=0.2, pz=0.3, qx=0.0, qy=0.0, qz=0.0, qw=1.0):

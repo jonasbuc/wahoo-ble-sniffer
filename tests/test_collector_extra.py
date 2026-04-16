@@ -38,7 +38,7 @@ _repo = Path(__file__).resolve().parent.parent
 if str(_repo) not in _sys.path:
     _sys.path.insert(0, str(_repo))
 
-import UnityIntegration.python.collector_tail as ct
+import bridge.collector_tail as ct
 
 # ── VRSF chunk builder ────────────────────────────────────────────────────────
 

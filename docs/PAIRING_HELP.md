@@ -16,7 +16,7 @@ Hvis din Wahoo TICKR FIT er **parret med macOS**, kan Bleak have svært ved at f
    - Sæt den på — den aktiveres når elektroder rører huden
 4. **Kør forbindelsestesten:**
    ```bash
-   python UnityIntegration/python/ble_test_connect.py
+   python bridge/ble_test_connect.py
    ```
 
 Enheden bør nu dukke op med sit rigtige navn!

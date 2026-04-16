@@ -18,4 +18,4 @@ if [ ! -f "$PYTHON" ]; then
     exit 1
 fi
 
-"$PYTHON" UnityIntegration/python/wahoo_bridge_gui.py --url ws://localhost:8765
+"$PYTHON" bridge/wahoo_bridge_gui.py --url ws://localhost:8765

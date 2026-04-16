@@ -60,31 +60,31 @@ _repo = Path(__file__).resolve().parent.parent
 if str(_repo) not in sys.path:
     sys.path.insert(0, str(_repo))
 
-from UnityIntegration.python.db.sqlite.validate_db import (
+from bridge.db.sqlite.validate_db import (
     float_ok,
     validate_bike,
     validate_events,
     validate_headpose,
     validate_hr,
 )
-import UnityIntegration.python.db.sqlite.validate_db as validate_module
+import bridge.db.sqlite.validate_db as validate_module
 
-from UnityIntegration.python.db.sqlite.pretty_dump_db import (
+from bridge.db.sqlite.pretty_dump_db import (
     dump_table,
     ms_to_iso,
     ns_to_iso,
     pretty_value,
 )
 
-from UnityIntegration.python.db.sqlite.create_readable_views import create_views
+from bridge.db.sqlite.create_readable_views import create_views
 
-from UnityIntegration.python.db.sqlite.export_readable_views import (
+from bridge.db.sqlite.export_readable_views import (
     export_all_views,
     rows_and_cols,
     try_write_parquet,
     write_csv,
 )
-from UnityIntegration.python.collector_tail import init_db
+from bridge.collector_tail import init_db
 
 
 # ─────────────────────────────────────────────────────────────────────────────
