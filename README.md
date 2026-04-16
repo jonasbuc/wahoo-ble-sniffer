@@ -250,7 +250,7 @@ See [`docs/QUICKSTART.md`](docs/QUICKSTART.md) for the full setup guide.
 - **VRSF sessions**: Binary files written by Unity, tailed by `collector_tail.py` into SQLite / Parquet
 - **Questionnaire**: SQLite under `live_analytics/questionnaire/data/`
 
-See [`bridge/db/SQL_CHEATSHEET.md`](bridge/db/SQL_CHEATSHEET.md) for query examples.
+See [`bridge/db/sqlite/SQL_CHEATSHEET.md`](bridge/db/sqlite/SQL_CHEATSHEET.md) for query examples.
 
 ## Platform Notes
 
