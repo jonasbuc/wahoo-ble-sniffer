@@ -18,7 +18,7 @@ HTTP_HOST: str = os.getenv("LA_HTTP_HOST", "0.0.0.0")
 HTTP_PORT: int = int(os.getenv("LA_HTTP_PORT", "8080"))
 
 WS_INGEST_HOST: str = os.getenv("LA_WS_INGEST_HOST", "0.0.0.0")
-WS_INGEST_PORT: int = int(os.getenv("LA_WS_INGEST_PORT", "8765"))
+WS_INGEST_PORT: int = int(os.getenv("LA_WS_INGEST_PORT", "8766"))
 
 DASHBOARD_PORT: int = int(os.getenv("LA_DASHBOARD_PORT", "8501"))
 

@@ -28,7 +28,8 @@ This repository contains a **Unity VR cycling simulator** with BLE (Bluetooth Lo
 | Service | Port |
 |---|---|
 | FastAPI HTTP | 8080 |
-| Unity ingest WebSocket | 8765 |
+| Bridge WebSocket | 8765 |
+| Analytics ingest WebSocket | 8766 |
 | Streamlit dashboard | 8501 |
 | Questionnaire API | 8090 |
 | System Check GUI | 8095 |
