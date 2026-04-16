@@ -211,19 +211,6 @@ def build_services(args: argparse.Namespace) -> list[Service]:
             health_tcp=True,
         ))
 
-        # 6. Bridge → Analytics forwarder (replaces Unity's role for testing)
-        forwarder_script = str(ROOT / "bridge" / "forward_to_analytics.py")
-        services.append(Service(
-            name="HR Forwarder",
-            cmd=[
-                PYTHON, forwarder_script,
-                "--bridge-url", "ws://localhost:8765",
-                "--ingest-url", "ws://localhost:8766",
-            ],
-            port=0,          # no dedicated port to health-check
-            health_tcp=False,
-        ))
-
     return services
 
 
