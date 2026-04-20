@@ -14,7 +14,7 @@ echo   ================================================
 echo.
 
 REM -- 1. Find Python ------------------------------------------------
-echo   [1/4] Tjekker Python ...
+echo   [1/5] Tjekker Python ...
 set "PY="
 python  --version >nul 2>&1 && set "PY=python"
 if not defined PY (
@@ -32,7 +32,7 @@ echo   OK  Python %PYTHON_VERSION%
 echo.
 
 REM -- 2. Virtual environment -----------------------------------------
-echo   [2/4] Opretter virtual environment ...
+echo   [2/5] Opretter virtual environment ...
 if exist .venv\Scripts\python.exe (
     echo   OK  .venv eksisterer allerede
 ) else (
@@ -48,7 +48,7 @@ if exist .venv\Scripts\python.exe (
 echo.
 
 REM -- 3. Install dependencies ----------------------------------------
-echo   [3/4] Installerer afhaengigheder ...
+echo   [3/5] Installerer afhaengigheder ...
 .venv\Scripts\python.exe -m pip install --quiet --upgrade pip
 .venv\Scripts\python.exe -m pip install --quiet -r requirements.txt
 .venv\Scripts\python.exe -m pip install --quiet -e .
@@ -61,13 +61,24 @@ echo   OK  Alle pakker installeret
 echo.
 
 REM -- 4. Verify ------------------------------------------------------
-echo   [4/4] Verificerer installation ...
-.venv\Scripts\python.exe -c "import bleak, websockets, fastapi, uvicorn, pydantic, streamlit; print('  OK  Alle moduler OK')"
+echo   [4/5] Verificerer installation ...
+.venv\Scripts\python.exe -c "import bleak, websockets, fastapi, uvicorn, pydantic, streamlit, pandas, requests, numpy; print('  OK  Alle moduler OK')"
 if %errorlevel% neq 0 (
     echo   X  Verifikation fejlede!
     pause
     exit /b 1
 )
+echo.
+
+REM -- 5. Init database -----------------------------------------------
+echo   [5/5] Initialiserer database ...
+.venv\Scripts\python.exe live_analytics\scripts\init_db.py
+if %errorlevel% neq 0 (
+    echo   X  Database init fejlede!
+    pause
+    exit /b 1
+)
+echo   OK  Database klar
 echo.
 
 echo   ================================================

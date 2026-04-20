@@ -17,5 +17,8 @@ Write-Host "=== Starting Live Analytics Dashboard ==="
 Write-Host "  URL: http://127.0.0.1:$($env:LA_DASHBOARD_PORT ?? '8501')"
 Write-Host ""
 
-Set-Location $ProjectRoot
+# CWD must be the REPO root (parent of live_analytics/) so that Streamlit
+# finds .streamlit/config.toml which disables XSRF protection.
+$RepoRoot = Split-Path -Parent $ProjectRoot
+Set-Location $RepoRoot
 streamlit run $DashboardScript --server.port $($env:LA_DASHBOARD_PORT ?? '8501')

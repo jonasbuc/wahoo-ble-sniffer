@@ -1,7 +1,7 @@
 """
 WebSocket ingest endpoint – receives telemetry from Unity clients.
 
-Runs on a dedicated port (default 8765) via a standalone websockets server
+Runs on a dedicated port (default 8766) via a standalone websockets server
 that is started alongside the FastAPI HTTP server.
 """
 
@@ -14,7 +14,7 @@ from collections import deque
 from typing import Any
 
 import websockets
-from websockets.server import WebSocketServerProtocol
+from websockets import ConnectionClosed, ServerConnection
 
 from live_analytics.app.config import DB_PATH, WS_INGEST_HOST, WS_INGEST_PORT
 from live_analytics.app.models import (
@@ -53,19 +53,19 @@ def set_raw_writer(writer: RawWriter) -> None:
     _raw_writer = writer
 
 
-async def _handle_connection(ws: WebSocketServerProtocol) -> None:
+async def _handle_connection(ws: ServerConnection) -> None:
     peer = ws.remote_address
     logger.info("Unity client connected from %s", peer)
     try:
         async for message in ws:
             await _process_message(ws, message)
-    except websockets.exceptions.ConnectionClosed:
+    except ConnectionClosed:
         logger.info("Unity client disconnected: %s", peer)
     except Exception:
         logger.exception("Error in ingest connection from %s", peer)
 
 
-async def _process_message(ws: WebSocketServerProtocol, raw: str) -> None:
+async def _process_message(ws: ServerConnection, raw: str) -> None:
     """Parse, validate, store, score, and optionally send feedback."""
     try:
         data = json.loads(raw)
@@ -75,8 +75,9 @@ async def _process_message(ws: WebSocketServerProtocol, raw: str) -> None:
 
     try:
         batch = TelemetryBatch(**data)
-    except Exception:
-        logger.warning("Payload validation failed – skipping batch.")
+    except Exception as exc:
+        logger.warning("Payload validation failed – skipping batch: %s: %s",
+                        type(exc).__name__, exc)
         return
 
     for rec in batch.records:
@@ -92,8 +93,9 @@ async def _process_message(ws: WebSocketServerProtocol, raw: str) -> None:
         )
         try:
             await ws.send(feedback.model_dump_json())
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("Failed to send feedback to Unity for session %s: %s",
+                         session_id, exc)
 
     # Broadcast to dashboard subscribers
     await _broadcast_dashboard(session_id)
@@ -150,6 +152,7 @@ async def _broadcast_dashboard(session_id: str | None) -> None:
             dead.append(sub)
     for d in dead:
         dashboard_subscribers.discard(d)
+        logger.debug("Removed dead dashboard subscriber")
 
 
 async def start_ingest_server() -> None:

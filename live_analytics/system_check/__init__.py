@@ -7,11 +7,22 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+
+def _int_env(name: str, default: int) -> int:
+    val = os.getenv(name)
+    if not val:
+        return default
+    try:
+        return int(val)
+    except (ValueError, TypeError):
+        return default
+
+
 BASE_DIR = Path(os.getenv("SC_BASE_DIR", Path(__file__).resolve().parent))
 DATA_DIR = Path(os.getenv("SC_DATA_DIR", BASE_DIR / "data"))
 
 HOST: str = os.getenv("SC_HOST", "0.0.0.0")
-PORT: int = int(os.getenv("SC_PORT", "8095"))
+PORT: int = _int_env("SC_PORT", 8095)
 
 LOG_LEVEL: str = os.getenv("SC_LOG_LEVEL", "INFO")
 
@@ -21,7 +32,7 @@ VRS_LOG_BASE: Path = Path(os.getenv("SC_VRS_LOG_BASE", Path(__file__).resolve().
 
 # Analytics DB
 ANALYTICS_DB: Path = Path(os.getenv("SC_ANALYTICS_DB",
-    Path(__file__).resolve().parent.parent / "app" / "data" / "live_analytics.db"))
+    Path(__file__).resolve().parent.parent / "data" / "live_analytics.db"))
 
 # Questionnaire DB
 QUESTIONNAIRE_DB: Path = Path(os.getenv("SC_QUESTIONNAIRE_DB",

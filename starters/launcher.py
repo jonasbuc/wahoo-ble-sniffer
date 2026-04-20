@@ -8,7 +8,7 @@ status dashboard in the terminal that turns green as each service
 comes online.
 
 Services started:
-  1. Analytics API        (FastAPI, port 8080 + WS ingest 8765)
+  1. Analytics API        (FastAPI, port 8080 + WS ingest 8766)
   2. Questionnaire API    (FastAPI, port 8090)
   3. System Check GUI     (FastAPI, port 8095)
   4. Streamlit Dashboard  (port 8501)

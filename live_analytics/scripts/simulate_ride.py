@@ -18,7 +18,7 @@ import websockets
 
 
 async def simulate(duration_sec: float = 45.0, hz: float = 20.0) -> None:
-    uri = "ws://127.0.0.1:8765/ws/ingest"
+    uri = "ws://127.0.0.1:8766"
     session_id = f"sim_{int(time.time())}"
     interval = 1.0 / hz
     batch_size = 10  # send 10 records per WS message

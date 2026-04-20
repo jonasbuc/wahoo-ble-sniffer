@@ -16,7 +16,7 @@ python "$ScriptRoot\init_db.py"
 Write-Host ""
 Write-Host "=== Starting Live Analytics server ==="
 Write-Host "  HTTP API : http://127.0.0.1:$($env:LA_HTTP_PORT ?? '8080')"
-Write-Host "  WS Ingest: ws://127.0.0.1:$($env:LA_WS_INGEST_PORT ?? '8765')/ws/ingest"
+Write-Host "  WS Ingest: ws://127.0.0.1:$($env:LA_WS_INGEST_PORT ?? '8766')"
 Write-Host ""
 
 # Start the server

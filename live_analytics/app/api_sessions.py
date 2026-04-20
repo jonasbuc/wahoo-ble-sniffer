@@ -25,12 +25,20 @@ async def healthz() -> dict:
 
 @router.get("/api/sessions", response_model=list[SessionSummary])
 async def sessions_list() -> list[SessionSummary]:
-    return list_sessions(DB_PATH)
+    try:
+        return list_sessions(DB_PATH)
+    except Exception:
+        logger.exception("Failed to list sessions")
+        return []
 
 
 @router.get("/api/sessions/{session_id}", response_model=SessionDetail)
 async def session_detail(session_id: str) -> SessionDetail:
-    detail = get_session(DB_PATH, session_id)
+    try:
+        detail = get_session(DB_PATH, session_id)
+    except Exception:
+        logger.exception("Failed to get session %s", session_id)
+        raise HTTPException(status_code=500, detail="Database error")
     if detail is None:
         raise HTTPException(status_code=404, detail="Session not found")
     return detail
@@ -41,14 +49,21 @@ async def live_latest() -> LiveLatest | None:
     """Return the latest live state across all active sessions."""
     if not latest_scores or not latest_records:
         return None
-    # Pick the most recently updated session
-    sid = max(latest_records, key=lambda s: latest_records[s].unix_ms)
-    rec = latest_records[sid]
-    scores = latest_scores.get(sid, ScoringResult())
-    return LiveLatest(
-        session_id=sid,
-        unix_ms=rec.unix_ms,
-        speed=rec.speed,
-        heart_rate=rec.heart_rate,
-        scores=scores,
-    )
+    try:
+        # Snapshot to avoid RuntimeError if dict mutates during iteration
+        records_snapshot = dict(latest_records)
+        if not records_snapshot:
+            return None
+        sid = max(records_snapshot, key=lambda s: records_snapshot[s].unix_ms)
+        rec = records_snapshot[sid]
+        scores = latest_scores.get(sid, ScoringResult())
+        return LiveLatest(
+            session_id=sid,
+            unix_ms=rec.unix_ms,
+            speed=rec.speed,
+            heart_rate=rec.heart_rate,
+            scores=scores,
+        )
+    except Exception:
+        logger.warning("live_latest snapshot failed, returning None", exc_info=True)
+        return None

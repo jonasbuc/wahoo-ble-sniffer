@@ -3,7 +3,7 @@ Live Analytics – FastAPI application entry point.
 
 Starts both:
   • the FastAPI HTTP/WS server on LA_HTTP_PORT (default 8080)
-  • the standalone websockets ingest server on LA_WS_INGEST_PORT (default 8765)
+  • the standalone websockets ingest server on LA_WS_INGEST_PORT (default 8766)
 """
 
 from __future__ import annotations
@@ -41,14 +41,35 @@ logger = logging.getLogger("live_analytics")
 @asynccontextmanager
 async def lifespan(app: FastAPI):  # noqa: ARG001
     """Startup / shutdown logic for the FastAPI application."""
+    logger.info("── Startup ────────────────────────────────────────")
+    logger.info("  DB_PATH     = %s", DB_PATH)
+    logger.info("  SESSIONS_DIR= %s", SESSIONS_DIR)
+    logger.info("  HTTP        = %s:%d", HTTP_HOST, HTTP_PORT)
+    logger.info("  LOG_LEVEL   = %s", LOG_LEVEL)
+
     ensure_dirs()
+    logger.info("  Data directories OK")
+
     init_db(DB_PATH)
     set_raw_writer(RawWriter(SESSIONS_DIR))
-    logger.info("FastAPI HTTP server ready on %s:%d", HTTP_HOST, HTTP_PORT)
+    logger.info("  Storage initialised")
 
     # Start the ingest WS server as a background task
-    asyncio.create_task(start_ingest_server())
+    task = asyncio.create_task(start_ingest_server())
+    task.add_done_callback(_ingest_task_done)
+    logger.info("── Startup complete ───────────────────────────────")
     yield
+    logger.info("── Shutdown ───────────────────────────────────────")
+
+
+def _ingest_task_done(task: asyncio.Task) -> None:
+    """Log if the ingest server exits or crashes unexpectedly."""
+    if task.cancelled():
+        logger.warning("Ingest WS server task was cancelled.")
+    elif task.exception():
+        logger.error("Ingest WS server crashed: %s", task.exception(), exc_info=task.exception())
+    else:
+        logger.info("Ingest WS server exited cleanly.")
 
 
 # ── FastAPI app ───────────────────────────────────────────────────────
@@ -59,9 +80,8 @@ app.add_api_websocket_route("/ws/dashboard", dashboard_ws)
 
 def main() -> None:
     """CLI entry point – ``python -m live_analytics.app.main``."""
-    ensure_dirs()
-    init_db(DB_PATH)
-    set_raw_writer(RawWriter(SESSIONS_DIR))
+    # Note: ensure_dirs/init_db/set_raw_writer are handled by the lifespan
+    # context manager when uvicorn imports the app object.
     uvicorn.run(
         "live_analytics.app.main:app",
         host=HTTP_HOST,

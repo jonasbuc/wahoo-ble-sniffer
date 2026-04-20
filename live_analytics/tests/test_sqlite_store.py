@@ -5,12 +5,14 @@ Tests for live_analytics.app.storage.sqlite_store
 from __future__ import annotations
 
 import tempfile
+from collections.abc import Generator
 from pathlib import Path
 
 import pytest
 
 from live_analytics.app.models import ScoringResult
 from live_analytics.app.storage.sqlite_store import (
+    close_pool,
     end_session,
     get_recent_events,
     get_session,
@@ -24,10 +26,11 @@ from live_analytics.app.storage.sqlite_store import (
 
 
 @pytest.fixture()
-def db_path(tmp_path: Path) -> Path:
+def db_path(tmp_path: Path) -> Generator[Path, None, None]:
     p = tmp_path / "test.db"
     init_db(p)
-    return p
+    yield p
+    close_pool()
 
 
 class TestSqliteStore:
