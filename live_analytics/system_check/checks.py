@@ -485,23 +485,44 @@ def _verify_session_dir(
 def check_service_http(url: str, name: str = "Service") -> dict[str, Any]:
     """Check if an HTTP service is responding (GET /api/healthz or /)."""
     label = f"Service: {name}"
+    import urllib.error
     import urllib.request
 
+    last_exc: Exception | None = None
     for path in ["/api/healthz", "/api/sessions", "/"]:
         try:
             req = urllib.request.Request(url + path, method="GET")
             with urllib.request.urlopen(req, timeout=2) as resp:
                 status = resp.status
-                body = resp.read().decode("utf-8", errors="ignore")[:200]
                 return {"ok": True, "severity": "ok", "label": label,
                         "detail": f"OK – HTTP {status} på {url}{path}",
                         "url": url, "status": status}
-        except Exception:
+        except urllib.error.HTTPError as exc:
+            # A 4xx/5xx from the service means it's reachable but returned an error.
+            # Only treat 5xx as a real failure; 4xx may just mean "wrong path".
+            if exc.code >= 500:
+                return {"ok": False, "severity": "error", "label": label,
+                        "detail": f"HTTP {exc.code} fra {url}{path}: {exc.reason}",
+                        "url": url, "status": exc.code}
+            last_exc = exc
+            continue
+        except (ConnectionRefusedError, OSError, TimeoutError) as exc:
+            # Expected when service is not yet started
+            last_exc = exc
+            continue
+        except Exception as exc:
+            logger.warning(
+                "check_service_http: unexpected error probing %s%s: %s: %s",
+                url, path, type(exc).__name__, exc,
+            )
+            last_exc = exc
             continue
 
+    detail = f"Ingen svar fra {url}. Start serveren først."
+    if last_exc is not None:
+        detail += f" ({type(last_exc).__name__}: {last_exc})"
     return {"ok": False, "severity": "warn", "label": label,
-            "detail": f"Ingen svar fra {url}. Start serveren først.",
-            "url": url}
+            "detail": detail, "url": url}
 
 
 # ═══════════════════════════════════════════════════════════════════════

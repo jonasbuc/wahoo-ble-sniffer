@@ -110,7 +110,21 @@ async def list_questionnaires() -> dict:
 
 @app.post("/api/participants")
 async def create_participant_endpoint(body: ParticipantCreate) -> dict:
-    return create_participant(DB_PATH, body.participant_id, body.display_name, body.session_id, body.metadata)
+    try:
+        result = create_participant(DB_PATH, body.participant_id, body.display_name, body.session_id, body.metadata)
+    except Exception as exc:
+        logger.exception(
+            "DB error creating participant '%s': %s", body.participant_id, exc
+        )
+        raise HTTPException(status_code=500, detail="Failed to create participant – see server log")
+    if result is None:
+        logger.error(
+            "create_participant returned None for participant_id='%s' – "
+            "insert may have succeeded but the subsequent SELECT failed",
+            body.participant_id,
+        )
+        raise HTTPException(status_code=500, detail="Participant created but could not be retrieved")
+    return result
 
 
 @app.get("/api/participants")

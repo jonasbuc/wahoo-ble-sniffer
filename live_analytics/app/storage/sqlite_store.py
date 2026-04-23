@@ -32,14 +32,12 @@ _pool_lock = threading.Lock()
 
 def _connect(db_path: Path | str) -> sqlite3.Connection:
     key = str(db_path)
-    conn = _pool.get(key)
-    if conn is not None:
-        return conn
-
+    # Fast path: read under lock to avoid TOCTOU race between the initial
+    # unsynchronised get() and the double-check inside the lock.
     with _pool_lock:
-        # Double-check after acquiring lock
-        if key in _pool:
-            return _pool[key]
+        conn = _pool.get(key)
+        if conn is not None:
+            return conn
         try:
             conn = sqlite3.connect(str(db_path), check_same_thread=False)
         except sqlite3.OperationalError as exc:
@@ -116,13 +114,20 @@ def upsert_session(
     start_unix_ms: int,
     scenario_id: str = "",
 ) -> None:
-    """Insert or update session metadata."""
+    """Insert or update session metadata.
+
+    On conflict (same session_id), updates both scenario_id AND start_unix_ms
+    so that a session re-used after a Unity crash reflects the correct start
+    time rather than carrying a stale value from the previous run.
+    """
     conn = _connect(db_path)
     conn.execute(
         """
         INSERT INTO sessions (session_id, start_unix_ms, scenario_id)
         VALUES (?, ?, ?)
-        ON CONFLICT(session_id) DO UPDATE SET scenario_id = excluded.scenario_id
+        ON CONFLICT(session_id) DO UPDATE SET
+            start_unix_ms = excluded.start_unix_ms,
+            scenario_id   = excluded.scenario_id
         """,
         (session_id, start_unix_ms, scenario_id),
     )

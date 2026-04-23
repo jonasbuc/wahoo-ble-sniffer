@@ -156,16 +156,23 @@ def _ingest_session_batch(sid: str, records: list[TelemetryRecord]) -> None:
 
     # Initialise session on first encounter
     if sid not in _windows:
+        db_ok = True
         try:
             upsert_session(DB_PATH, sid, first_rec.unix_ms, first_rec.scenario_id)
         except Exception:
             logger.exception(
-                "DB error: could not upsert session %s in %s – continuing without DB registration",
+                "DB error: could not upsert session %s in %s – "
+                "session will still be scored and raw JSONL written, "
+                "but record counts and scores will NOT be persisted to SQLite",
                 sid, DB_PATH,
             )
+            db_ok = False
         _windows[sid] = deque(maxlen=_WINDOW_MAX)
         _record_counts[sid] = 0
-        logger.info("New session started: %s (scenario=%r)", sid, first_rec.scenario_id)
+        logger.info(
+            "New session started: %s (scenario=%r, db_registered=%s)",
+            sid, first_rec.scenario_id, db_ok,
+        )
 
     # Persist raw records – one file open/close for the whole batch
     if _raw_writer:
@@ -234,7 +241,12 @@ async def _broadcast_dashboard(session_id: str | None) -> None:
         "scores": scores.model_dump(),
     })
     dead: list[Any] = []
-    for sub in dashboard_subscribers:
+    # Snapshot the subscriber set before iterating.
+    # Without a snapshot, an `await sub.send()` suspends this coroutine;
+    # while it is suspended, `dashboard_ws` may add or remove a subscriber,
+    # causing "RuntimeError: Set changed size during iteration" on the next
+    # iteration step.
+    for sub in list(dashboard_subscribers):
         try:
             await sub.send(payload)
         except Exception:

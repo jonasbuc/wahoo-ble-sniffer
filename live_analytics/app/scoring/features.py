@@ -170,9 +170,14 @@ def compute_features(
     scan_recs: list[TelemetryRecord] = []
     speed_vals: list[float] = []
 
-    # Trigger detection for brake reaction
-    last_trigger = ""
-    trigger_time: float | None = None
+    # Trigger detection for brake reaction.
+    # We want the reaction time from the *first* trigger event in the window
+    # to the *next* brake event after it.  Tracking only last_trigger means
+    # we'd miss early triggers if a later trigger also appears.  Instead,
+    # record the time of the *first* trigger seen and whether a brake already
+    # fired after it.
+    first_trigger_time: float | None = None
+    first_trigger_id: str = ""
     brm = 0.0
 
     for r in records:
@@ -191,10 +196,10 @@ def compute_features(
         if t >= speed_cut:
             speed_vals.append(r.speed)
 
-        # Track most recent trigger for brake reaction
-        if r.trigger_id:
-            last_trigger = r.trigger_id
-            trigger_time = t
+        # Track first trigger for brake reaction (only set once)
+        if r.trigger_id and first_trigger_time is None:
+            first_trigger_id = r.trigger_id
+            first_trigger_time = t
 
     # ── Steering variance ─────────────────────────────────────────────
     sv = statistics.variance(steer_vals) if len(steer_vals) >= 2 else 0.0
@@ -216,8 +221,16 @@ def compute_features(
     avg_speed = sum(speed_vals) / len(speed_vals) if speed_vals else 0.0
 
     # ── Brake reaction ────────────────────────────────────────────────
-    if last_trigger and trigger_time is not None:
-        brm = brake_reaction_ms(records, trigger_id=last_trigger)
+    # Use first_trigger_time so the reaction window starts from the actual
+    # trigger event rather than re-scanning the whole record list.
+    if first_trigger_id and first_trigger_time is not None:
+        # Find the first brake event *after* the trigger in the original list.
+        for r in records:
+            if r.unity_time <= first_trigger_time:
+                continue
+            if r.brake_front > 0 or r.brake_rear > 0:
+                brm = (r.unity_time - first_trigger_time) * 1000.0
+                break
 
     return WindowFeatures(sv, hrd, hsc, avg_speed, brm)
 

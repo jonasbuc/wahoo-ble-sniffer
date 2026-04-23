@@ -148,6 +148,10 @@ class Service:
                 stdout=log_fh,
                 stderr=log_fh,
             )
+            # Close our handle — the child process inherits it and keeps the file
+            # open.  Without this close() on the parent side the file handle leaks
+            # (especially visible on Windows where it prevents log rotation).
+            log_fh.close()
             self.status = "starting"
         except Exception as e:
             self.status = "error"
@@ -164,9 +168,17 @@ class Service:
         if self.process and self.process.poll() is not None:
             self.status = "error"
             if self.log_file and self.log_file.exists():
-                # Print the last few lines of the log to help diagnose
-                lines = self.log_file.read_text(encoding="utf-8", errors="replace").splitlines()
-                tail = lines[-10:] if len(lines) >= 10 else lines
+                # Read only the last 8 KB to avoid blocking on multi-MB logs
+                try:
+                    with self.log_file.open("r", encoding="utf-8", errors="replace") as _lf:
+                        _lf.seek(0, 2)                      # seek to end
+                        size = _lf.tell()
+                        _lf.seek(max(0, size - 8192))       # last 8 KB
+                        tail_text = _lf.read()
+                    lines = tail_text.splitlines()
+                    tail = lines[-10:]
+                except OSError:
+                    tail = []
                 if tail:
                     print(
                         f"\n  {_RED}✗{_RESET}  '{self.name}' crashed "

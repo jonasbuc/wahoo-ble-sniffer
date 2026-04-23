@@ -25,10 +25,20 @@ async def dashboard_ws(ws: WebSocket) -> None:
     logger.info("Dashboard WebSocket client connected from %s", addr)
     dashboard_subscribers.add(ws)
     try:
-        # Keep the connection alive – the send loop is driven by the ingest side
+        # Keep the connection alive – the send loop is driven by the ingest side.
+        # We don't expect clients to send us anything; absorb any incoming messages
+        # (text or binary) without crashing.  Binary frames from browsers (e.g.
+        # WebSocket ping payloads from some clients) would raise if we called
+        # receive_text() — use receive() instead and discard the payload.
         while True:
-            # Just wait for close / ping
-            await ws.receive_text()
+            msg = await ws.receive()
+            # A disconnect message has type "websocket.disconnect"; re-raise
+            # so the except WebSocketDisconnect handler fires cleanly.
+            if msg.get("type") == "websocket.disconnect":
+                code = msg.get("code", 1000)
+                reason = msg.get("reason", "")
+                from starlette.websockets import WebSocketDisconnect
+                raise WebSocketDisconnect(code=code, reason=reason)
     except WebSocketDisconnect as exc:
         logger.info(
             "Dashboard WebSocket client disconnected from %s (code=%s reason=%r)",
