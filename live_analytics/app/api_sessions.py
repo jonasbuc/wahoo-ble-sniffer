@@ -26,9 +26,11 @@ async def healthz() -> dict:
 @router.get("/api/sessions", response_model=list[SessionSummary])
 async def sessions_list() -> list[SessionSummary]:
     try:
-        return list_sessions(DB_PATH)
+        result = list_sessions(DB_PATH)
+        logger.debug("sessions_list: returned %d sessions", len(result))
+        return result
     except Exception:
-        logger.exception("Failed to list sessions")
+        logger.exception("Failed to list sessions from DB '%s'", DB_PATH)
         return []
 
 
@@ -37,9 +39,12 @@ async def session_detail(session_id: str) -> SessionDetail:
     try:
         detail = get_session(DB_PATH, session_id)
     except Exception:
-        logger.exception("Failed to get session %s", session_id)
+        logger.exception(
+            "Failed to get session '%s' from DB '%s'", session_id, DB_PATH
+        )
         raise HTTPException(status_code=500, detail="Database error")
     if detail is None:
+        logger.debug("session_detail: session '%s' not found in DB '%s'", session_id, DB_PATH)
         raise HTTPException(status_code=404, detail="Session not found")
     return detail
 

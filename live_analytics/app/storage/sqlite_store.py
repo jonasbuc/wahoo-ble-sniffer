@@ -164,16 +164,25 @@ def list_sessions(db_path: Path | str) -> list[SessionSummary]:
         "SELECT session_id, start_unix_ms, end_unix_ms, scenario_id, record_count "
         "FROM sessions ORDER BY start_unix_ms DESC"
     ).fetchall()
-    return [
-        SessionSummary(
-            session_id=r["session_id"],
-            start_unix_ms=r["start_unix_ms"],
-            end_unix_ms=r["end_unix_ms"],
-            scenario_id=r["scenario_id"],
-            record_count=r["record_count"],
-        )
-        for r in rows
-    ]
+    results: list[SessionSummary] = []
+    for r in rows:
+        try:
+            results.append(
+                SessionSummary(
+                    session_id=r["session_id"],
+                    start_unix_ms=r["start_unix_ms"],
+                    end_unix_ms=r["end_unix_ms"],
+                    scenario_id=r["scenario_id"] or "",
+                    record_count=r["record_count"] or 0,
+                )
+            )
+        except Exception as exc:
+            logger.warning(
+                "Skipping malformed session row '%s' in '%s': %s: %s",
+                r["session_id"] if "session_id" in r.keys() else "?",
+                db_path, type(exc).__name__, exc,
+            )
+    return results
 
 
 def get_session(db_path: Path | str, session_id: str) -> Optional[SessionDetail]:
@@ -193,14 +202,23 @@ def get_session(db_path: Path | str, session_id: str) -> Optional[SessionDetail]
             session_id, db_path, exc,
         )
         scores_raw = {}
-    return SessionDetail(
-        session_id=r["session_id"],
-        start_unix_ms=r["start_unix_ms"],
-        end_unix_ms=r["end_unix_ms"],
-        scenario_id=r["scenario_id"],
-        record_count=r["record_count"],
-        latest_scores=ScoringResult(**scores_raw) if scores_raw else None,
-    )
+    try:
+        return SessionDetail(
+            session_id=r["session_id"],
+            start_unix_ms=r["start_unix_ms"],
+            end_unix_ms=r["end_unix_ms"],
+            scenario_id=r["scenario_id"] or "",
+            record_count=r["record_count"] or 0,
+            latest_scores=ScoringResult(**scores_raw) if scores_raw else None,
+        )
+    except Exception as exc:
+        logger.error(
+            "Failed to construct SessionDetail for session '%s' in '%s': %s: %s  "
+            "(row data: start=%r end=%r scenario=%r records=%r)",
+            session_id, db_path, type(exc).__name__, exc,
+            r["start_unix_ms"], r["end_unix_ms"], r["scenario_id"], r["record_count"],
+        )
+        raise
 
 
 # ── Events ────────────────────────────────────────────────────────────

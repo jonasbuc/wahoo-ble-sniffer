@@ -87,6 +87,11 @@ st.set_page_config(page_title="🚴 Live Analytics", layout="wide")
 def _http_session() -> requests.Session:
     s = requests.Session()
     s.headers.update({"Accept": "application/json"})
+    # Disable automatic retries so we see failures immediately instead of
+    # hanging for several seconds while requests silently retries.
+    adapter = requests.adapters.HTTPAdapter(max_retries=0)
+    s.mount("http://", adapter)
+    s.mount("https://", adapter)
     return s
 
 
@@ -96,17 +101,41 @@ def _http_session() -> requests.Session:
 # auto-refresh tick.
 _api_consecutive_failures: int = 0
 _api_was_reachable: bool = True
+# Module-level last-error string – updated by _get() whether it is called
+# from inside @st.cache_data or directly.  The sidebar reads this so that
+# the error display is always current even when _load_sessions() returns a
+# cached result without re-running _get().
+_last_api_error_msg: str | None = None
 
 
 # ── Helper functions ────────────────────────────────────────────────
 def _get(path: str) -> dict | list | None:
-    """GET from the analytics API; returns None on failure and stores error info."""
-    global _api_consecutive_failures, _api_was_reachable
+    """GET from the analytics API; returns None on any failure.
+
+    Failure categories are logged distinctly so the terminal always tells you
+    exactly what went wrong on the first (and every) failed call:
+
+    - ConnectionError / ConnectionRefusedError  → backend not started / wrong port
+    - Timeout                                   → backend overloaded or blocked
+    - HTTPError (4xx / 5xx)                     → backend returned an error response
+    - JSONDecodeError                           → backend returned non-JSON body
+    - Any other Exception                       → unexpected; full traceback logged
+
+    The success-state (consecutive-failure counter, error message) is only
+    reset *after* the response has been fully parsed.  This prevents the
+    misleading "backend unreachable" warning that would appear when the
+    backend IS running but returned a non-JSON body (e.g. a startup HTML page).
+    """
+    global _api_consecutive_failures, _api_was_reachable, _last_api_error_msg
 
     url = f"{API_BASE}{path}"
+    r = None  # keep reference so we can log the body on JSON parse failure
     try:
         r = _http_session().get(url, timeout=(1, 1.5))
         r.raise_for_status()
+        data = r.json()   # parse FIRST – may raise JSONDecodeError
+
+        # ── Only reach here on full success ──────────────────────────
         if _api_consecutive_failures > 0:
             log.info(
                 "Analytics backend recovered after %d failed request(s) – now reachable at %s",
@@ -114,28 +143,63 @@ def _get(path: str) -> dict | list | None:
             )
         _api_consecutive_failures = 0
         _api_was_reachable = True
+        _last_api_error_msg = None
         st.session_state["_last_api_error"] = None
-        return r.json()
+        return data
+
+    except requests.exceptions.ConnectionError as exc:
+        category = "connection refused / not reachable"
+        msg = f"ConnectionError: {exc}"
+    except requests.exceptions.Timeout as exc:
+        category = "request timed out"
+        msg = f"Timeout: {exc}"
+    except requests.exceptions.HTTPError as exc:
+        status = r.status_code if r is not None else "?"
+        body_preview = (r.text[:300] if r is not None else "") or ""
+        category = f"HTTP {status} error"
+        msg = f"HTTPError {status}: {exc}  body_preview={body_preview!r}"
+    except (ValueError, requests.exceptions.JSONDecodeError) as exc:
+        # ValueError covers both the stdlib json.JSONDecodeError (subclass) and
+        # older requests versions that raise ValueError for bad JSON.
+        status = r.status_code if r is not None else "?"
+        body_preview = (r.text[:300] if r is not None else "") or ""
+        category = "non-JSON response body"
+        msg = (
+            f"JSONDecodeError: {exc}  "
+            f"(status={status}, body_preview={body_preview!r})"
+        )
     except Exception as exc:
-        _api_consecutive_failures += 1
+        category = "unexpected exception"
         msg = f"{type(exc).__name__}: {exc}"
-        st.session_state["_last_api_error"] = f"{path} -> {msg}"
-        # Log at WARNING on first failure and every 10th after that to avoid flooding
-        if _api_consecutive_failures == 1:
-            log.warning(
-                "Analytics backend unreachable – GET %s failed: %s  "
-                "(Dashboard is running in degraded mode; data may be stale)",
-                url, msg,
-            )
-        elif _api_consecutive_failures % 10 == 0:
-            log.warning(
-                "Analytics backend still unreachable after %d consecutive failures "
-                "(last attempt: GET %s -> %s)",
-                _api_consecutive_failures, url, msg,
-            )
-        else:
-            log.debug("GET %s failed (failure #%d): %s", url, _api_consecutive_failures, msg)
-        return None
+        log.exception(
+            "Unexpected error calling GET %s – this is likely a bug in the dashboard",
+            url,
+        )
+
+    # ── Failure path ─────────────────────────────────────────────────
+    _api_consecutive_failures += 1
+    error_detail = f"GET {path} → {category}: {msg}"
+    _last_api_error_msg = error_detail
+    st.session_state["_last_api_error"] = error_detail
+
+    if _api_consecutive_failures == 1:
+        log.warning(
+            "Analytics backend unreachable [%s] – GET %s failed: %s  "
+            "(Dashboard is running in degraded mode; data may be stale)",
+            category, url, msg,
+        )
+    elif _api_consecutive_failures % 10 == 0:
+        log.warning(
+            "Analytics backend still unreachable after %d consecutive failures "
+            "[%s] (last attempt: GET %s → %s)",
+            _api_consecutive_failures, category, url, msg,
+        )
+    else:
+        log.debug(
+            "GET %s failed (#%d) [%s]: %s",
+            url, _api_consecutive_failures, category, msg,
+        )
+    return None
 
 
 def _ms_to_str(unix_ms: int | None) -> str:
@@ -224,7 +288,11 @@ with st.sidebar:
     st.header("📂 Sessions")
 
     sessions = _load_sessions()
-    session_ids = [s.get("session_id") for s in sessions if s.get("session_id")]
+    session_ids = [
+        s.get("session_id")
+        for s in sessions
+        if isinstance(s, dict) and s.get("session_id")
+    ]
     _ensure_selected_session(session_ids)
 
     if session_ids:
@@ -243,14 +311,18 @@ with st.sidebar:
         )
 
         for s in sessions:
+            if not isinstance(s, dict):
+                continue
             sid = s.get("session_id", "")
-            ct = s.get("record_count", 0)
+            ct = s.get("record_count") or 0
             st.caption(f"`{sid[:12]}…` — {ct} records")
     else:
         st.session_state["_selected_session"] = None
         st.info("No sessions yet – waiting for data…")
 
-    last_err = st.session_state.get("_last_api_error")
+    # Show last API error – prefer module-level (always current) over
+    # session_state (may be stale on @st.cache_data hits).
+    last_err = _last_api_error_msg or st.session_state.get("_last_api_error")
     if last_err:
         st.divider()
         st.error("Last API error")
@@ -260,6 +332,31 @@ with st.sidebar:
 # ── Auto-refreshing live area only ──────────────────────────────────
 @st.fragment(run_every=REFRESH_SEC)
 def _dashboard_live() -> None:
+    """Main live area – runs every REFRESH_SEC seconds independently.
+
+    Wrapped in a top-level try/except so that any unexpected rendering
+    exception is logged with full context and shown as a recoverable
+    warning rather than crashing the entire page.
+    """
+    try:
+        _render_live()
+    except Exception as exc:
+        log.exception(
+            "Unhandled exception inside _dashboard_live() – fragment will show error box.  "
+            "selected_session=%r  last_api_error=%r  exc=%s: %s",
+            st.session_state.get("_selected_session"),
+            _last_api_error_msg,
+            type(exc).__name__, exc,
+        )
+        st.error(
+            f"⚠️ Dashboard rendering error: **{type(exc).__name__}: {exc}**  \n"
+            "Check the terminal log for details.  The page will auto-retry on next refresh."
+        )
+        raise  # re-raise so Streamlit still shows its own error details
+
+
+def _render_live() -> None:
+    """Core rendering logic – separated so _dashboard_live can wrap it safely."""
     selected = st.session_state.get("_selected_session")
 
     # Health / live status
@@ -283,14 +380,16 @@ def _dashboard_live() -> None:
     st.divider()
 
     # Live latest metrics
+    # Use `(x or 0)` pattern so that JSON null values (None) fall back to 0
+    # instead of causing TypeError inside float()/int().
     col1, col2, col3, col4 = st.columns(4)
 
     if isinstance(live, dict):
-        scores = live.get("scores", {}) or {}
-        col1.metric("🏎️ Speed", f"{float(live.get('speed', 0)):.1f} m/s")
-        col2.metric("❤️ Heart Rate", f"{float(live.get('heart_rate', 0)):.0f} bpm")
-        col3.metric("😰 Stress", f"{float(scores.get('stress_score', 0)):.1f} / 100")
-        col4.metric("⚠️ Risk", f"{float(scores.get('risk_score', 0)):.1f} / 100")
+        scores = live.get("scores") or {}
+        col1.metric("🏎️ Speed", f"{float(live.get('speed') or 0):.1f} m/s")
+        col2.metric("❤️ Heart Rate", f"{float(live.get('heart_rate') or 0):.0f} bpm")
+        col3.metric("😰 Stress", f"{float(scores.get('stress_score') or 0):.1f} / 100")
+        col4.metric("⚠️ Risk", f"{float(scores.get('risk_score') or 0):.1f} / 100")
     else:
         col1.metric("🏎️ Speed", "—")
         col2.metric("❤️ Heart Rate", "—")
@@ -306,14 +405,23 @@ def _dashboard_live() -> None:
 
     detail = _get(f"/api/sessions/{selected}")
     if not isinstance(detail, dict):
-        st.warning("Could not load selected session details.")
+        log.warning(
+            "Could not load session detail for '%s' – _get returned %r",
+            selected, type(detail).__name__,
+        )
+        st.warning(
+            f"Could not load details for session `{selected}`.  "
+            "Check the terminal log for the exact failure reason."
+        )
         return
 
     st.subheader(f"📋 Session: `{selected}`")
 
     dcol1, dcol2, dcol3, dcol4 = st.columns(4)
     dcol1.write(f"**Scenario:** {detail.get('scenario_id') or '—'}")
-    dcol2.write(f"**Records:** {detail.get('record_count', 0):,}")
+    # Use `or 0` so that JSON null falls back to 0 rather than crashing the
+    # format spec `{None:,}` with ValueError.
+    dcol2.write(f"**Records:** {(detail.get('record_count') or 0):,}")
     dcol3.write(f"**Start:** {_ms_to_str(detail.get('start_unix_ms'))}")
     dcol4.write(f"**End:** {_ms_to_str(detail.get('end_unix_ms'))}")
 
@@ -321,12 +429,12 @@ def _dashboard_live() -> None:
     if isinstance(ls, dict):
         st.subheader("📊 Scoring Breakdown")
         sc1, sc2, sc3, sc4, sc5, sc6 = st.columns(6)
-        sc1.metric("Stress", f"{float(ls.get('stress_score', 0)):.1f}")
-        sc2.metric("Risk", f"{float(ls.get('risk_score', 0)):.1f}")
-        sc3.metric("Brake RT", f"{float(ls.get('brake_reaction_ms', 0)):.0f} ms")
-        sc4.metric("Head Scans", f"{int(ls.get('head_scan_count_5s', 0))}")
-        sc5.metric("Steer Var", f"{float(ls.get('steering_variance_3s', 0)):.2f}")
-        sc6.metric("HR Δ 10s", f"{float(ls.get('hr_delta_10s', 0)):.1f} bpm")
+        sc1.metric("Stress", f"{float(ls.get('stress_score') or 0):.1f}")
+        sc2.metric("Risk", f"{float(ls.get('risk_score') or 0):.1f}")
+        sc3.metric("Brake RT", f"{float(ls.get('brake_reaction_ms') or 0):.0f} ms")
+        sc4.metric("Head Scans", f"{int(ls.get('head_scan_count_5s') or 0)}")
+        sc5.metric("Steer Var", f"{float(ls.get('steering_variance_3s') or 0):.2f}")
+        sc6.metric("HR Δ 10s", f"{float(ls.get('hr_delta_10s') or 0):.1f} bpm")
 
     st.divider()
 
@@ -336,6 +444,9 @@ def _dashboard_live() -> None:
     jsonl_path = DATA_DIR / "sessions" / selected / "telemetry.jsonl"
 
     if not jsonl_path.exists():
+        log.debug(
+            "No telemetry file for session '%s' at '%s'", selected, jsonl_path
+        )
         st.info("No telemetry file yet for this session.")
         return
 
@@ -346,13 +457,18 @@ def _dashboard_live() -> None:
         return
 
     if "unity_time" not in df.columns:
+        log.warning(
+            "Telemetry file for session '%s' has no 'unity_time' column – "
+            "columns present: %s",
+            selected, list(df.columns),
+        )
         st.warning("Telemetry file does not contain 'unity_time'.")
         return
 
     try:
         df = df.sort_values("unity_time").drop_duplicates(subset=["unity_time"], keep="last")
     except Exception as exc:
-        log.warning("Failed to sort/dedup telemetry DataFrame: %s", exc)
+        log.warning("Failed to sort/dedup telemetry DataFrame for session '%s': %s", selected, exc)
 
     chart_col1, chart_col2 = st.columns(2)
 
