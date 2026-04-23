@@ -1,6 +1,66 @@
-# Live Analytics
+# live_analytics/
 
-Real-time telemetry processing and dashboarding for the Wahoo BLE VR Cycling Simulator.
+> **Se den fulde dokumentation i rodets [`README.md`](../README.md).**
+
+Dette undermappens README er bevaret som en kort reference til `live_analytics/`-modulet.
+Alle installations-, opstarts- og konfigurationsinstruktioner er i rodets README.
+
+---
+
+## Hvad er i denne mappe?
+
+```
+live_analytics/
+├── app/              FastAPI analytics-server (HTTP :8080 + WS ingest :8766)
+├── dashboard/        Streamlit dashboard (:8501)
+├── questionnaire/    Questionnaire-service (FastAPI :8090)
+├── system_check/     System Check GUI (FastAPI :8095)
+├── scripts/          Hjælpe-scripts (init_db.py, simulate_ride.py, …)
+├── data/             Runtime-data (auto-oprettet: live_analytics.db, sessions/)
+└── tests/            pytest-tests for analytics-pipeline
+```
+
+## Hurtig reference — porte
+
+| Service | Port |
+|---|---|
+| Analytics API (HTTP) | **8080** |
+| WS ingest (Unity → server) | **8766** |
+| Dashboard | **8501** |
+| Questionnaire | **8090** |
+| System Check GUI | **8095** |
+
+## Hurtig reference — miljøvariable
+
+| Variabel | Standard |
+|---|---|
+| `LA_HTTP_PORT` | `8080` |
+| `LA_WS_INGEST_PORT` | `8766` |
+| `LA_DB_PATH` | `live_analytics/data/live_analytics.db` |
+| `LA_SESSIONS_DIR` | `live_analytics/data/sessions` |
+| `LA_LOG_LEVEL` | `INFO` |
+| `QS_PORT` | `8090` |
+| `SC_PORT` | `8095` |
+
+## Start (fra repo-roden)
+
+```bash
+# Alle services på én gang
+python starters/launcher.py
+
+# Eller enkeltvis
+python -m uvicorn live_analytics.app.main:app --port 8080
+streamlit run live_analytics/dashboard/streamlit_app.py -- --api http://127.0.0.1:8080
+
+# Simulér en tur (kræver kørende API)
+python live_analytics/scripts/simulate_ride.py --duration 60 --hz 20
+```
+
+## Tests
+
+```bash
+pytest live_analytics/tests/
+```
 
 ## Architecture
 
