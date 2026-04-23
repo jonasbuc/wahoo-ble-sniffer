@@ -90,19 +90,51 @@ def _http_session() -> requests.Session:
     return s
 
 
+# ── Backend connectivity state (module-level, survives fragment reruns) ─
+# We track consecutive failures so we only emit a terminal warning once
+# when the backend goes down and once when it comes back — not on every
+# auto-refresh tick.
+_api_consecutive_failures: int = 0
+_api_was_reachable: bool = True
+
+
 # ── Helper functions ────────────────────────────────────────────────
 def _get(path: str) -> dict | list | None:
     """GET from the analytics API; returns None on failure and stores error info."""
+    global _api_consecutive_failures, _api_was_reachable
+
     url = f"{API_BASE}{path}"
     try:
         r = _http_session().get(url, timeout=(1, 1.5))
         r.raise_for_status()
+        if _api_consecutive_failures > 0:
+            log.info(
+                "Analytics backend recovered after %d failed request(s) – now reachable at %s",
+                _api_consecutive_failures, API_BASE,
+            )
+        _api_consecutive_failures = 0
+        _api_was_reachable = True
         st.session_state["_last_api_error"] = None
         return r.json()
     except Exception as exc:
+        _api_consecutive_failures += 1
         msg = f"{type(exc).__name__}: {exc}"
         st.session_state["_last_api_error"] = f"{path} -> {msg}"
-        log.warning("GET failed for %s: %s", url, msg)
+        # Log at WARNING on first failure and every 10th after that to avoid flooding
+        if _api_consecutive_failures == 1:
+            log.warning(
+                "Analytics backend unreachable – GET %s failed: %s  "
+                "(Dashboard is running in degraded mode; data may be stale)",
+                url, msg,
+            )
+        elif _api_consecutive_failures % 10 == 0:
+            log.warning(
+                "Analytics backend still unreachable after %d consecutive failures "
+                "(last attempt: GET %s -> %s)",
+                _api_consecutive_failures, url, msg,
+            )
+        else:
+            log.debug("GET %s failed (failure #%d): %s", url, _api_consecutive_failures, msg)
         return None
 
 

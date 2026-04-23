@@ -80,10 +80,13 @@ async def _handle_connection(ws: ServerConnection) -> None:
     try:
         async for message in ws:
             await _process_message(ws, message)
-    except ConnectionClosed:
-        logger.info("Unity client disconnected: %s", peer)
+    except ConnectionClosed as exc:
+        logger.info(
+            "Unity client disconnected: %s  (code=%s reason=%r)",
+            peer, exc.code, exc.reason,
+        )
     except Exception:
-        logger.exception("Error in ingest connection from %s", peer)
+        logger.exception("Unexpected error in ingest connection from %s – closing", peer)
 
 
 async def _process_message(ws: ServerConnection, raw: str) -> None:
@@ -112,7 +115,13 @@ async def _process_message(ws: ServerConnection, raw: str) -> None:
         by_session.setdefault(rec.session_id, []).append(rec)
 
     for sid, records in by_session.items():
-        _ingest_session_batch(sid, records)
+        try:
+            _ingest_session_batch(sid, records)
+        except Exception:
+            logger.exception(
+                "Failed to ingest batch for session %s (%d records) – batch dropped",
+                sid, len(records),
+            )
 
     # ── Send feedback to Unity (latest scores for first session) ─────
     session_id = batch.records[0].session_id
@@ -147,13 +156,26 @@ def _ingest_session_batch(sid: str, records: list[TelemetryRecord]) -> None:
 
     # Initialise session on first encounter
     if sid not in _windows:
-        upsert_session(DB_PATH, sid, first_rec.unix_ms, first_rec.scenario_id)
+        try:
+            upsert_session(DB_PATH, sid, first_rec.unix_ms, first_rec.scenario_id)
+        except Exception:
+            logger.exception(
+                "DB error: could not upsert session %s in %s – continuing without DB registration",
+                sid, DB_PATH,
+            )
         _windows[sid] = deque(maxlen=_WINDOW_MAX)
         _record_counts[sid] = 0
+        logger.info("New session started: %s (scenario=%r)", sid, first_rec.scenario_id)
 
     # Persist raw records – one file open/close for the whole batch
     if _raw_writer:
         _raw_writer.append_many(records)
+    else:
+        logger.warning(
+            "raw_writer is not initialised – telemetry for session %s not persisted to JSONL "
+            "(running in degraded mode; DB record count and scoring still active)",
+            sid,
+        )
 
     # Update sliding window for all records
     window = _windows[sid]
@@ -164,17 +186,36 @@ def _ingest_session_batch(sid: str, records: list[TelemetryRecord]) -> None:
     n = len(records)
     old_count = _record_counts[sid]
     _record_counts[sid] = old_count + n
-    increment_record_count(DB_PATH, sid, n)
+    try:
+        increment_record_count(DB_PATH, sid, n)
+    except Exception:
+        logger.exception(
+            "DB error: could not increment record_count for session %s in %s",
+            sid, DB_PATH,
+        )
 
     # Score once on the updated window
-    scores = compute_scores(list(window))
+    try:
+        scores = compute_scores(list(window))
+    except Exception:
+        logger.exception(
+            "Scoring failed for session %s (window size=%d) – keeping previous scores",
+            sid, len(window),
+        )
+        return
     latest_scores[sid] = scores
     latest_records[sid] = records[-1]
 
     # Persist scores snapshot every _SCORE_PERSIST_EVERY records.
     # Trigger when the counter crosses a multiple of _SCORE_PERSIST_EVERY.
     if old_count // _SCORE_PERSIST_EVERY != _record_counts[sid] // _SCORE_PERSIST_EVERY:
-        update_latest_scores(DB_PATH, sid, scores)
+        try:
+            update_latest_scores(DB_PATH, sid, scores)
+        except Exception:
+            logger.exception(
+                "DB error: could not persist scores for session %s in %s",
+                sid, DB_PATH,
+            )
 
 
 async def _broadcast_dashboard(session_id: str | None) -> None:
@@ -200,11 +241,32 @@ async def _broadcast_dashboard(session_id: str | None) -> None:
             dead.append(sub)
     for d in dead:
         dashboard_subscribers.discard(d)
-        logger.debug("Removed dead dashboard subscriber")
+        logger.info(
+            "Dashboard subscriber removed after send failure (addr=%s)",
+            getattr(d, "remote_address", "<unknown>"),
+        )
 
 
 async def start_ingest_server() -> None:
     """Start the standalone websockets ingest server."""
     logger.info("Starting ingest WS on %s:%d", WS_INGEST_HOST, WS_INGEST_PORT)
-    async with websockets.serve(_handle_connection, WS_INGEST_HOST, WS_INGEST_PORT):
-        await asyncio.Future()  # run forever
+    try:
+        async with websockets.serve(_handle_connection, WS_INGEST_HOST, WS_INGEST_PORT):
+            logger.info(
+                "Ingest WS server listening on ws://%s:%d – waiting for Unity connections",
+                WS_INGEST_HOST, WS_INGEST_PORT,
+            )
+            await asyncio.Future()  # run forever
+    except OSError as exc:
+        logger.critical(
+            "Ingest WS server failed to bind on %s:%d – %s: %s  "
+            "(Is another process already on that port?)",
+            WS_INGEST_HOST, WS_INGEST_PORT, type(exc).__name__, exc,
+        )
+        raise
+    except Exception:
+        logger.exception(
+            "Ingest WS server crashed unexpectedly (was listening on %s:%d)",
+            WS_INGEST_HOST, WS_INGEST_PORT,
+        )
+        raise

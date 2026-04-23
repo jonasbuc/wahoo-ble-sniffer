@@ -40,11 +40,20 @@ def _connect(db_path: Path | str) -> sqlite3.Connection:
         # Double-check after acquiring lock
         if key in _pool:
             return _pool[key]
-        conn = sqlite3.connect(str(db_path), check_same_thread=False)
+        try:
+            conn = sqlite3.connect(str(db_path), check_same_thread=False)
+        except sqlite3.OperationalError as exc:
+            logger.critical(
+                "Cannot open SQLite database at '%s': %s  "
+                "(Check that the directory exists and the process has write permission.)",
+                db_path, exc,
+            )
+            raise
         conn.execute("PRAGMA journal_mode=WAL;")
         conn.execute("PRAGMA busy_timeout=5000;")
         conn.row_factory = sqlite3.Row
         _pool[key] = conn
+        logger.debug("Opened new SQLite connection to '%s'", db_path)
         return conn
 
 
@@ -54,8 +63,8 @@ def close_pool() -> None:
         for key, conn in _pool.items():
             try:
                 conn.close()
-            except Exception:
-                logger.debug("Error closing pooled connection %s (ignored)", key)
+            except Exception as exc:
+                logger.debug("Error closing pooled connection '%s' (ignored): %s", key, exc)
         _pool.clear()
 
 # ── Schema DDL ────────────────────────────────────────────────────────
@@ -85,9 +94,17 @@ CREATE INDEX IF NOT EXISTS idx_events_session ON events(session_id);
 
 def init_db(db_path: Path | str) -> None:
     """Create tables if they don't exist."""
-    conn = _connect(db_path)
-    conn.executescript(_DDL)
-    conn.commit()
+    try:
+        conn = _connect(db_path)
+        conn.executescript(_DDL)
+        conn.commit()
+    except sqlite3.Error as exc:
+        logger.critical(
+            "Failed to initialise database schema at '%s': %s – "
+            "the analytics service cannot start without a working database.",
+            db_path, exc,
+        )
+        raise
     logger.info("SQLite DB initialised at %s", db_path)
 
 
@@ -168,7 +185,14 @@ def get_session(db_path: Path | str, session_id: str) -> Optional[SessionDetail]
     ).fetchone()
     if r is None:
         return None
-    scores_raw = json.loads(r["latest_scores"]) if r["latest_scores"] else {}
+    try:
+        scores_raw = json.loads(r["latest_scores"]) if r["latest_scores"] else {}
+    except (json.JSONDecodeError, TypeError) as exc:
+        logger.warning(
+            "Malformed latest_scores JSON for session '%s' in '%s': %s – treating as empty",
+            session_id, db_path, exc,
+        )
+        scores_raw = {}
     return SessionDetail(
         session_id=r["session_id"],
         start_unix_ms=r["start_unix_ms"],

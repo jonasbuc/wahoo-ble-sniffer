@@ -47,11 +47,35 @@ async def lifespan(app: FastAPI):  # noqa: ARG001
     logger.info("  HTTP        = %s:%d", HTTP_HOST, HTTP_PORT)
     logger.info("  LOG_LEVEL   = %s", LOG_LEVEL)
 
-    ensure_dirs()
-    logger.info("  Data directories OK")
+    try:
+        ensure_dirs()
+        logger.info("  Data directories OK")
+    except Exception as exc:
+        logger.critical(
+            "Startup failed: could not create data directories: %s – "
+            "check that the process has write permission to %s",
+            exc, SESSIONS_DIR,
+        )
+        raise
 
-    init_db(DB_PATH)
-    set_raw_writer(RawWriter(SESSIONS_DIR))
+    try:
+        init_db(DB_PATH)
+    except Exception as exc:
+        logger.critical(
+            "Startup failed: could not initialise SQLite database at '%s': %s",
+            DB_PATH, exc,
+        )
+        raise
+
+    try:
+        set_raw_writer(RawWriter(SESSIONS_DIR))
+    except Exception as exc:
+        logger.critical(
+            "Startup failed: could not create RawWriter for sessions dir '%s': %s",
+            SESSIONS_DIR, exc,
+        )
+        raise
+
     logger.info("  Storage initialised")
 
     # Start the ingest WS server as a background task
@@ -65,9 +89,16 @@ async def lifespan(app: FastAPI):  # noqa: ARG001
 def _ingest_task_done(task: asyncio.Task) -> None:
     """Log if the ingest server exits or crashes unexpectedly."""
     if task.cancelled():
-        logger.warning("Ingest WS server task was cancelled.")
-    elif task.exception():
-        logger.error("Ingest WS server crashed: %s", task.exception(), exc_info=task.exception())
+        logger.warning(
+            "Ingest WS server task was cancelled – Unity clients will no longer be able to connect."
+        )
+    elif (exc := task.exception()) is not None:
+        logger.critical(
+            "Ingest WS server crashed and will NOT restart: %s: %s  "
+            "(Unity telemetry ingest is now offline – restart the service to recover)",
+            type(exc).__name__, exc,
+            exc_info=exc,
+        )
     else:
         logger.info("Ingest WS server exited cleanly.")
 

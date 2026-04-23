@@ -268,8 +268,8 @@ def check_vrsf_logs(
                     manifest = json.loads(f.read())
                 session_info["session_id"] = manifest.get("session_id")
                 session_info["started_unix_ms"] = manifest.get("started_unix_ms")
-            except Exception:
-                pass
+            except (OSError, json.JSONDecodeError) as exc:
+                logger.debug("Could not read manifest.json in '%s': %s", sd, exc)
 
         session_info["files_present"] = files_present
         session_info["missing_files"] = missing
@@ -354,7 +354,8 @@ def check_session_by_id(
             # Match against session_id (could be numeric string) or display_id
             if str(m_sid) == session_id or m_did == session_id:
                 return _verify_session_dir(sd, session_id, expected_files, label)
-        except Exception:
+        except (OSError, json.JSONDecodeError) as exc:
+            logger.debug("Skipping manifest in '%s': %s", sd, exc)
             continue
 
     # ── 3. Check sessions_history.ndjson ──────────────────────────────
@@ -383,8 +384,11 @@ def check_session_by_id(
                                     candidate, session_id, expected_files, label,
                                     history_entry=history_match,
                                 )
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug(
+                "Error scanning sessions_history.ndjson for session '%s' at '%s': %s",
+                session_id, history_path, exc,
+            )
 
     # ── Not found ─────────────────────────────────────────────────────
     detail = f"Session '{session_id}' ikke fundet."
@@ -449,8 +453,11 @@ def _verify_session_dir(
         try:
             with open(manifest_path, encoding="utf-8") as f:
                 manifest_info = json.loads(f.read())
-        except Exception:
-            pass
+        except (OSError, json.JSONDecodeError) as exc:
+            logger.debug(
+                "Could not read manifest.json in '%s': %s",
+                session_dir, exc,
+            )
 
     return {
         "ok": ok,
@@ -556,6 +563,7 @@ def run_all_checks(
                     "ok": False, "severity": "error",
                     "label": key, "detail": f"Check crashed: {exc}",
                 }
+                logger.error("System check '%s' raised an unhandled exception: %s", key, exc, exc_info=True)
 
     elapsed = time.time() - t0
     checks_only = {k: v for k, v in results.items() if isinstance(v, dict) and "ok" in v}
@@ -563,6 +571,25 @@ def run_all_checks(
     warned  = sum(1 for r in checks_only.values() if not r.get("ok") and r.get("severity") == "warn")
     failed  = sum(1 for r in checks_only.values() if not r.get("ok") and r.get("severity") == "error")
     all_ok  = all(r["ok"] for r in checks_only.values())
+
+    # Log a one-line summary so CI / terminal runs always show the overall result
+    if all_ok:
+        logger.info(
+            "System checks complete: %d/%d passed in %.2fs",
+            passed, len(checks_only), elapsed,
+        )
+    else:
+        for key, r in checks_only.items():
+            if not r.get("ok"):
+                logger.warning(
+                    "System check FAILED [%s]: %s",
+                    r.get("label", key), r.get("detail", ""),
+                )
+        logger.warning(
+            "System checks complete: %d passed, %d warnings, %d errors in %.2fs",
+            passed, warned, failed, elapsed,
+        )
+
     results["_summary"] = {
         "all_ok": all_ok,
         "passed": passed,

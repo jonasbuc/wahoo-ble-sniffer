@@ -257,9 +257,9 @@ class WahooBridgeServer:
                             try:
                                 await c.send(message)
                             except Exception:
-                                LOG.debug(
-                                    "Removing client after send failure: %s",
-                                    getattr(c, "remote_address", None),
+                                LOG.info(
+                                    "Removing dead broadcast client (send failed): %s",
+                                    getattr(c, "remote_address", "<unknown>"),
                                 )
                                 try:
                                     self.clients.discard(c)
@@ -315,8 +315,12 @@ class WahooBridgeServer:
                 )
                 self._udp_transport = udp_transport
                 LOG.info("UDP event listener bound to %s:%d", self.udp_host, self.udp_port)
-            except Exception:
-                LOG.debug("Failed to bind UDP listener on %s:%d", self.udp_host, self.udp_port)
+            except Exception as exc:
+                LOG.warning(
+                    "Failed to bind UDP event listener on %s:%d – %s: %s  "
+                    "(Arduino trigger events will NOT be forwarded to Unity clients)",
+                    self.udp_host, self.udp_port, type(exc).__name__, exc,
+                )
 
             # Run broadcast loop and ping loop concurrently while server context is active
             ping_task = asyncio.create_task(self.ping_loop())
@@ -353,9 +357,9 @@ class WahooBridgeServer:
             try:
                 await c.send(text)
             except Exception:
-                LOG.debug(
-                    "Error sending JSON to client, removing: %s",
-                    getattr(c, "remote_address", None),
+                LOG.info(
+                    "Removing dead JSON broadcast client (send failed): %s",
+                    getattr(c, "remote_address", "<unknown>"),
                 )
                 try:
                     self.clients.discard(c)
@@ -659,10 +663,8 @@ class WahooBridgeServer:
                     pong_waiter = await c.ping()
                     await asyncio.wait_for(pong_waiter, timeout=5)
                 except Exception:
-                    LOG.debug(
-                        "Ping failed for client %s, removing",
-                        getattr(c, "remote_address", None),
-                    )
+                    addr = getattr(c, "remote_address", "<unknown>")
+                    LOG.info("Ping timeout / failed for client %s – removing", addr)
                     try:
                         self.clients.discard(c)
                         await c.close()
@@ -748,6 +750,18 @@ def main():
         format="%(asctime)s %(levelname)s %(message)s",
     )
 
+    LOG.info(
+        "── WahooBridgeServer starting ──────────────────────────────────────────"
+    )
+    LOG.info("  mode     = %s", "LIVE (BLE)" if args.live else "MOCK (simulated)")
+    LOG.info("  ws       = ws://%s:%d", args.host, args.port)
+    LOG.info("  udp      = %s:%d", "127.0.0.1", 5005)
+    if args.ble_address:
+        LOG.info("  ble addr = %s", args.ble_address)
+    LOG.info(
+        "──────────────────────────────────────────────────────────────────────────"
+    )
+
     server = WahooBridgeServer(
         host=args.host,
         port=args.port,
@@ -763,7 +777,14 @@ def main():
     try:
         asyncio.run(server.start())
     except KeyboardInterrupt:
-        LOG.info("Shutting down server")
+        LOG.info("Shutting down bridge server (KeyboardInterrupt)")
+    except Exception:
+        LOG.critical(
+            "Bridge server crashed – ws://%s:%d is now offline",
+            args.host, args.port,
+            exc_info=True,
+        )
+        raise
 
 
 if __name__ == "__main__":

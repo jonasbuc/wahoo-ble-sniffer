@@ -49,10 +49,28 @@ STATIC_DIR = Path(__file__).resolve().parent / "static"
 @asynccontextmanager
 async def lifespan(app: FastAPI):  # noqa: ARG001
     """Startup / shutdown logic for the questionnaire service."""
-    ensure_dirs()
-    init_db(DB_PATH)
+    logger.info("── Questionnaire service startup ──────────────────")
+    logger.info("  DB_PATH = %s", DB_PATH)
+    logger.info("  Listen  = %s:%d", HOST, PORT)
+    try:
+        ensure_dirs()
+    except Exception as exc:
+        logger.critical(
+            "Questionnaire startup failed: could not create data directories: %s",
+            exc,
+        )
+        raise
+    try:
+        init_db(DB_PATH)
+    except Exception as exc:
+        logger.critical(
+            "Questionnaire startup failed: could not initialise DB at '%s': %s",
+            DB_PATH, exc,
+        )
+        raise
     logger.info("Questionnaire service ready on %s:%d", HOST, PORT)
     yield
+    logger.info("── Questionnaire service shutdown ─────────────────")
 
 
 # ── App ───────────────────────────────────────────────────────────────
@@ -131,7 +149,14 @@ async def save_single_answer(participant_id: str, phase: str, body: AnswerSave) 
     p = get_participant(DB_PATH, participant_id)
     if not p:
         raise HTTPException(404, "Participant not found")
-    save_answer(DB_PATH, participant_id, phase, body.question_id, body.answer)
+    try:
+        save_answer(DB_PATH, participant_id, phase, body.question_id, body.answer)
+    except Exception as exc:
+        logger.exception(
+            "DB error saving answer for participant '%s' phase='%s' question='%s': %s",
+            participant_id, phase, body.question_id, exc,
+        )
+        raise HTTPException(500, "Failed to save answer – see server log")
     return {"ok": True}
 
 
@@ -141,14 +166,28 @@ async def save_bulk_answers(participant_id: str, phase: str, body: AnswersBulkSa
     p = get_participant(DB_PATH, participant_id)
     if not p:
         raise HTTPException(404, "Participant not found")
-    save_answers_bulk(DB_PATH, participant_id, phase, body.answers)
+    try:
+        save_answers_bulk(DB_PATH, participant_id, phase, body.answers)
+    except Exception as exc:
+        logger.exception(
+            "DB error bulk-saving %d answers for participant '%s' phase='%s': %s",
+            len(body.answers), participant_id, phase, exc,
+        )
+        raise HTTPException(500, "Failed to save answers – see server log")
     return {"ok": True}
 
 
 @app.get("/api/participants/{participant_id}/answers/{phase}")
 async def get_answers_endpoint(participant_id: str, phase: str) -> list[dict]:
     """Load saved answers for resume."""
-    return get_answers(DB_PATH, participant_id, phase)
+    try:
+        return get_answers(DB_PATH, participant_id, phase)
+    except Exception as exc:
+        logger.exception(
+            "DB error loading answers for participant '%s' phase='%s': %s",
+            participant_id, phase, exc,
+        )
+        raise HTTPException(500, "Failed to load answers – see server log")
 
 
 @app.get("/api/participants/{participant_id}/answers")
@@ -172,8 +211,7 @@ async def healthz() -> dict:
 # ── Entry point ───────────────────────────────────────────────────────
 
 def main() -> None:
-    ensure_dirs()
-    init_db(DB_PATH)
+    # ensure_dirs / init_db are handled by the lifespan context manager.
     uvicorn.run("live_analytics.questionnaire.app:app", host=HOST, port=PORT, log_level=LOG_LEVEL.lower())
 
 

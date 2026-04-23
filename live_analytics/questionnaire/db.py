@@ -44,22 +44,31 @@ def _connect(db_path: Path | str) -> sqlite3.Connection:
     with _pool_lock:
         if key in _pool:
             return _pool[key]
-        conn = sqlite3.connect(str(db_path), check_same_thread=False)
+        try:
+            conn = sqlite3.connect(str(db_path), check_same_thread=False)
+        except sqlite3.OperationalError as exc:
+            logger.critical(
+                "Cannot open questionnaire SQLite database at '%s': %s  "
+                "(Check that the directory exists and is writable.)",
+                db_path, exc,
+            )
+            raise
         conn.execute("PRAGMA journal_mode=WAL;")
         conn.execute("PRAGMA busy_timeout=5000;")
         conn.row_factory = sqlite3.Row
         _pool[key] = conn
+        logger.debug("Opened new questionnaire DB connection to '%s'", db_path)
         return conn
 
 
 def close_pool() -> None:
     """Close all cached connections. Used by tests for clean teardown."""
     with _pool_lock:
-        for conn in _pool.values():
+        for key, conn in _pool.items():
             try:
                 conn.close()
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("Error closing questionnaire DB connection '%s' (ignored): %s", key, exc)
         _pool.clear()
 
 
@@ -98,9 +107,17 @@ def _now() -> str:
 # ── Init ──────────────────────────────────────────────────────────────
 
 def init_db(db_path: Path | str) -> None:
-    conn = _connect(db_path)
-    conn.executescript(_DDL)
-    conn.commit()
+    try:
+        conn = _connect(db_path)
+        conn.executescript(_DDL)
+        conn.commit()
+    except sqlite3.Error as exc:
+        logger.critical(
+            "Failed to initialise questionnaire DB schema at '%s': %s – "
+            "the questionnaire service cannot start without a working database.",
+            db_path, exc,
+        )
+        raise
     logger.info("Questionnaire DB initialised at %s", db_path)
 
 
@@ -163,14 +180,21 @@ def save_answer(
 ) -> None:
     """Upsert a single answer (auto-saves / resume-friendly)."""
     conn = _connect(db_path)
-    conn.execute(
-        """INSERT INTO questionnaire_responses (participant_id, phase, question_id, answer, answered_at)
-           VALUES (?, ?, ?, ?, ?)
-           ON CONFLICT(participant_id, phase, question_id)
-           DO UPDATE SET answer = excluded.answer, answered_at = excluded.answered_at""",
-        (participant_id, phase, question_id, json.dumps(answer), _now()),
-    )
-    conn.commit()
+    try:
+        conn.execute(
+            """INSERT INTO questionnaire_responses (participant_id, phase, question_id, answer, answered_at)
+               VALUES (?, ?, ?, ?, ?)
+               ON CONFLICT(participant_id, phase, question_id)
+               DO UPDATE SET answer = excluded.answer, answered_at = excluded.answered_at""",
+            (participant_id, phase, question_id, json.dumps(answer), _now()),
+        )
+        conn.commit()
+    except sqlite3.Error as exc:
+        logger.error(
+            "DB error saving answer participant='%s' phase='%s' question='%s': %s",
+            participant_id, phase, question_id, exc,
+        )
+        raise
 
 
 def save_answers_bulk(
@@ -182,14 +206,21 @@ def save_answers_bulk(
     """Upsert many answers at once using executemany (one round-trip)."""
     now = _now()
     conn = _connect(db_path)
-    conn.executemany(
-        """INSERT INTO questionnaire_responses (participant_id, phase, question_id, answer, answered_at)
-           VALUES (?, ?, ?, ?, ?)
-           ON CONFLICT(participant_id, phase, question_id)
-           DO UPDATE SET answer = excluded.answer, answered_at = excluded.answered_at""",
-        [(participant_id, phase, qid, json.dumps(val), now) for qid, val in answers.items()],
-    )
-    conn.commit()
+    try:
+        conn.executemany(
+            """INSERT INTO questionnaire_responses (participant_id, phase, question_id, answer, answered_at)
+               VALUES (?, ?, ?, ?, ?)
+               ON CONFLICT(participant_id, phase, question_id)
+               DO UPDATE SET answer = excluded.answer, answered_at = excluded.answered_at""",
+            [(participant_id, phase, qid, json.dumps(val), now) for qid, val in answers.items()],
+        )
+        conn.commit()
+    except sqlite3.Error as exc:
+        logger.error(
+            "DB error bulk-saving %d answers participant='%s' phase='%s': %s",
+            len(answers), participant_id, phase, exc,
+        )
+        raise
 
 
 def get_answers(
