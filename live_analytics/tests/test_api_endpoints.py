@@ -55,7 +55,28 @@ class TestHealthz:
     def test_healthz_ok(self, patched_app):
         r = patched_app.get("/healthz")
         assert r.status_code == 200
-        assert r.json() == {"status": "ok"}
+        assert r.json()["status"] == "ok"
+
+    def test_healthz_db_ok_field_present(self, patched_app):
+        """healthz must include db_ok (bool), db_path (str), db_detail (str)."""
+        r = patched_app.get("/healthz")
+        data = r.json()
+        assert isinstance(data["db_ok"], bool)
+        assert isinstance(data["db_path"], str)
+        assert isinstance(data["db_detail"], str)
+
+    def test_healthz_db_ok_true_when_db_reachable(self, patched_app):
+        r = patched_app.get("/healthz")
+        assert r.json()["db_ok"] is True
+
+    def test_healthz_db_ok_false_when_db_missing(self, monkeypatch, patched_app):
+        """db_ok must be False when the DB path doesn't exist."""
+        import live_analytics.app.api_sessions as api_mod
+        monkeypatch.setattr(api_mod, "_db_health_check", lambda: (False, "no such file"))
+        r = patched_app.get("/healthz")
+        data = r.json()
+        assert data["db_ok"] is False
+        assert "no such file" in data["db_detail"]
 
 
 class TestSessionsEndpoints:

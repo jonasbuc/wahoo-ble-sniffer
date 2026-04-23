@@ -15,6 +15,7 @@ import logging
 import os
 import sys
 from collections import deque
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 
@@ -78,6 +79,13 @@ log.info("  REFRESH_SEC    = %d", REFRESH_SEC)
 log.info("  DATA_DIR       = %s (exists=%s)", DATA_DIR, DATA_DIR.exists())
 log.info("  MAX_CHART_ROWS = %d", MAX_CHART_ROWS)
 log.info("───────────────────────────────────────────────────")
+if not DATA_DIR.exists():
+    log.warning(
+        "DATA_DIR '%s' does not exist.  "
+        "Telemetry charts will show 'No telemetry file' until the directory is created.  "
+        "Override with the LA_DATA_DIR environment variable if the path is wrong.",
+        DATA_DIR,
+    )
 
 st.set_page_config(page_title="🚴 Live Analytics", layout="wide")
 
@@ -212,6 +220,32 @@ def _ms_to_str(unix_ms: int | None) -> str:
         return "—"
 
 
+def _fmt_metric(val: Any, fmt: str, unit: str = "") -> str:
+    """Format a numeric metric value for display in st.metric() or st.write().
+
+    Returns ``"—"`` (an em-dash) when *val* is ``None``.  This makes it visually
+    clear to the user that the field is absent from the backend response, rather
+    than silently showing a potentially misleading ``0``.
+
+    Args:
+        val:  Raw value from the API response (may be ``None`` / JSON null).
+        fmt:  Python format-spec string applied to ``float(val)``, e.g. ``".1f"``.
+        unit: Optional unit string appended after the formatted number, e.g. ``" m/s"``.
+
+    Examples::
+
+        _fmt_metric(None, ".1f", " m/s")   # → "—"
+        _fmt_metric(0,    ".1f", " m/s")   # → "0.0 m/s"
+        _fmt_metric(3.14, ".1f", " m/s")   # → "3.1 m/s"
+    """
+    if val is None:
+        return "—"
+    try:
+        return f"{float(val):{fmt}}{unit}"
+    except (TypeError, ValueError):
+        return "—"
+
+
 def _read_last_jsonl_rows(path: Path, n: int = 600) -> pd.DataFrame:
     """
     Read only the last n JSONL rows.
@@ -286,6 +320,12 @@ with st.sidebar:
 
     st.divider()
     st.header("📂 Sessions")
+    # The session list is cached for REFRESH_SEC seconds.  Use this button to
+    # force an immediate re-fetch (e.g. after a session is created or deleted).
+    if st.button("🔄 Refresh sessions", help=f"Session list is cached for {REFRESH_SEC}s"):
+        _load_sessions.clear()
+        st.rerun()
+    st.caption(f"⏱ Session list auto-refreshes every {REFRESH_SEC}s (may be up to {REFRESH_SEC}s stale)")
 
     sessions = _load_sessions()
     session_ids = [
@@ -356,18 +396,51 @@ def _dashboard_live() -> None:
 
 
 def _render_live() -> None:
-    """Core rendering logic – separated so _dashboard_live can wrap it safely."""
+    """Core rendering logic – separated so _dashboard_live can wrap it safely.
+
+    The three backend calls (/healthz, /api/live/latest, /api/sessions/{id})
+    are fired in parallel using a ThreadPoolExecutor so that the worst-case
+    wait time is max(t1, t2, t3) instead of t1 + t2 + t3 (≤ 1.5 s vs ≤ 4.5 s
+    at the configured timeout).
+    """
     selected = st.session_state.get("_selected_session")
 
-    # Health / live status
-    health = _get("/healthz")
-    live = _get("/api/live/latest")
+    # ── Parallel API fetch ───────────────────────────────────────────
+    health: dict | None = None
+    live: dict | None = None
+    detail: dict | None = None
+
+    _paths: dict[str, str] = {
+        "health": "/healthz",
+        "live": "/api/live/latest",
+    }
+    if selected:
+        _paths["detail"] = f"/api/sessions/{selected}"
+
+    with ThreadPoolExecutor(max_workers=len(_paths)) as ex:
+        futures = {ex.submit(_get, path): key for key, path in _paths.items()}
+        for fut in as_completed(futures):
+            key = futures[fut]
+            try:
+                result = fut.result()
+            except Exception as exc:
+                log.warning("Parallel _get(%r) raised: %s: %s", key, type(exc).__name__, exc)
+                result = None
+            if key == "health":
+                health = result
+            elif key == "live":
+                live = result
+            elif key == "detail":
+                detail = result
 
     top1, top2 = st.columns([1, 3])
 
     with top1:
         if health and isinstance(health, dict) and health.get("status") == "ok":
-            st.success("● Connected")
+            if health.get("db_ok") is False:
+                st.warning("● DB error")
+            else:
+                st.success("● Connected")
         else:
             st.error("● Unreachable")
 
@@ -376,20 +449,26 @@ def _render_live() -> None:
             st.caption("Receiving live data from backend")
         else:
             st.caption("No live payload received right now")
+        # Surface DB health detail when the backend is up but the DB is broken
+        if health and isinstance(health, dict) and health.get("db_ok") is False:
+            st.warning(
+                f"⚠️ Backend DB unreachable: `{health.get('db_detail', 'unknown error')}`  \n"
+                f"Path: `{health.get('db_path', '?')}`"
+            )
 
     st.divider()
 
-    # Live latest metrics
-    # Use `(x or 0)` pattern so that JSON null values (None) fall back to 0
-    # instead of causing TypeError inside float()/int().
+    # ── Live latest metrics ──────────────────────────────────────────
+    # _fmt_metric() returns "—" for None (JSON null), making it visually
+    # clear that the field is absent rather than showing a misleading 0.
     col1, col2, col3, col4 = st.columns(4)
 
     if isinstance(live, dict):
         scores = live.get("scores") or {}
-        col1.metric("🏎️ Speed", f"{float(live.get('speed') or 0):.1f} m/s")
-        col2.metric("❤️ Heart Rate", f"{float(live.get('heart_rate') or 0):.0f} bpm")
-        col3.metric("😰 Stress", f"{float(scores.get('stress_score') or 0):.1f} / 100")
-        col4.metric("⚠️ Risk", f"{float(scores.get('risk_score') or 0):.1f} / 100")
+        col1.metric("🏎️ Speed",      _fmt_metric(live.get("speed"),              ".1f", " m/s"))
+        col2.metric("❤️ Heart Rate", _fmt_metric(live.get("heart_rate"),         ".0f", " bpm"))
+        col3.metric("😰 Stress",     _fmt_metric(scores.get("stress_score"),     ".1f", " / 100"))
+        col4.metric("⚠️ Risk",       _fmt_metric(scores.get("risk_score"),       ".1f", " / 100"))
     else:
         col1.metric("🏎️ Speed", "—")
         col2.metric("❤️ Heart Rate", "—")
@@ -398,12 +477,11 @@ def _render_live() -> None:
 
     st.divider()
 
-    # Session detail
+    # ── Session detail ───────────────────────────────────────────────
     if not selected:
         st.info("Select a session in the sidebar.")
         return
 
-    detail = _get(f"/api/sessions/{selected}")
     if not isinstance(detail, dict):
         log.warning(
             "Could not load session detail for '%s' – _get returned %r",
@@ -419,8 +497,6 @@ def _render_live() -> None:
 
     dcol1, dcol2, dcol3, dcol4 = st.columns(4)
     dcol1.write(f"**Scenario:** {detail.get('scenario_id') or '—'}")
-    # Use `or 0` so that JSON null falls back to 0 rather than crashing the
-    # format spec `{None:,}` with ValueError.
     dcol2.write(f"**Records:** {(detail.get('record_count') or 0):,}")
     dcol3.write(f"**Start:** {_ms_to_str(detail.get('start_unix_ms'))}")
     dcol4.write(f"**End:** {_ms_to_str(detail.get('end_unix_ms'))}")
@@ -429,16 +505,17 @@ def _render_live() -> None:
     if isinstance(ls, dict):
         st.subheader("📊 Scoring Breakdown")
         sc1, sc2, sc3, sc4, sc5, sc6 = st.columns(6)
-        sc1.metric("Stress", f"{float(ls.get('stress_score') or 0):.1f}")
-        sc2.metric("Risk", f"{float(ls.get('risk_score') or 0):.1f}")
-        sc3.metric("Brake RT", f"{float(ls.get('brake_reaction_ms') or 0):.0f} ms")
-        sc4.metric("Head Scans", f"{int(ls.get('head_scan_count_5s') or 0)}")
-        sc5.metric("Steer Var", f"{float(ls.get('steering_variance_3s') or 0):.2f}")
-        sc6.metric("HR Δ 10s", f"{float(ls.get('hr_delta_10s') or 0):.1f} bpm")
+        sc1.metric("Stress",     _fmt_metric(ls.get("stress_score"),        ".1f"))
+        sc2.metric("Risk",       _fmt_metric(ls.get("risk_score"),          ".1f"))
+        sc3.metric("Brake RT",   _fmt_metric(ls.get("brake_reaction_ms"),   ".0f", " ms"))
+        sc4.metric("Head Scans", "—" if ls.get("head_scan_count_5s") is None
+                                     else str(int(ls["head_scan_count_5s"])))
+        sc5.metric("Steer Var",  _fmt_metric(ls.get("steering_variance_3s"), ".2f"))
+        sc6.metric("HR Δ 10s",   _fmt_metric(ls.get("hr_delta_10s"),         ".1f", " bpm"))
 
     st.divider()
 
-    # Charts
+    # ── Charts ───────────────────────────────────────────────────────
     st.subheader("📈 Recent Trends")
 
     jsonl_path = DATA_DIR / "sessions" / selected / "telemetry.jsonl"

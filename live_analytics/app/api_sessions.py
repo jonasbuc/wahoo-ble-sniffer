@@ -18,9 +18,44 @@ logger = logging.getLogger("live_analytics.api_sessions")
 router = APIRouter()
 
 
+def _db_health_check() -> tuple[bool, str]:
+    """Probe the SQLite database with a lightweight SELECT 1.
+
+    Returns a (ok, detail) tuple where *ok* is True when the DB is reachable
+    and *detail* is either ``"ok"`` or an error message.
+
+    This is intentionally lightweight — it opens the pooled connection (no
+    file I/O if already open) and executes a single no-op query.  It is called
+    on every /healthz request so that the dashboard can surface DB failures
+    even when no sessions have been created yet.
+    """
+    try:
+        from live_analytics.app.storage.sqlite_store import _connect
+        conn = _connect(DB_PATH)
+        conn.execute("SELECT 1").fetchone()
+        return True, "ok"
+    except Exception as exc:
+        logger.warning("healthz: DB health check failed for '%s': %s", DB_PATH, exc)
+        return False, str(exc)
+
+
 @router.get("/healthz")
 async def healthz() -> dict:
-    return {"status": "ok"}
+    """Health check endpoint.
+
+    Response fields:
+    - ``status``: always ``"ok"`` when the API process is alive.
+    - ``db_ok``: ``True`` when the SQLite database is reachable, ``False`` otherwise.
+    - ``db_path``: Resolved path to the SQLite database file.
+    - ``db_detail``: ``"ok"`` on success or the error message on failure.
+    """
+    db_ok, db_detail = _db_health_check()
+    return {
+        "status": "ok",
+        "db_ok": db_ok,
+        "db_path": str(DB_PATH),
+        "db_detail": db_detail,
+    }
 
 
 @router.get("/api/sessions", response_model=list[SessionSummary])
