@@ -9,6 +9,11 @@ requests>=2.31,<3
 streamlit>=1.33,<2
 numpy>=1.26,<2
 
+# Required by FastAPI/Starlette StaticFiles for async file delivery
+# under a real uvicorn server (questionnaire + system_check UIs)
+aiofiles>=23.0
+sqlalchemy>=2.0
+
 # Dev
 pytest>=7.0
 pytest-asyncio>=0.21.0

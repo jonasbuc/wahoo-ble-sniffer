@@ -23,6 +23,14 @@ if ! command -v python3 &>/dev/null; then
     exit 1
 fi
 PY_VER=$(python3 --version | cut -d' ' -f2)
+PY_MAJOR=$(echo "$PY_VER" | cut -d'.' -f1)
+PY_MINOR=$(echo "$PY_VER" | cut -d'.' -f2)
+if [ "$PY_MAJOR" -lt 3 ] || { [ "$PY_MAJOR" -eq 3 ] && [ "$PY_MINOR" -lt 11 ]; }; then
+    echo "  ✗  Python $PY_VER fundet, men projektet kræver Python ≥ 3.11!"
+    echo "     Installér en nyere version fra https://www.python.org/downloads/"
+    read -rp "  Tryk Enter for at lukke …"
+    exit 1
+fi
 echo "  ✓  Python $PY_VER"
 echo ""
 
@@ -47,10 +55,7 @@ echo ""
 
 # ── 4. Verificér ──────────────────────────────────────────────
 echo "  [4/5] Verificerer installation …"
-python -c "
-import bleak, websockets, fastapi, uvicorn, pydantic, streamlit, pandas, requests, numpy
-print('  ✓  Alle moduler OK')
-"
+python starters/preflight.py
 
 # ── Initialisér database & mapper ─────────────────────────────
 echo "  [5/5] Initialiserer database …"

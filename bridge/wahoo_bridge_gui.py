@@ -36,6 +36,7 @@ Trigger      : ``{"event": "hall_hit", "source": "udp", "timestamp": …}``
 
 import asyncio
 import json
+import sys
 import threading
 import time
 import tkinter as tk
@@ -45,11 +46,14 @@ from tkinter import ttk
 try:
     import websockets
 except ImportError:
-    print("Installing websockets...")
-    import subprocess
-
-    subprocess.check_call(["pip", "install", "websockets"])
-    import websockets
+    print(
+        "\n  ✗  Missing package: 'websockets' is not installed in the active Python environment.\n"
+        f"     Interpreter: {sys.executable}\n"
+        "     Fix: run INSTALL.command (macOS) or INSTALL.bat (Windows) from the repo root,\n"
+        "          or: pip install websockets\n",
+        file=sys.stderr,
+    )
+    sys.exit(1)
 
 
 class WahooBridgeGUI:

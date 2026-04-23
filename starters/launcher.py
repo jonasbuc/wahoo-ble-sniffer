@@ -95,26 +95,51 @@ class Service:
         self.cwd = cwd or str(ROOT)
         self.process: subprocess.Popen | None = None
         self.status: str = "starting"  # starting | ok | error | skipped
+        self.log_file: Path | None = None
 
     def start(self) -> None:
         env = os.environ.copy()
         env["PYTHONUNBUFFERED"] = "1"
+        log_dir = ROOT / "logs"
+        log_dir.mkdir(exist_ok=True)
+        safe_name = self.name.lower().replace(" ", "_")
+        self.log_file = log_dir / f"{safe_name}.log"
         try:
+            log_fh = self.log_file.open("w", encoding="utf-8", errors="replace")
             self.process = subprocess.Popen(
                 self.cmd,
                 cwd=self.cwd,
                 env=env,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
+                stdout=log_fh,
+                stderr=log_fh,
             )
             self.status = "starting"
         except Exception as e:
             self.status = "error"
+            print(
+                f"\n  {_RED}✗{_RESET}  Failed to start '{self.name}': "
+                f"{type(e).__name__}: {e}\n"
+                f"     Command: {' '.join(self.cmd)}\n"
+                f"     CWD:     {self.cwd}\n",
+                flush=True,
+            )
 
     def check_health(self) -> bool:
         """Return True if the service is responding."""
         if self.process and self.process.poll() is not None:
             self.status = "error"
+            if self.log_file and self.log_file.exists():
+                # Print the last few lines of the log to help diagnose
+                lines = self.log_file.read_text(encoding="utf-8", errors="replace").splitlines()
+                tail = lines[-10:] if len(lines) >= 10 else lines
+                if tail:
+                    print(
+                        f"\n  {_RED}✗{_RESET}  '{self.name}' crashed "
+                        f"(exit {self.process.poll()}). "
+                        f"Log: {self.log_file}\n"
+                        + "\n".join(f"     {l}" for l in tail) + "\n",
+                        flush=True,
+                    )
             return False
 
         if self.health_url:

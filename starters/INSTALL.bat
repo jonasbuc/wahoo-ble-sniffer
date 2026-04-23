@@ -28,6 +28,20 @@ if not defined PY (
     exit /b 1
 )
 for /f "tokens=2" %%i in ('"%PY%" --version') do set PYTHON_VERSION=%%i
+for /f "tokens=1 delims=." %%a in ("%PYTHON_VERSION%") do set PY_MAJOR=%%a
+for /f "tokens=2 delims=." %%b in ("%PYTHON_VERSION%") do set PY_MINOR=%%b
+if %PY_MAJOR% LSS 3 (
+    echo   X  Python %PYTHON_VERSION% fundet, men projektet kraever Python ^>= 3.11!
+    echo      Installer en nyere version fra https://www.python.org/downloads/
+    pause
+    exit /b 1
+)
+if %PY_MAJOR% EQU 3 if %PY_MINOR% LSS 11 (
+    echo   X  Python %PYTHON_VERSION% fundet, men projektet kraever Python ^>= 3.11!
+    echo      Installer en nyere version fra https://www.python.org/downloads/
+    pause
+    exit /b 1
+)
 echo   OK  Python %PYTHON_VERSION%
 echo.
 
@@ -62,7 +76,7 @@ echo.
 
 REM -- 4. Verify ------------------------------------------------------
 echo   [4/5] Verificerer installation ...
-.venv\Scripts\python.exe -c "import bleak, websockets, fastapi, uvicorn, pydantic, streamlit, pandas, requests, numpy; print('  OK  Alle moduler OK')"
+.venv\Scripts\python.exe starters\preflight.py
 if %errorlevel% neq 0 (
     echo   X  Verifikation fejlede!
     pause
