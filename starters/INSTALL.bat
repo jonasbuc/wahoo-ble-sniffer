@@ -61,6 +61,12 @@ if exist .venv\Scripts\python.exe (
 )
 echo.
 
+REM -- 2b. PowerShell ExecutionPolicy (so PS1 scripts can run) ---------
+echo   [2b] Konfigurerer PowerShell ExecutionPolicy ...
+powershell.exe -NoProfile -NonInteractive -Command ^
+  "try { Set-ExecutionPolicy RemoteSigned -Scope CurrentUser -Force; Write-Host '  OK  ExecutionPolicy sat til RemoteSigned (CurrentUser)' } catch { Write-Host ('  !   Kunne ikke aendre ExecutionPolicy: ' + $_.Exception.Message) }"
+echo.
+
 REM -- 3. Install dependencies ----------------------------------------
 echo   [3/5] Installerer afhaengigheder ...
 .venv\Scripts\python.exe -m pip install --quiet --upgrade pip

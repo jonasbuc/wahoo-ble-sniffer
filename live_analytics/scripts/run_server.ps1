@@ -1,4 +1,12 @@
-<# Live Analytics – start FastAPI + ingest server #>
+<#
+  Live Analytics – start FastAPI + ingest server
+
+  TIP: If PowerShell blocks this script with "running scripts is disabled",
+  run ONE of these fixes (once per machine):
+    • Double-click  live_analytics\scripts\run_server.bat   (recommended)
+    • Or in an admin PowerShell:
+        Set-ExecutionPolicy RemoteSigned -Scope CurrentUser -Force
+#>
 $ErrorActionPreference = "Stop"
 
 $ScriptRoot  = Split-Path -Parent $MyInvocation.MyCommand.Path

@@ -46,7 +46,27 @@ def test_required_package_importable(pkg: str) -> None:
 
 
 # ─────────────────────────────────────────────────────────────────────
-# 2. Internal package imports
+# 2. All required packages are declared in requirements.txt
+# ─────────────────────────────────────────────────────────────────────
+
+def test_requirements_txt_declares_streamlit() -> None:
+    """streamlit must be declared in requirements.txt (not just pyproject.toml)."""
+    req_txt = (REPO_ROOT / "requirements.txt").read_text(encoding="utf-8")
+    assert "streamlit" in req_txt, (
+        "streamlit is missing from requirements.txt — add 'streamlit>=1.33' "
+        "so `pip install -r requirements.txt` produces a working environment"
+    )
+
+
+@pytest.mark.parametrize("pkg", ["aiofiles", "sqlalchemy", "fastapi", "uvicorn", "bleak", "websockets"])
+def test_requirements_txt_declares_package(pkg: str) -> None:
+    """Key packages must be declared in requirements.txt."""
+    req_txt = (REPO_ROOT / "requirements.txt").read_text(encoding="utf-8")
+    assert pkg in req_txt, f"'{pkg}' missing from requirements.txt"
+
+
+# ─────────────────────────────────────────────────────────────────────
+# 3. Internal package imports
 # ─────────────────────────────────────────────────────────────────────
 
 INTERNAL_MODULES = [
@@ -66,7 +86,7 @@ def test_internal_module_importable(mod: str) -> None:
 
 
 # ─────────────────────────────────────────────────────────────────────
-# 3. init_db.py idempotency
+# 4. init_db.py idempotency
 # ─────────────────────────────────────────────────────────────────────
 
 def test_init_db_idempotent(tmp_path: Path) -> None:
@@ -87,7 +107,7 @@ def test_init_db_idempotent(tmp_path: Path) -> None:
 
 
 # ─────────────────────────────────────────────────────────────────────
-# 4. preflight.py exits 0 in current env
+# 5. preflight.py exits 0 in current env
 # ─────────────────────────────────────────────────────────────────────
 
 def test_preflight_exits_zero() -> None:
@@ -105,7 +125,7 @@ def test_preflight_exits_zero() -> None:
 
 
 # ─────────────────────────────────────────────────────────────────────
-# 5. system_check/__init__.py has no duplicate top-level names
+# 6. system_check/__init__.py has no duplicate top-level names
 # ─────────────────────────────────────────────────────────────────────
 
 def test_system_check_no_duplicate_names() -> None:
@@ -127,3 +147,47 @@ def test_system_check_no_duplicate_names() -> None:
             assigned.append(node.name)
     duplicates = {name for name in assigned if assigned.count(name) > 1}
     assert not duplicates, f"Duplicate definitions in system_check/__init__.py: {duplicates}"
+
+
+# ─────────────────────────────────────────────────────────────────────
+# 7. Log rotation helper
+# ─────────────────────────────────────────────────────────────────────
+
+def test_rotate_log_creates_backup(tmp_path: Path) -> None:
+    """_rotate_log must rename the current log to .log.1 on next run."""
+    sys.path.insert(0, str(REPO_ROOT / "starters"))
+    import importlib as _il
+    launcher = _il.import_module("launcher")
+    log = tmp_path / "analytics_api.log"
+    log.write_text("old run output\n")
+
+    launcher._rotate_log(log)
+
+    assert not log.exists(), "current log should have been rotated away"
+    assert (tmp_path / "analytics_api.log.1").exists(), ".log.1 backup must exist"
+
+
+def test_rotate_log_max_backups(tmp_path: Path) -> None:
+    """_rotate_log must not keep more than _LOG_BACKUPS backups."""
+    sys.path.insert(0, str(REPO_ROOT / "starters"))
+    import importlib as _il
+    launcher = _il.import_module("launcher")
+    log = tmp_path / "svc.log"
+
+    # Simulate _LOG_BACKUPS + 1 prior runs
+    for run in range(launcher._LOG_BACKUPS + 1):
+        log.write_text(f"run {run}\n")
+        launcher._rotate_log(log)
+
+    backups = sorted(tmp_path.glob("svc.log.*"))
+    assert len(backups) <= launcher._LOG_BACKUPS, (
+        f"Too many backups: {[b.name for b in backups]}"
+    )
+
+
+def test_rotate_log_noop_when_absent(tmp_path: Path) -> None:
+    """_rotate_log must not raise when the log file does not exist yet."""
+    sys.path.insert(0, str(REPO_ROOT / "starters"))
+    import importlib as _il
+    launcher = _il.import_module("launcher")
+    launcher._rotate_log(tmp_path / "nonexistent.log")  # must not raise

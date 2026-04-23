@@ -73,6 +73,35 @@ _CLEAR_LINE = "\033[2K"
 _CURSOR_UP = "\033[A"
 
 
+# ── Log rotation ─────────────────────────────────────────────────────
+
+_LOG_MAX_BYTES = 2 * 1024 * 1024  # 2 MB per log file
+_LOG_BACKUPS = 3                   # keep .log.1 / .log.2 / .log.3
+
+
+def _rotate_log(log_path: Path) -> None:
+    """Rotate *log_path* before each new service run.
+
+    The current log becomes .log.1; up to _LOG_BACKUPS numbered backups
+    are kept (.log.1 is most recent). If the oldest backup would exceed
+    _LOG_BACKUPS it is deleted.  Called unconditionally so every run
+    starts with a fresh, empty log file.
+    """
+    if not log_path.exists():
+        return
+    # Shift existing backups: .log.3 deleted, .log.2 → .log.3, …
+    for i in range(_LOG_BACKUPS, 0, -1):
+        src = log_path.with_suffix(f"{log_path.suffix}.{i}")
+        dst = log_path.with_suffix(f"{log_path.suffix}.{i + 1}")
+        if src.exists():
+            if i == _LOG_BACKUPS:
+                src.unlink()  # drop the oldest backup
+            else:
+                src.rename(dst)
+    # Current log → .log.1
+    log_path.rename(log_path.with_suffix(f"{log_path.suffix}.1"))
+
+
 # ── Service definitions ──────────────────────────────────────────────
 
 class Service:
@@ -104,6 +133,7 @@ class Service:
         log_dir.mkdir(exist_ok=True)
         safe_name = self.name.lower().replace(" ", "_")
         self.log_file = log_dir / f"{safe_name}.log"
+        _rotate_log(self.log_file)
         try:
             log_fh = self.log_file.open("w", encoding="utf-8", errors="replace")
             self.process = subprocess.Popen(
