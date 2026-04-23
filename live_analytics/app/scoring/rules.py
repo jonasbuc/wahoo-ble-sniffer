@@ -11,13 +11,7 @@ from __future__ import annotations
 from typing import Sequence
 
 from live_analytics.app.models import ScoringResult, TelemetryRecord
-from live_analytics.app.scoring.features import (
-    brake_reaction_ms,
-    head_scan_count,
-    hr_delta,
-    mean_speed,
-    steering_variance,
-)
+from live_analytics.app.scoring.features import compute_features
 
 # ── Tuning constants ─────────────────────────────────────────────────
 HR_BASELINE: float = 70.0  # resting HR assumed when no calibration
@@ -34,24 +28,20 @@ def compute_scores(
     """
     Evaluate the full scoring result from a sliding window of records.
 
+    All features are extracted in a single pass via ``compute_features()``.
     Returns a :class:`ScoringResult` with all six metrics populated.
     """
     if not records:
         return ScoringResult()
 
-    # ── Feature extraction ────────────────────────────────────────────
-    sv = steering_variance(records, window_sec=3.0)
-    hrd = hr_delta(records, window_sec=10.0)
-    hsc = head_scan_count(records, window_sec=5.0)
-    avg_speed = mean_speed(records, window_sec=5.0)
+    # ── Feature extraction (single pass) ─────────────────────────────
+    f = compute_features(records)
 
-    # Try to detect a recent trigger for brake-reaction
-    last_trigger = ""
-    for r in reversed(list(records)):
-        if r.trigger_id:
-            last_trigger = r.trigger_id
-            break
-    brm = brake_reaction_ms(records, trigger_id=last_trigger)
+    sv = f.steering_variance_3s
+    hrd = f.hr_delta_10s
+    hsc = f.head_scan_count_5s
+    avg_speed = f.mean_speed_5s
+    brm = f.brake_reaction_ms
 
     # ── Stress score (0–100) ──────────────────────────────────────────
     # Primarily driven by heart-rate delta + steering variance
@@ -75,3 +65,4 @@ def compute_scores(
         steering_variance_3s=round(sv, 4),
         hr_delta_10s=round(hrd, 2),
     )
+

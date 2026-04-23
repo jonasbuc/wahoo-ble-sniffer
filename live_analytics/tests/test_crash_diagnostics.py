@@ -97,9 +97,10 @@ class TestConfigLogsInvalidValues:
     """Config helpers must log when they fall back from invalid values."""
 
     def test_int_env_logs_warning(self):
-        code = _read("live_analytics/app/config.py")
+        # helpers moved to env_utils.py – check the canonical source
+        code = _read("live_analytics/app/env_utils.py")
         assert "Invalid int" in code
 
     def test_float_env_logs_warning(self):
-        code = _read("live_analytics/app/config.py")
+        code = _read("live_analytics/app/env_utils.py")
         assert "Invalid float" in code

@@ -404,27 +404,28 @@ def _verify_session_dir(
     label: str,
     history_entry: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Check that a found session directory contains all expected files."""
-    files_present = [f.name for f in session_dir.iterdir() if f.is_file()]
+    """Check that a found session directory contains all expected files.
+
+    Iterates the directory once to collect file names and sizes, rather
+    than calling iterdir() three separate times.
+    """
+    # Single pass: collect (name, size) for all files
+    file_entries: list[tuple[str, int]] = []
+    for p in session_dir.iterdir():
+        if p.is_file():
+            file_entries.append((p.name, p.stat().st_size))
+
+    files_present = [name for name, _ in file_entries]
+    size_by_name = {name: sz for name, sz in file_entries}
+    total_bytes = sum(sz for _, sz in file_entries)
+
     missing = [f for f in expected_files if f not in files_present]
     has_end = "manifest_end.json" in files_present
-    total_bytes = sum(f.stat().st_size for f in session_dir.iterdir() if f.is_file())
 
-    # Read manifest for extra info
-    manifest_info: dict[str, Any] = {}
-    manifest_path = session_dir / "manifest.json"
-    if manifest_path.exists():
-        try:
-            with open(manifest_path, encoding="utf-8") as f:
-                manifest_info = json.loads(f.read())
-        except Exception:
-            pass
-
-    # Check that each .vrsf file is non-empty
+    # Check that each .vrsf file is non-empty (size from same stat)
     empty_files = [
         f for f in expected_files
-        if f.endswith(".vrsf") and f in files_present
-        and (session_dir / f).stat().st_size == 0
+        if f.endswith(".vrsf") and f in files_present and size_by_name.get(f, 0) == 0
     ]
 
     complete = len(missing) == 0 and len(empty_files) == 0
@@ -440,6 +441,16 @@ def _verify_session_dir(
             detail += f" · Tomme filer: {', '.join(empty_files)}"
     else:
         detail = f"Session '{session_id}' har tomme filer: {', '.join(empty_files)}"
+
+    # Read manifest for extra info
+    manifest_info: dict[str, Any] = {}
+    manifest_path = session_dir / "manifest.json"
+    if manifest_path.exists():
+        try:
+            with open(manifest_path, encoding="utf-8") as f:
+                manifest_info = json.loads(f.read())
+        except Exception:
+            pass
 
     return {
         "ok": ok,
@@ -499,38 +510,52 @@ def run_all_checks(
     vrs_log_base: Path | None = None,
     expected_vrsf: list[str] | None = None,
 ) -> dict[str, Any]:
-    """Run every health check and return a combined result dict."""
+    """Run every health check concurrently and return a combined result dict.
+
+    Each check involves network or disk I/O with its own timeout.  Running
+    them in a thread pool reduces total latency from ~sum(timeouts) to
+    ~max(timeout), typically cutting response time from several seconds to
+    under two.
+    """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
     from live_analytics.system_check import (
         ANALYTICS_DB, QUESTIONNAIRE_DB, BRIDGE_WS_URL,
         ANALYTICS_API_URL, QUESTIONNAIRE_API_URL, VRS_LOG_BASE,
         EXPECTED_VRSF_FILES,
     )
 
+    _adb   = analytics_db or ANALYTICS_DB
+    _qdb   = questionnaire_db or QUESTIONNAIRE_DB
+    _bws   = bridge_ws_url or BRIDGE_WS_URL
+    _aapi  = analytics_api_url or ANALYTICS_API_URL
+    _qapi  = questionnaire_api_url or QUESTIONNAIRE_API_URL
+    _vlb   = vrs_log_base or VRS_LOG_BASE
+    _evrsf = expected_vrsf or EXPECTED_VRSF_FILES
+
+    tasks: dict[str, Any] = {
+        "quest_headset":    lambda: check_quest_headset(),
+        "analytics_db":     lambda: check_database(_adb, "Live Analytics"),
+        "questionnaire_db": lambda: check_database(_qdb, "Spørgeskema"),
+        "bridge_connection":lambda: check_bridge_connection(_bws),
+        "analytics_api":    lambda: check_service_http(_aapi, "Analytics API"),
+        "questionnaire_api":lambda: check_service_http(_qapi, "Spørgeskema API"),
+        "vrsf_logs":        lambda: check_vrsf_logs(_vlb, _evrsf),
+    }
+
     t0 = time.time()
     results: dict[str, Any] = {}
 
-    # 1. Quest headset
-    results["quest_headset"] = check_quest_headset()
-
-    # 2. Databases
-    results["analytics_db"] = check_database(
-        analytics_db or ANALYTICS_DB, "Live Analytics")
-    results["questionnaire_db"] = check_database(
-        questionnaire_db or QUESTIONNAIRE_DB, "Spørgeskema")
-
-    # 3. Bridge / heart rate
-    results["bridge_connection"] = check_bridge_connection(bridge_ws_url or BRIDGE_WS_URL)
-
-    # 4. Services
-    results["analytics_api"] = check_service_http(
-        analytics_api_url or ANALYTICS_API_URL, "Analytics API")
-    results["questionnaire_api"] = check_service_http(
-        questionnaire_api_url or QUESTIONNAIRE_API_URL, "Spørgeskema API")
-
-    # 5. VRS logs
-    results["vrsf_logs"] = check_vrsf_logs(
-        vrs_log_base or VRS_LOG_BASE,
-        expected_vrsf or EXPECTED_VRSF_FILES)
+    with ThreadPoolExecutor(max_workers=len(tasks)) as pool:
+        futures = {pool.submit(fn): key for key, fn in tasks.items()}
+        for future in as_completed(futures):
+            key = futures[future]
+            try:
+                results[key] = future.result()
+            except Exception as exc:
+                results[key] = {
+                    "ok": False, "severity": "error",
+                    "label": key, "detail": f"Check crashed: {exc}",
+                }
 
     elapsed = time.time() - t0
     checks_only = {k: v for k, v in results.items() if isinstance(v, dict) and "ok" in v}

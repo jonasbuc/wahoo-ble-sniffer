@@ -9,6 +9,7 @@ import pytest
 from live_analytics.app.models import TelemetryRecord
 from live_analytics.app.scoring.features import (
     brake_reaction_ms,
+    compute_features,
     head_scan_count,
     hr_delta,
     mean_speed,
@@ -116,3 +117,55 @@ class TestMeanSpeed:
     def test_constant(self) -> None:
         recs = [_rec(unity_time=i, speed=10.0) for i in range(5)]
         assert mean_speed(recs) == pytest.approx(10.0)
+
+
+class TestComputeFeatures:
+    """compute_features() must return the same values as calling each
+    individual feature function, and must do so in a single pass."""
+
+    def _make_recs(self) -> list:
+        return [
+            _rec(unity_time=0.0, speed=10.0, heart_rate=70, steering_angle=0.0, brake_front=0, trigger_id=""),
+            _rec(unity_time=1.0, speed=20.0, heart_rate=80, steering_angle=5.0, brake_front=0, trigger_id="go"),
+            _rec(unity_time=2.0, speed=15.0, heart_rate=75, steering_angle=-5.0, brake_front=100, trigger_id="go"),
+        ]
+
+    def test_empty_returns_zeros(self) -> None:
+        f = compute_features([])
+        assert f.mean_speed_5s == 0.0
+        assert f.steering_variance_3s == 0.0
+        assert f.hr_delta_10s == 0.0
+        assert f.head_scan_count_5s == 0
+        assert f.brake_reaction_ms == 0.0
+
+    def test_mean_speed_matches(self) -> None:
+        recs = self._make_recs()
+        f = compute_features(recs)
+        assert f.mean_speed_5s == pytest.approx(mean_speed(recs))
+
+    def test_steering_variance_matches(self) -> None:
+        recs = self._make_recs()
+        f = compute_features(recs)
+        assert f.steering_variance_3s == pytest.approx(steering_variance(recs))
+
+    def test_hr_delta_matches(self) -> None:
+        recs = self._make_recs()
+        f = compute_features(recs)
+        assert f.hr_delta_10s == pytest.approx(hr_delta(recs))
+
+    def test_head_scans_matches(self) -> None:
+        recs = self._make_recs()
+        f = compute_features(recs)
+        assert f.head_scan_count_5s == head_scan_count(recs)
+
+    def test_brake_ms_matches(self) -> None:
+        recs = self._make_recs()
+        f = compute_features(recs)
+        assert f.brake_reaction_ms == pytest.approx(brake_reaction_ms(recs, trigger_id="go"))
+
+    def test_returns_windowfeatures_type(self) -> None:
+        from live_analytics.app.scoring.features import WindowFeatures
+
+        recs = self._make_recs()
+        assert isinstance(compute_features(recs), WindowFeatures)
+

@@ -152,7 +152,14 @@ def _read_last_jsonl_rows(path: Path, n: int = 600) -> pd.DataFrame:
         return pd.DataFrame()
 
 
+@st.cache_data(ttl=REFRESH_SEC, show_spinner=False)
 def _load_sessions() -> list[dict[str, Any]]:
+    """Fetch session list from the API, cached for REFRESH_SEC seconds.
+
+    The session list is displayed in the sidebar which re-renders on every
+    full page rerun.  Without caching this fires an HTTP request on every
+    rerun, including reruns triggered by the auto-refresh fragment.
+    """
     sessions = _get("/api/sessions")
     if isinstance(sessions, list):
         return sessions

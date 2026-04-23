@@ -13,22 +13,22 @@ import pytest
 
 
 class TestIntEnv:
-    """Test the _int_env helper in config.py."""
+    """Test the int_env helper (now in env_utils)."""
 
     def test_valid_int(self):
-        from live_analytics.app.config import _int_env
+        from live_analytics.app.env_utils import int_env as _int_env
 
         with mock.patch.dict(os.environ, {"TEST_INT": "42"}):
             assert _int_env("TEST_INT", 0) == 42
 
     def test_empty_string_returns_default(self):
-        from live_analytics.app.config import _int_env
+        from live_analytics.app.env_utils import int_env as _int_env
 
         with mock.patch.dict(os.environ, {"TEST_INT": ""}):
             assert _int_env("TEST_INT", 99) == 99
 
     def test_missing_returns_default(self):
-        from live_analytics.app.config import _int_env
+        from live_analytics.app.env_utils import int_env as _int_env
 
         env = os.environ.copy()
         env.pop("TEST_INT_MISSING", None)
@@ -36,19 +36,19 @@ class TestIntEnv:
             assert _int_env("TEST_INT_MISSING", 77) == 77
 
     def test_non_numeric_returns_default(self):
-        from live_analytics.app.config import _int_env
+        from live_analytics.app.env_utils import int_env as _int_env
 
         with mock.patch.dict(os.environ, {"TEST_INT": "abc"}):
             assert _int_env("TEST_INT", 10) == 10
 
     def test_float_string_returns_default(self):
-        from live_analytics.app.config import _int_env
+        from live_analytics.app.env_utils import int_env as _int_env
 
         with mock.patch.dict(os.environ, {"TEST_INT": "3.14"}):
             assert _int_env("TEST_INT", 5) == 5
 
     def test_whitespace_only_returns_default(self):
-        from live_analytics.app.config import _int_env
+        from live_analytics.app.env_utils import int_env as _int_env
 
         with mock.patch.dict(os.environ, {"TEST_INT": "   "}):
             # "   " is truthy but int("   ") raises ValueError
@@ -56,22 +56,22 @@ class TestIntEnv:
 
 
 class TestFloatEnv:
-    """Test the _float_env helper in config.py."""
+    """Test the float_env helper (now in env_utils)."""
 
     def test_valid_float(self):
-        from live_analytics.app.config import _float_env
+        from live_analytics.app.env_utils import float_env as _float_env
 
         with mock.patch.dict(os.environ, {"TEST_F": "3.14"}):
             assert _float_env("TEST_F", 0.0) == pytest.approx(3.14)
 
     def test_empty_returns_default(self):
-        from live_analytics.app.config import _float_env
+        from live_analytics.app.env_utils import float_env as _float_env
 
         with mock.patch.dict(os.environ, {"TEST_F": ""}):
             assert _float_env("TEST_F", 1.5) == 1.5
 
     def test_garbage_returns_default(self):
-        from live_analytics.app.config import _float_env
+        from live_analytics.app.env_utils import float_env as _float_env
 
         with mock.patch.dict(os.environ, {"TEST_F": "not-a-number"}):
             assert _float_env("TEST_F", 2.0) == 2.0
