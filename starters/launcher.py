@@ -127,6 +127,11 @@ class Service:
         self.log_file: Path | None = None
 
     def start(self) -> None:
+        # Services with no cmd are passive health-check entries (e.g. WS ingest
+        # port that is managed by the Analytics API process).  Nothing to launch.
+        if not self.cmd:
+            self.status = "starting"
+            return
         env = os.environ.copy()
         env["PYTHONUNBUFFERED"] = "1"
         log_dir = ROOT / "logs"
@@ -191,10 +196,20 @@ class Service:
 
     def _check_http(self) -> bool:
         import urllib.request
+        import urllib.error
         try:
             req = urllib.request.Request(self.health_url, method="GET")
             with urllib.request.urlopen(req, timeout=2) as resp:
-                return resp.status < 500
+                if resp.status >= 500:
+                    # Service is up but returning a server error – mark as error
+                    # so we don't stay stuck in "starting" forever
+                    self.status = "error"
+                    return False
+                return resp.status < 400
+        except urllib.error.HTTPError as exc:
+            if exc.code >= 500:
+                self.status = "error"
+            return False
         except Exception:
             return False
 
@@ -218,6 +233,16 @@ def build_services(args: argparse.Namespace) -> list[Service]:
         cmd=[PYTHON, "-m", "live_analytics.app.main"],
         port=8080,
         health_url="http://127.0.0.1:8080/healthz",
+    ))
+
+    # 1b. WS Ingest port – separate TCP health check so a port-conflict on 8766
+    #     is visible in the launcher status table rather than being invisible until
+    #     Unity tries to connect.
+    services.append(Service(
+        name="WS Ingest (8766)",
+        cmd=[],          # not a separate process – shares the Analytics API process
+        port=8766,
+        health_tcp=True,
     ))
 
     # 2. Questionnaire API
@@ -367,8 +392,40 @@ def main() -> None:
     print()
 
     # Start all services
-    for svc in services:
+    # The Streamlit dashboard starts its first API call immediately on launch.
+    # To avoid a confusing "● Unreachable" flash before the backend is ready,
+    # start the backend services first and give them up to 15 s to come up
+    # before releasing the dashboard and bridge.
+    _BACKEND_NAMES = {"Analytics API", "WS Ingest (8766)", "Questionnaire API", "System Check GUI"}
+    backend_svcs = [s for s in services if s.name in _BACKEND_NAMES]
+    deferred_svcs = [s for s in services if s.name not in _BACKEND_NAMES]
+
+    for svc in backend_svcs:
         svc.start()
+
+    # Wait up to 15 s for the Analytics API (primary dependency of the dashboard)
+    _api_svc = next((s for s in backend_svcs if s.name == "Analytics API"), None)
+    if _api_svc and deferred_svcs:
+        print(f"  {_DIM}Waiting for Analytics API to be ready before starting dashboard{_DOTS}{_RESET}")
+        t_wait = time.time()
+        while time.time() - t_wait < 15:
+            if _api_svc.check_health():
+                _api_svc.status = "ok"
+                break
+            if _api_svc.status == "error":
+                break
+            time.sleep(0.5)
+        if _api_svc.status == "ok":
+            print(f"  {_GREEN}{_CHECK}{_RESET} Analytics API ready – starting dashboard{_DOTS}")
+        else:
+            print(
+                f"  {_YELLOW}{_WARN}{_RESET}  Analytics API not yet ready "
+                f"(status={_api_svc.status}) – starting dashboard anyway"
+            )
+
+    for svc in deferred_svcs:
+        svc.start()
+    print()
 
     # Poll health checks with live status updates
     t0 = time.time()

@@ -14,6 +14,7 @@ import json
 import logging
 import os
 import sys
+import threading
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -114,6 +115,10 @@ _api_was_reachable: bool = True
 # the error display is always current even when _load_sessions() returns a
 # cached result without re-running _get().
 _last_api_error_msg: str | None = None
+# Lock protecting the three module-level counters above.
+# _get() is called from a ThreadPoolExecutor (up to 3 concurrent threads)
+# so mutations must be serialised.
+_api_state_lock = threading.Lock()
 
 
 # ── Helper functions ────────────────────────────────────────────────
@@ -139,19 +144,21 @@ def _get(path: str) -> dict | list | None:
     url = f"{API_BASE}{path}"
     r = None  # keep reference so we can log the body on JSON parse failure
     try:
-        r = _http_session().get(url, timeout=(1, 1.5))
+        r = _http_session().get(url, timeout=(2, 3))
         r.raise_for_status()
         data = r.json()   # parse FIRST – may raise JSONDecodeError
 
         # ── Only reach here on full success ──────────────────────────
-        if _api_consecutive_failures > 0:
+        with _api_state_lock:
+            prev_failures = _api_consecutive_failures
+            _api_consecutive_failures = 0
+            _api_was_reachable = True
+            _last_api_error_msg = None
+        if prev_failures > 0:
             log.info(
                 "Analytics backend recovered after %d failed request(s) – now reachable at %s",
-                _api_consecutive_failures, API_BASE,
+                prev_failures, API_BASE,
             )
-        _api_consecutive_failures = 0
-        _api_was_reachable = True
-        _last_api_error_msg = None
         st.session_state["_last_api_error"] = None
         return data
 
@@ -185,27 +192,30 @@ def _get(path: str) -> dict | list | None:
         )
 
     # ── Failure path ─────────────────────────────────────────────────
-    _api_consecutive_failures += 1
-    error_detail = f"GET {path} → {category}: {msg}"
-    _last_api_error_msg = error_detail
+    with _api_state_lock:
+        _api_consecutive_failures += 1
+        n_fail = _api_consecutive_failures
+        error_detail = f"GET {path} → {category}: {msg}"
+        _last_api_error_msg = error_detail
+
     st.session_state["_last_api_error"] = error_detail
 
-    if _api_consecutive_failures == 1:
+    if n_fail == 1:
         log.warning(
             "Analytics backend unreachable [%s] – GET %s failed: %s  "
             "(Dashboard is running in degraded mode; data may be stale)",
             category, url, msg,
         )
-    elif _api_consecutive_failures % 10 == 0:
+    elif n_fail % 10 == 0:
         log.warning(
             "Analytics backend still unreachable after %d consecutive failures "
             "[%s] (last attempt: GET %s → %s)",
-            _api_consecutive_failures, category, url, msg,
+            n_fail, category, url, msg,
         )
     else:
         log.debug(
             "GET %s failed (#%d) [%s]: %s",
-            url, _api_consecutive_failures, category, msg,
+            url, n_fail, category, msg,
         )
     return None
 
@@ -392,7 +402,9 @@ def _dashboard_live() -> None:
             f"⚠️ Dashboard rendering error: **{type(exc).__name__}: {exc}**  \n"
             "Check the terminal log for details.  The page will auto-retry on next refresh."
         )
-        raise  # re-raise so Streamlit still shows its own error details
+        # Do NOT re-raise: re-raising after st.error() causes Streamlit to render
+        # a second error box (its own traceback) alongside the custom message above,
+        # producing confusing duplicate error UI in the fragment area.
 
 
 def _render_live() -> None:

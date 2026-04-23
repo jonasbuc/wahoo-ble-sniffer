@@ -39,11 +39,16 @@ class TelemetryRecord(BaseModel):
 
 
 class TelemetryBatch(BaseModel):
-    """Batch envelope sent over WebSocket."""
+    """Batch envelope sent over WebSocket.
+
+    ``count`` and ``sent_at`` are informational fields added by the Unity client.
+    They are optional (with safe defaults) so that minimal / test senders that
+    omit them do not cause the entire batch to be silently dropped.
+    """
 
     records: list[TelemetryRecord]
-    count: int
-    sent_at: str
+    count: int = 0          # informational — may differ from len(records)
+    sent_at: str = ""       # ISO-8601 timestamp string from Unity
 
 
 # ── Scoring output ────────────────────────────────────────────────────

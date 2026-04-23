@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Response
 
 from live_analytics.app.config import DB_PATH
 from live_analytics.app.models import LiveLatest, ScoringResult, SessionDetail, SessionSummary
@@ -64,9 +64,12 @@ async def sessions_list() -> list[SessionSummary]:
         result = list_sessions(DB_PATH)
         logger.debug("sessions_list: returned %d sessions", len(result))
         return result
-    except Exception:
+    except Exception as exc:
         logger.exception("Failed to list sessions from DB '%s'", DB_PATH)
-        return []
+        raise HTTPException(
+            status_code=503,
+            detail=f"Database unavailable: {type(exc).__name__}: {exc}",
+        )
 
 
 @router.get("/api/sessions/{session_id}", response_model=SessionDetail)
