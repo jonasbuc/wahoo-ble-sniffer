@@ -1,7 +1,18 @@
 """
 Simulate a realistic cycling session by streaming telemetry batches
-over WebSocket.  Run while the analytics server is up to watch the
-dashboard populate live.
+over WebSocket to the analytics ingest server.  Run while the analytics
+server is up to watch the dashboard populate live.
+
+The simulation encodes a single scenario:
+  - 0–15 %  ramp-up phase (speed 2 → 8 m/s)
+  - 15–70 % cruise phase (speed ≈ 8 m/s with natural variation)
+  - 40–45 % sharp turn zone (elevated steering angle)
+  - 63–72 % braking event (``"red_light"`` trigger + progressive brake input)
+  - 70–85 % slow-down phase
+  - 85–100 % low-speed trailing phase
+
+Heart rate rises proportionally with speed throughout and smoothly tracks a
+moving target to mimic physiological response latency.
 
 Usage:  python simulate_ride.py [--duration 60] [--hz 20]
 """
@@ -113,6 +124,7 @@ async def simulate(duration_sec: float = 45.0, hz: float = 20.0) -> None:
                 try:
                     resp = await asyncio.wait_for(ws.recv(), timeout=0.1)
                     fb = json.loads(resp)
+                    # Feedback from the server: live stress/risk scores echoed back by ws_ingest
                     stress = fb.get("stress_score", 0)
                     risk = fb.get("risk_score", 0)
                     spd = batch_records[-1]["speed"]
@@ -127,7 +139,9 @@ async def simulate(duration_sec: float = 45.0, hz: float = 20.0) -> None:
                 except asyncio.TimeoutError:
                     pass
 
-            # Pace the simulation to ~real-time (slightly faster for demo)
+                # Pace the simulation to ~real-time.
+                # Factor 0.3 makes it run 3× faster than real-time so a full
+                # 45-second ride completes in ≈15 seconds during demos.
             await asyncio.sleep(interval * batch_size * 0.3)  # 0.3 = 3× faster than real-time
 
     print()

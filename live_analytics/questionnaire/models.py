@@ -1,5 +1,12 @@
 """
 Pydantic models for the questionnaire API.
+
+``ParticipantCreate`` / ``ParticipantOut`` are used for the participant registry
+(test-person tracking).  ``AnswerSave`` and ``AnswersBulkSave`` cover the two
+save strategies: single-question autosave (triggered on every blur event in the
+SPA) and bulk submission at the end of a phase.  ``QuestionDef`` and
+``QuestionnaireDef`` are the structures served to the frontend when it requests
+the question definitions for a given phase.
 """
 
 from __future__ import annotations

@@ -64,9 +64,9 @@ def check_quest_headset() -> dict[str, Any]:
                 devices.append({"serial": serial, "status": status})
 
         connected = [d for d in devices if d["status"] == "device"]
-        quest_devices = [d for d in connected
-                         if "quest" in d["serial"].lower() or "oculus" in d["serial"].lower()
-                         or True]  # any ADB device is accepted
+        # Any ADB-connected device is treated as a valid headset.
+        # Quest serials vary (e.g. "1WMHHA..." on USB), so we accept any
+        # device in "device" state rather than filtering by serial prefix.
 
         if connected:
             serial = connected[0]["serial"]

@@ -135,6 +135,13 @@ def upsert_session(
 
 
 def increment_record_count(db_path: Path | str, session_id: str, n: int = 1) -> None:
+    """Atomically add *n* to the session's ``record_count`` column.
+
+    This is an UPDATE rather than a read-modify-write so it is safe to call
+    from multiple coroutines on the same event-loop thread (SQLite serialises
+    the write internally).  Called once per received batch rather than once
+    per record to minimise round-trips.
+    """
     conn = _connect(db_path)
     conn.execute(
         "UPDATE sessions SET record_count = record_count + ? WHERE session_id = ?",
@@ -146,6 +153,13 @@ def increment_record_count(db_path: Path | str, session_id: str, n: int = 1) -> 
 def update_latest_scores(
     db_path: Path | str, session_id: str, scores: ScoringResult
 ) -> None:
+    """Persist the latest scoring snapshot for a session.
+
+    Stored as a JSON string in ``latest_scores`` so the API can return it
+    without re-running the scoring engine.  Written every
+    ``_SCORE_PERSIST_EVERY`` records (20 by default) — not on every batch —
+    to reduce write amplification.
+    """
     conn = _connect(db_path)
     conn.execute(
         "UPDATE sessions SET latest_scores = ? WHERE session_id = ?",
@@ -155,6 +169,12 @@ def update_latest_scores(
 
 
 def end_session(db_path: Path | str, session_id: str, end_unix_ms: int) -> None:
+    """Record the wall-clock end time of a session.
+
+    Called when Unity sends an explicit session-end event.  If the process
+    crashes before this is called, ``end_unix_ms`` will remain NULL in the DB;
+    callers should treat NULL as "session still active or ended abnormally".
+    """
     conn = _connect(db_path)
     conn.execute(
         "UPDATE sessions SET end_unix_ms = ? WHERE session_id = ?",
@@ -164,6 +184,11 @@ def end_session(db_path: Path | str, session_id: str, end_unix_ms: int) -> None:
 
 
 def list_sessions(db_path: Path | str) -> list[SessionSummary]:
+    """Return all sessions ordered newest-first.
+
+    Malformed rows (e.g. corrupt Pydantic fields from an old schema) are
+    logged and skipped so a single bad row never breaks the dashboard list.
+    """
     conn = _connect(db_path)
     rows = conn.execute(
         "SELECT session_id, start_unix_ms, end_unix_ms, scenario_id, record_count "
@@ -191,6 +216,12 @@ def list_sessions(db_path: Path | str) -> list[SessionSummary]:
 
 
 def get_session(db_path: Path | str, session_id: str) -> Optional[SessionDetail]:
+    """Return full session detail including the last persisted scoring snapshot.
+
+    Returns None when the session does not exist.  Malformed ``latest_scores``
+    JSON (e.g. from a schema migration) is treated as an empty score rather
+    than raising, so the API can still return basic session metadata.
+    """
     conn = _connect(db_path)
     r = conn.execute(
         "SELECT session_id, start_unix_ms, end_unix_ms, scenario_id, "

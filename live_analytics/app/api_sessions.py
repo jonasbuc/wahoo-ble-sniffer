@@ -1,5 +1,15 @@
 """
 REST API endpoints for session data.
+
+Mounted on the main FastAPI app (``main.py``).  All endpoints read from the
+same SQLite database used by the ingest pipeline — no separate read-replica
+is needed at this scale.
+
+Endpoints:
+  GET /healthz                      – liveness + DB reachability probe
+  GET /api/sessions                 – list all sessions (newest first)
+  GET /api/sessions/{session_id}    – full detail for one session
+  GET /api/live/latest              – most-recent live state across all active sessions
 """
 
 from __future__ import annotations
@@ -60,6 +70,12 @@ async def healthz() -> dict:
 
 @router.get("/api/sessions", response_model=list[SessionSummary])
 async def sessions_list() -> list[SessionSummary]:
+    """Return all recorded sessions, newest first.
+
+    Returns an empty list (not 404) when no sessions exist.
+    Raises 503 if the database is unavailable rather than letting SQLite
+    exceptions bubble up as an unformatted 500.
+    """
     try:
         result = list_sessions(DB_PATH)
         logger.debug("sessions_list: returned %d sessions", len(result))
@@ -74,6 +90,12 @@ async def sessions_list() -> list[SessionSummary]:
 
 @router.get("/api/sessions/{session_id}", response_model=SessionDetail)
 async def session_detail(session_id: str) -> SessionDetail:
+    """Return full detail for a single session including the last stored scores.
+
+    ``latest_scores`` reflects the most recently persisted snapshot
+    (written every 20 records by the ingest pipeline) and may lag
+    the real-time scores visible in the dashboard by up to 1 second.
+    """
     try:
         detail = get_session(DB_PATH, session_id)
     except Exception:

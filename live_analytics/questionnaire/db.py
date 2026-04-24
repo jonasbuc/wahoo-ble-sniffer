@@ -37,6 +37,15 @@ _pool_lock = threading.Lock()
 
 
 def _connect(db_path: Path | str) -> sqlite3.Connection:
+    """Return (or create) a cached SQLite connection for *db_path*.
+
+    The outer check-without-lock is intentional: under normal operation the
+    pool already holds the connection after the first request and we avoid
+    acquiring the lock on every call.  The inner double-check (``if key in
+    _pool``) prevents two threads that both saw ``None`` on the outer read
+    from both creating a new connection — only the first one through the lock
+    proceeds to open the DB.
+    """
     key = str(db_path)
     conn = _pool.get(key)
     if conn is not None:

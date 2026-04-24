@@ -1,8 +1,21 @@
 """
 Raw JSONL writer – appends every telemetry record to a per-session JSONL file.
 
+File layout:
+    <SESSIONS_DIR>/<session_id>/telemetry.jsonl
+
+Each line is a complete JSON object (one ``TelemetryRecord`` serialised via
+``model_dump_json()``).  Partial lines at the end of the file (from a crash
+mid-write) are silently skipped by readers that iterate with ``json.loads``
+per line.
+
 The writer is intentionally simple: open-append-close on each flush to
-ensure durability even if the process crashes.
+ensure durability even if the process crashes mid-session.  There is no
+in-memory buffer — every ``append_many`` call results in one file open/write/close
+per session, which is acceptable at 20 Hz / batch_size 10 (≈ 2 file ops per second).
+
+Backfill: if the DB is lost, the JSONL files are the ground truth and can be
+replayed by ``live_analytics/scripts/backfill_from_jsonl.py``.
 """
 
 from __future__ import annotations
@@ -17,7 +30,11 @@ logger = logging.getLogger("live_analytics.raw_writer")
 
 
 class RawWriter:
-    """Writes telemetry records as newline-delimited JSON (JSONL)."""
+    """Writes telemetry records as newline-delimited JSON (JSONL).
+
+    Prefer ``append_many()`` over calling ``append()`` in a loop — it groups
+    records by session and performs a single file open/close per session per batch.
+    """
 
     def __init__(self, sessions_dir: Path) -> None:
         self._sessions_dir = sessions_dir

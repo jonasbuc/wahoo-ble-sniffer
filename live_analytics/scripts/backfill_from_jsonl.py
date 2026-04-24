@@ -75,7 +75,13 @@ def _last_record(jsonl_path: Path) -> dict | None:
 
 
 def _count_records(jsonl_path: Path) -> int:
-    """Count valid JSON lines in a JSONL file."""
+    """Count valid (parseable) JSON lines in a JSONL file.
+
+    Intentionally parses every line rather than just counting newlines so
+    that corrupt or partially-written lines from a previous crash are
+    excluded from the record count stored in the DB.  For typical session
+    files (a few thousand lines) the overhead is negligible.
+    """
     count = 0
     try:
         with open(jsonl_path, encoding="utf-8") as f:

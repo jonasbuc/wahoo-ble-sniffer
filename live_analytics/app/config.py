@@ -1,5 +1,14 @@
 """
 Live Analytics – configuration via environment variables with sensible defaults.
+
+All settings can be overridden at runtime via environment variables prefixed
+with ``LA_``.  No config file is required — the defaults are designed to work
+out of the box on a single developer machine.
+
+Typical overrides when running multiple instances or with a custom data directory:
+    LA_DB_PATH=/data/myrun.db
+    LA_SESSIONS_DIR=/data/sessions
+    LA_HTTP_PORT=8081
 """
 
 from __future__ import annotations
@@ -42,7 +51,12 @@ LOG_LEVEL: str = os.getenv("LA_LOG_LEVEL", "INFO")
 
 
 def ensure_dirs() -> None:
-    """Create data directories if they don't exist."""
+    """Create the data and sessions directories if they do not already exist.
+
+    Safe to call multiple times (uses ``exist_ok=True``).  Called during
+    server startup and by backfill scripts.  Must NOT be called in dry-run
+    contexts where filesystem side effects are undesirable.
+    """
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
 
