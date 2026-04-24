@@ -102,8 +102,8 @@ def backfill(db_path: Path, sessions_dir: Path, dry_run: bool = False) -> int:
         logger.warning("Sessions directory does not exist: %s", sessions_dir)
         return 0
 
-    ensure_dirs()
     if not dry_run:
+        ensure_dirs()
         init_db(db_path)
 
     # Build set of already-known session IDs

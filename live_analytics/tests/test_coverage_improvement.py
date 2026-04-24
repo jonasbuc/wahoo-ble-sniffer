@@ -509,7 +509,6 @@ class TestWsIngestBatchIngestion:
         from live_analytics.app.models import TelemetryRecord
         return [TelemetryRecord(
             session_id=session_id,
-            sequence=i,
             unix_ms=1000 + i * 50,
             unity_time=float(i),
             speed=2.0,
@@ -517,9 +516,6 @@ class TestWsIngestBatchIngestion:
             steering_angle=0.0,
             brake_front=0.0,
             brake_rear=0.0,
-            head_pitch=0.0,
-            head_yaw=0.0,
-            is_trigger=False,
             scenario_id="sc",
         ) for i in range(n)]
 
@@ -631,15 +627,13 @@ class TestBroadcastDashboard:
         sid = "bcast_ses"
         m.latest_scores[sid] = ScoringResult()
         m.latest_records[sid] = TelemetryRecord(
-            session_id=sid, sequence=0, unix_ms=1000, unity_time=0.0,
+            session_id=sid, unix_ms=1000, unity_time=0.0,
             speed=1.0, heart_rate=70, steering_angle=0.0,
-            brake_front=0.0, brake_rear=0.0,
-            head_pitch=0.0, head_yaw=0.0,
-            is_trigger=False, scenario_id="s",
+            brake_front=0.0, brake_rear=0.0, scenario_id="s",
         )
 
         dead_sub = AsyncMock()
-        dead_sub.send.side_effect = RuntimeError("connection gone")
+        dead_sub.send_text.side_effect = RuntimeError("connection gone")
         m.dashboard_subscribers.add(dead_sub)
 
         await m._broadcast_dashboard(sid)

@@ -37,7 +37,6 @@ async def dashboard_ws(ws: WebSocket) -> None:
             if msg.get("type") == "websocket.disconnect":
                 code = msg.get("code", 1000)
                 reason = msg.get("reason", "")
-                from starlette.websockets import WebSocketDisconnect
                 raise WebSocketDisconnect(code=code, reason=reason)
     except WebSocketDisconnect as exc:
         logger.info(

@@ -611,7 +611,7 @@ class WahooBridgeServer:
                             keepalive_interval = self.keepalive_interval
                             last_keep = 0.0
                             while client.is_connected and not disconnected_event.is_set():
-                                now_ts = asyncio.get_event_loop().time()
+                                now_ts = asyncio.get_running_loop().time()
                                 if BAT_UUID in char_uuids and (now_ts - last_keep) >= keepalive_interval:
                                     try:
                                         # Battery level read (result is discarded — we only

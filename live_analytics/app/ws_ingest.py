@@ -201,6 +201,10 @@ def _ingest_session_batch(sid: str, records: list[TelemetryRecord]) -> None:
             sid, DB_PATH,
         )
 
+    # Always update the latest record pointer so the dashboard shows the
+    # actual newest record even when scoring fails.
+    latest_records[sid] = records[-1]
+
     # Score once on the updated window
     try:
         scores = compute_scores(list(window))
@@ -211,7 +215,6 @@ def _ingest_session_batch(sid: str, records: list[TelemetryRecord]) -> None:
         )
         return
     latest_scores[sid] = scores
-    latest_records[sid] = records[-1]
 
     # Persist scores snapshot every _SCORE_PERSIST_EVERY records.
     # Trigger when the counter crosses a multiple of _SCORE_PERSIST_EVERY.
@@ -226,7 +229,13 @@ def _ingest_session_batch(sid: str, records: list[TelemetryRecord]) -> None:
 
 
 async def _broadcast_dashboard(session_id: str | None) -> None:
-    """Push latest state to all subscribed dashboard WS clients."""
+    """Push latest state to all subscribed dashboard WS clients.
+
+    Dashboard clients are FastAPI/Starlette ``WebSocket`` objects.
+    Starlette's ``WebSocket.send(msg)`` expects an ASGI message *dict*
+    (``{"type": "websocket.send", "text": ...}``), NOT a plain string.
+    The correct method for sending text is ``WebSocket.send_text(str)``.
+    """
     if not session_id or not dashboard_subscribers:
         return
     scores = latest_scores.get(session_id)
@@ -242,20 +251,23 @@ async def _broadcast_dashboard(session_id: str | None) -> None:
     })
     dead: list[Any] = []
     # Snapshot the subscriber set before iterating.
-    # Without a snapshot, an `await sub.send()` suspends this coroutine;
+    # Without a snapshot, an `await sub.send_text()` suspends this coroutine;
     # while it is suspended, `dashboard_ws` may add or remove a subscriber,
     # causing "RuntimeError: Set changed size during iteration" on the next
     # iteration step.
     for sub in list(dashboard_subscribers):
         try:
-            await sub.send(payload)
+            # FastAPI/Starlette WebSocket: use send_text() not send().
+            # send() expects an ASGI dict, not a string – calling send(str)
+            # raises TypeError and every subscriber would be silently evicted.
+            await sub.send_text(payload)
         except Exception:
             dead.append(sub)
     for d in dead:
         dashboard_subscribers.discard(d)
         logger.info(
             "Dashboard subscriber removed after send failure (addr=%s)",
-            getattr(d, "remote_address", "<unknown>"),
+            getattr(d, "remote_address", getattr(d, "client", "<unknown>")),
         )
 
 
