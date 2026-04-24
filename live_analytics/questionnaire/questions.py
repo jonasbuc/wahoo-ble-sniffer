@@ -1,10 +1,22 @@
 """
 Questionnaire definitions.
 
-The actual questions will be filled in later.  This module provides
-placeholder questions so the system can be tested end-to-end.
-Replace the contents of PRE_QUESTIONS and POST_QUESTIONS when the
-final questionnaire is ready.
+⚠  PLACEHOLDER CONTENT — replace before any real data collection.
+   Edit the PRE_QUESTIONS and POST_QUESTIONS lists below with the
+   final approved questionnaire items.  The structure of each entry
+   (id, type, label, section, and optional fields) must be preserved;
+   only the question text, ids, and options need to change.
+
+   Field reference
+   ---------------
+   id          : unique snake_case key stored in the DB response JSON
+   type        : "text" | "textarea" | "scale" | "radio" | "checkbox"
+   label       : human-readable question text shown in the browser
+   section     : groups questions under a heading in the UI
+   placeholder : hint text for text/textarea inputs (optional)
+   min_value   : lower bound for scale inputs (optional, default 1)
+   max_value   : upper bound for scale inputs (optional, default 10)
+   options     : list of strings for radio/checkbox inputs (optional)
 """
 
 from __future__ import annotations

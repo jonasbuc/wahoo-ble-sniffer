@@ -48,24 +48,36 @@ from live_analytics.app.storage.sqlite_store import (
 logger = logging.getLogger("live_analytics.ws_ingest")
 
 # ── Shared state (module-level) ──────────────────────────────────────
-# Sliding window per session for scoring
+# All dicts below are written by the ingest coroutine and read by the
+# FastAPI HTTP thread (for /api/live/latest) and the dashboard WS handler.
+# Because asyncio is single-threaded, updates from within a single coroutine
+# are safe without locks.  The only risk is dict-mutation-during-iteration
+# (handled in _broadcast_dashboard with a list() snapshot).
+
+# Sliding window of the last _WINDOW_MAX records per session, used for scoring.
 _windows: dict[str, deque[TelemetryRecord]] = {}
 _WINDOW_MAX = 600  # ≈30 s at 20 Hz
 
-# Separate record counter per session (deque len is capped at _WINDOW_MAX,
-# so we cannot use it to detect "every 20 records" reliably).
+# Separate record counter per session.
+# We cannot use len(_windows[sid]) because the deque is capped at _WINDOW_MAX;
+# once full, len() is always _WINDOW_MAX and "len % 20 == 0" would be True on
+# every record, triggering a SQLite write every record instead of every 20.
 _record_counts: dict[str, int] = {}
 
-# Latest scores per session – read by the dashboard WS endpoint
+# Latest scores per session – read by the dashboard WS endpoint and /api/live/latest.
 latest_scores: dict[str, ScoringResult] = {}
+# Latest record per session – used to populate the live/latest REST response.
 latest_records: dict[str, TelemetryRecord] = {}
 
-# Set of dashboard WebSocket connections to broadcast to
+# Set of active dashboard WebSocket connections to broadcast score updates to.
 dashboard_subscribers: set[Any] = set()
 
+# Injected by main.py lifespan; None in unit tests (degraded mode: no JSONL persistence).
 _raw_writer: RawWriter | None = None
 
-# How often (in records) to persist scores to SQLite
+# How often (in records) to persist scores to SQLite.
+# A score snapshot is written whenever the record count crosses a multiple of this value.
+# Lower values increase DB write frequency; 20 matches the default Unity batch size.
 _SCORE_PERSIST_EVERY = 20
 
 
@@ -145,12 +157,17 @@ def _ingest_session_batch(sid: str, records: list[TelemetryRecord]) -> None:
     """
     Process a batch of records for a single session.
 
-    Storage operations are batched:
-    - ``upsert_session``         – only on first encounter
+    Storage operations are batched at the *message* level (not per record):
+    - ``upsert_session``         – only on first encounter for a given *sid*
     - ``raw_writer.append_many`` – once per batch (one file open/close)
-    - ``increment_record_count`` – once per batch (one DB write)
-    - ``compute_scores``         – once per batch (after window is fully updated)
+    - ``increment_record_count`` – once per batch (one SQLite write)
+    - ``compute_scores``         – once per batch, after the window is updated
     - ``update_latest_scores``   – every _SCORE_PERSIST_EVERY records
+
+    Degraded mode: if any of the SQLite calls raise, they are caught and logged
+    and processing continues.  The session is still scored and the raw JSONL is
+    still written.  If ``_raw_writer`` is None (e.g. in unit tests or on a
+    failed startup), JSONL persistence is skipped but scoring still runs.
     """
     first_rec = records[0]
 

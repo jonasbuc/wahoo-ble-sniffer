@@ -144,9 +144,11 @@ numpy>=1.26,<2
 requests>=2.31,<3
 aiofiles>=23.0
 sqlalchemy>=2.0
+httpx>=0.27,<1        # HTTP client (preflight health checks)
 pyarrow>=10.0.0       # Parquet output (collector tests)
 pytest>=7.0
 pytest-asyncio>=0.21.0
+pytest-cov>=4.0
 ```
 
 ---
@@ -283,16 +285,17 @@ The `.command` / `.bat` bridge starters automatically open the GUI monitor in a 
 
 ```bash
 # Analytics API + WS ingest server (both start in the same process)
-python -m uvicorn live_analytics.app.main:app --host 0.0.0.0 --port 8080
+python -m live_analytics.app.main
 
 # Questionnaire service
-python -m uvicorn live_analytics.questionnaire.app:app --host 0.0.0.0 --port 8090
+python -m live_analytics.questionnaire.app
 
 # System Check GUI
-python -m uvicorn live_analytics.system_check.app:app --host 0.0.0.0 --port 8095
+python -m live_analytics.system_check.app
 
 # Streamlit dashboard
-streamlit run live_analytics/dashboard/streamlit_app.py -- --api http://127.0.0.1:8080 --refresh 5
+streamlit run live_analytics/dashboard/streamlit_app.py \
+  --server.port 8501 --server.headless true
 ```
 
 ### Simulate a ride (no Unity, no hardware)
@@ -472,7 +475,7 @@ python -m live_analytics.system_check --json
 ## Testing
 
 ```bash
-# Run all 805 tests
+# Run all 966 tests
 pytest
 
 # Quiet output
@@ -494,6 +497,14 @@ pytest live_analytics/tests/test_features.py -v
 Test coverage:
 - **`tests/`** — BLE parsing, VRSF binary format, collector DB, Parquet export, mock integration, end-to-end flows, disconnections, GUI
 - **`live_analytics/tests/`** — analytics API endpoints, WS ingest, scoring pipeline, SQLite store, raw writer, configuration, crash diagnostics, fresh-clone bootstrap, regression tests
+- **`live_analytics/questionnaire/tests/`** — questionnaire API endpoints, DB CRUD, error handling
+- **`live_analytics/system_check/tests/`** — system check probes, app endpoints, VRSF log inspection
+
+Coverage target: **≥ 88 %** (measured with `pytest --cov`). Run with:
+
+```bash
+pytest --cov=live_analytics --cov=bridge --cov-report=term-missing -q
+```
 
 ---
 
