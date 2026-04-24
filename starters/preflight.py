@@ -18,6 +18,18 @@ import sys
 import os
 from pathlib import Path
 
+# ── Windows console compatibility ─────────────────────────────────────
+# Without this, printing UTF-8 characters (✔ ✘ ⚠) from cmd.exe on Windows
+# raises UnicodeEncodeError and preflight crashes before any check runs.
+# This mirrors the same guard in launcher.py.
+if sys.platform == "win32":
+    os.system("")  # enables VT100 ANSI escape processing on Windows 10+
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[attr-defined]
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[attr-defined]
+    except Exception:
+        pass  # older Python or non-reconfigurable stream — best effort
+
 # ── Paths ─────────────────────────────────────────────────────────────
 REPO_ROOT = Path(__file__).resolve().parent.parent
 

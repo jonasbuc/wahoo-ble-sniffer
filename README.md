@@ -358,9 +358,9 @@ All services are configured via **environment variables**. Every variable has a 
 | `SC_PORT` | `8095` | Port |
 | `SC_ANALYTICS_DB` | `live_analytics/data/live_analytics.db` | Analytics DB to probe |
 | `SC_QUESTIONNAIRE_DB` | `live_analytics/questionnaire/data/questionnaire.db` | Questionnaire DB to probe |
-| `SC_BRIDGE_WS_URL` | `ws://localhost:8765` | Bridge WebSocket URL to probe |
-| `SC_ANALYTICS_API_URL` | `http://localhost:8080` | Analytics API URL to probe |
-| `SC_QUESTIONNAIRE_API_URL` | `http://localhost:8090` | Questionnaire API URL to probe |
+| `SC_BRIDGE_WS_URL` | `ws://127.0.0.1:8765` | Bridge WebSocket URL to probe |
+| `SC_ANALYTICS_API_URL` | `http://127.0.0.1:8080` | Analytics API URL to probe |
+| `SC_QUESTIONNAIRE_API_URL` | `http://127.0.0.1:8090` | Questionnaire API URL to probe |
 | `SC_VRS_LOG_BASE` | `<repo_root>/Logs` | Directory Unity writes VRSF session logs to |
 | `SC_LOG_LEVEL` | `INFO` | Logging level |
 
@@ -657,6 +657,33 @@ tail -100 logs/dashboard.log
 - Native Windows 10/11 BLE works without additional drivers
 - All scripts are compatible with `cmd.exe` and use `chcp 65001` for UTF-8 output
 
+#### Installing from a GitHub ZIP on Windows (clean machine)
+
+If you download the project as a ZIP instead of cloning with Git, follow
+these exact steps on the Windows machine:
+
+1. Go to the GitHub repository page → **Code** → **Download ZIP**
+2. Extract the ZIP to a folder of your choice (e.g. `C:\BikeVR\`)
+   - The extracted folder will be named `wahoo-ble-sniffer-main` — you can
+     rename it to anything; the project uses relative paths internally.
+3. Install **Python 3.11 or newer** from <https://www.python.org/downloads/>
+   - During install, check **"Add Python to PATH"**
+4. Double-click `starters\INSTALL.bat` inside the extracted folder.
+   - This creates `.venv\`, installs all dependencies, and initialises the DB.
+   - Each step is checked independently — if `pip install` fails you will see
+     the exact error before the installer stops.
+5. Double-click `starters\START_ALL.bat` to launch all services.
+
+**Troubleshooting Windows-specific issues:**
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| `Python not found` in INSTALL.bat | Python not on PATH | Re-install Python, check "Add to PATH" |
+| Unicode boxes (ÔùÜ) in console | Console not UTF-8 | Run `chcp 65001` before the script, or use Windows Terminal |
+| Service Check shows "Unreachable" for running services | IPv6 `::1` vs IPv4 `127.0.0.1` mismatch | All service URLs now use `127.0.0.1` — should not occur after this fix |
+| `bleak` / BLE not working | Missing WinRT runtime | Requires Windows 10 1903+ (build 18362+) |
+| Streamlit page blank | Backend not ready yet | Wait ~10 s; the launcher waits for Analytics API before starting Streamlit |
+
 ### Linux
 
 - Install `bluez` and grant BLE capabilities:
@@ -696,7 +723,7 @@ See [`unity/LiveAnalytics/`](unity/LiveAnalytics/) for the C# telemetry publishe
 | `LiveFeedbackClient.cs` | `unity/LiveAnalytics/` | Receives live scores from `/api/live/latest` |
 | `VrsSessionLogger.cs` | `unity/VrsLogging/` | Binary VRSF session logging |
 
-The ingest endpoint (`ws://localhost:8766`) expects JSON messages matching the `TelemetryBatch` Pydantic model defined in `live_analytics/app/models/`.
+The ingest endpoint (`ws://127.0.0.1:8766`) expects JSON messages matching the `TelemetryBatch` Pydantic model defined in `live_analytics/app/models/`.
 
 Full setup guide: [`docs/QUICKSTART.md`](docs/QUICKSTART.md)
 

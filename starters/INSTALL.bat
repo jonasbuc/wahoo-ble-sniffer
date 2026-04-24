@@ -69,11 +69,22 @@ echo.
 
 REM -- 3. Install dependencies ----------------------------------------
 echo   [3/5] Installerer afhaengigheder ...
-.venv\Scripts\python.exe -m pip install --quiet --upgrade pip
-.venv\Scripts\python.exe -m pip install --quiet -r requirements.txt
-.venv\Scripts\python.exe -m pip install --quiet -e .
+.venv\Scripts\python.exe -m pip install --upgrade pip
 if %errorlevel% neq 0 (
-    echo   X  pip install fejlede - tjek internetforbindelsen
+    echo   X  pip upgrade fejlede
+    pause
+    exit /b 1
+)
+.venv\Scripts\python.exe -m pip install -r requirements.txt
+if %errorlevel% neq 0 (
+    echo   X  pip install -r requirements.txt fejlede - tjek internetforbindelsen
+    echo      og at requirements.txt ikke er beskadiget.
+    pause
+    exit /b 1
+)
+.venv\Scripts\python.exe -m pip install -e .
+if %errorlevel% neq 0 (
+    echo   X  pip install -e . fejlede - tjek at pyproject.toml er korrekt.
     pause
     exit /b 1
 )

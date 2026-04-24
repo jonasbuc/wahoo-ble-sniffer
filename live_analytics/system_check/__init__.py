@@ -31,13 +31,16 @@ QUESTIONNAIRE_DB: Path = Path(os.getenv("SC_QUESTIONNAIRE_DB",
     Path(__file__).resolve().parent.parent / "questionnaire" / "data" / "questionnaire.db"))
 
 # Bridge WebSocket
-BRIDGE_WS_URL: str = os.getenv("SC_BRIDGE_WS_URL", "ws://localhost:8765")
+# Use 127.0.0.1 instead of localhost: on Windows with IPv6 enabled,
+# 'localhost' may resolve to ::1 (IPv6) while services bind on 0.0.0.0
+# (IPv4 only), causing connection-refused errors even when the service is up.
+BRIDGE_WS_URL: str = os.getenv("SC_BRIDGE_WS_URL", "ws://127.0.0.1:8765")
 
 # Analytics API
-ANALYTICS_API_URL: str = os.getenv("SC_ANALYTICS_API_URL", "http://localhost:8080")
+ANALYTICS_API_URL: str = os.getenv("SC_ANALYTICS_API_URL", "http://127.0.0.1:8080")
 
 # Questionnaire API
-QUESTIONNAIRE_API_URL: str = os.getenv("SC_QUESTIONNAIRE_API_URL", "http://localhost:8090")
+QUESTIONNAIRE_API_URL: str = os.getenv("SC_QUESTIONNAIRE_API_URL", "http://127.0.0.1:8090")
 
 # Expected VRSF files in a session directory
 EXPECTED_VRSF_FILES: list[str] = ["headpose.vrsf", "bike.vrsf", "hr.vrsf", "events.vrsf", "manifest.json"]

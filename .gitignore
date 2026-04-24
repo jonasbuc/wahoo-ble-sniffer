@@ -69,4 +69,6 @@ live_analytics/data/*.db-wal
 live_analytics/data/sessions/*/
 !live_analytics/data/.gitkeep
 !live_analytics/data/sessions/.gitkeep
+!live_analytics/questionnaire/data/.gitkeep
+!live_analytics/system_check/data/.gitkeep
 live_analytics/.venv/

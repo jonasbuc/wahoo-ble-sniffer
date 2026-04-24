@@ -20,6 +20,7 @@ import shutil
 import sqlite3
 import struct
 import subprocess
+import sys
 import time
 from pathlib import Path
 from typing import Any
@@ -42,9 +43,13 @@ def check_quest_headset() -> dict[str, Any]:
     # Check if adb is available
     adb = shutil.which("adb")
     if not adb:
+        if sys.platform == "win32":
+            hint = "Download Android SDK Platform Tools from https://developer.android.com/tools/releases/platform-tools and add to PATH"
+        else:
+            hint = "brew install --cask android-platform-tools  (macOS) or install android-tools-adb (Linux)"
         return {"ok": False, "severity": "warn", "label": label,
                 "detail": "ADB ikke fundet i PATH. Installér Android SDK Platform Tools.",
-                "hint": "brew install --cask android-platform-tools"}
+                "hint": hint}
 
     try:
         result = subprocess.run(
@@ -150,7 +155,7 @@ def check_database(db_path: Path, db_name: str = "Database") -> dict[str, Any]:
 #  3. Heart-rate monitor / Bridge connection
 # ═══════════════════════════════════════════════════════════════════════
 
-def check_bridge_connection(ws_url: str = "ws://localhost:8765") -> dict[str, Any]:
+def check_bridge_connection(ws_url: str = "ws://127.0.0.1:8765") -> dict[str, Any]:
     """Check if the bike bridge WebSocket server is running and responsive.
 
     Attempts a quick HTTP-upgrade probe. Does NOT require a full WS handshake —
@@ -532,9 +537,9 @@ def check_service_http(url: str, name: str = "Service") -> dict[str, Any]:
 def run_all_checks(
     analytics_db: Path | None = None,
     questionnaire_db: Path | None = None,
-    bridge_ws_url: str = "ws://localhost:8765",
-    analytics_api_url: str = "http://localhost:8080",
-    questionnaire_api_url: str = "http://localhost:8090",
+    bridge_ws_url: str = "ws://127.0.0.1:8765",
+    analytics_api_url: str = "http://127.0.0.1:8080",
+    questionnaire_api_url: str = "http://127.0.0.1:8090",
     vrs_log_base: Path | None = None,
     expected_vrsf: list[str] | None = None,
 ) -> dict[str, Any]:
