@@ -19,6 +19,7 @@ Usage:  python simulate_ride.py [--duration 60] [--hz 20]
 
 from __future__ import annotations
 
+import argparse
 import asyncio
 import json
 import math
@@ -150,4 +151,10 @@ async def simulate(duration_sec: float = 45.0, hz: float = 20.0) -> None:
 
 
 if __name__ == "__main__":
-    asyncio.run(simulate())
+    parser = argparse.ArgumentParser(description="Simulate a cycling session to the analytics ingest server.")
+    parser.add_argument("--duration", type=float, default=45.0, metavar="SECONDS",
+                        help="Total ride duration in seconds (default: 45)")
+    parser.add_argument("--hz", type=float, default=20.0, metavar="HZ",
+                        help="Telemetry sample rate in Hz (default: 20)")
+    args = parser.parse_args()
+    asyncio.run(simulate(duration_sec=args.duration, hz=args.hz))

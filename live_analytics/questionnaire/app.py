@@ -129,7 +129,11 @@ async def create_participant_endpoint(body: ParticipantCreate) -> dict:
 
 @app.get("/api/participants")
 async def list_participants_endpoint() -> list[dict]:
-    return list_participants(DB_PATH)
+    try:
+        return list_participants(DB_PATH)
+    except Exception as exc:
+        logger.exception("DB error listing participants: %s", exc)
+        raise HTTPException(status_code=503, detail="Failed to list participants – see server log")
 
 
 @app.get("/api/participants/{participant_id}")
@@ -207,7 +211,13 @@ async def get_answers_endpoint(participant_id: str, phase: str) -> list[dict]:
 @app.get("/api/participants/{participant_id}/answers")
 async def get_all_answers_endpoint(participant_id: str) -> list[dict]:
     """Load all answers for a participant (both phases)."""
-    return get_answers(DB_PATH, participant_id)
+    try:
+        return get_answers(DB_PATH, participant_id)
+    except Exception as exc:
+        logger.exception(
+            "DB error loading all answers for participant '%s': %s", participant_id, exc
+        )
+        raise HTTPException(status_code=503, detail="Failed to load answers – see server log")
 
 
 @app.get("/api/participants/{participant_id}/progress")
@@ -219,7 +229,17 @@ async def get_progress_endpoint(participant_id: str) -> dict:
 
 @app.get("/api/healthz")
 async def healthz() -> dict:
-    return {"status": "ok"}
+    """Health probe. Includes a lightweight DB check so monitoring can detect a
+    broken database even if the service process itself is running."""
+    try:
+        import sqlite3
+        conn = sqlite3.connect(str(DB_PATH))
+        conn.execute("SELECT 1").fetchone()
+        conn.close()
+        db_ok, db_detail = True, "ok"
+    except Exception as exc:
+        db_ok, db_detail = False, str(exc)
+    return {"status": "ok", "db_ok": db_ok, "db_path": str(DB_PATH), "db_detail": db_detail}
 
 
 # ── Entry point ───────────────────────────────────────────────────────

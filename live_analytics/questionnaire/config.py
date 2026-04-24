@@ -26,4 +26,8 @@ LOG_LEVEL: str = os.getenv("QS_LOG_LEVEL", "INFO")
 
 def ensure_dirs() -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
+    # Ensure the parent of the DB file exists even when QS_DB_PATH points to a
+    # custom location whose directory tree has not been created yet.  Without
+    # this, sqlite3.connect() raises OperationalError: unable to open database.
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 
