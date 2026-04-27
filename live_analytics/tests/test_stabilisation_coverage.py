@@ -143,9 +143,10 @@ class TestHealthzDbProbe:
 
     def test_healthz_db_ok_false_when_db_is_broken(self):
         """Simulate a broken DB so db_ok becomes False."""
-        # sqlite3 is imported inside the healthz function body, so we patch
-        # the global sqlite3 module's connect, not a module-level attribute.
-        with patch("sqlite3.connect", side_effect=sqlite3.OperationalError("unable to open database file")):
+        # healthz now uses _connect() from the questionnaire db pool; patch that
+        # to raise so the exception path is exercised.
+        with patch("live_analytics.questionnaire.db._connect",
+                   side_effect=sqlite3.OperationalError("unable to open database file")):
             r = _qs_client.get("/api/healthz")
         assert r.status_code == 200, "healthz itself must always return 200"
         body = r.json()
@@ -155,7 +156,7 @@ class TestHealthzDbProbe:
 
     def test_healthz_status_always_ok_even_on_db_failure(self):
         """The HTTP status code must be 200 even when the DB is down (C6)."""
-        with patch("sqlite3.connect", side_effect=Exception("disk full")):
+        with patch("live_analytics.questionnaire.db._connect", side_effect=Exception("disk full")):
             r = _qs_client.get("/api/healthz")
         assert r.status_code == 200
         assert r.json()["status"] == "ok"

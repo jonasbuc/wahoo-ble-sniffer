@@ -27,7 +27,7 @@ from live_analytics.app.config import (
 from live_analytics.app.storage.raw_writer import RawWriter
 from live_analytics.app.storage.sqlite_store import init_db
 from live_analytics.app.ws_dashboard import dashboard_ws
-from live_analytics.app.ws_ingest import set_raw_writer, start_ingest_server
+from live_analytics.app.ws_ingest import set_raw_writer, start_ingest_server, _evict_stale_sessions
 
 # ── Logging setup ─────────────────────────────────────────────────────
 logging.basicConfig(
@@ -81,9 +81,26 @@ async def lifespan(app: FastAPI):  # noqa: ARG001
     # Start the ingest WS server as a background task
     task = asyncio.create_task(start_ingest_server())
     task.add_done_callback(_ingest_task_done)
+
+    # Periodically evict in-memory state for sessions idle > 4 h
+    evict_task = asyncio.create_task(_evict_stale_sessions())
+    evict_task.add_done_callback(_evict_task_done)
+
     logger.info("── Startup complete ───────────────────────────────")
     yield
     logger.info("── Shutdown ───────────────────────────────────────")
+
+
+def _evict_task_done(task: asyncio.Task) -> None:
+    """Log if the session-eviction background task exits unexpectedly."""
+    if task.cancelled():
+        logger.warning("Session-eviction task was cancelled – stale in-memory state will no longer be pruned.")
+    elif (exc := task.exception()) is not None:
+        logger.error(
+            "Session-eviction task crashed: %s: %s",
+            type(exc).__name__, exc,
+            exc_info=exc,
+        )
 
 
 def _ingest_task_done(task: asyncio.Task) -> None:

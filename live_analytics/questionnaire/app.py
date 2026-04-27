@@ -232,13 +232,10 @@ async def healthz() -> dict:
     """Health probe. Includes a lightweight DB check so monitoring can detect a
     broken database even if the service process itself is running."""
     try:
-        import sqlite3
-        conn = sqlite3.connect(str(DB_PATH))
-        try:
-            conn.execute("SELECT 1").fetchone()
-            db_ok, db_detail = True, "ok"
-        finally:
-            conn.close()
+        from live_analytics.questionnaire.db import _connect
+        conn = _connect(DB_PATH)  # returns cached pooled connection – do not close
+        conn.execute("SELECT 1").fetchone()
+        db_ok, db_detail = True, "ok"
     except Exception as exc:
         db_ok, db_detail = False, str(exc)
     return {"status": "ok", "db_ok": db_ok, "db_path": str(DB_PATH), "db_detail": db_detail}

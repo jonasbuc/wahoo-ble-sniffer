@@ -197,7 +197,16 @@ def check_bridge_connection(ws_url: str = "ws://127.0.0.1:8765") -> dict[str, An
 
 
 def _ws_probe(ws_url: str, timeout: float = 2.0) -> str | None:
-    """Quick synchronous WebSocket connect to read the bridge handshake protocol."""
+    """Quick synchronous WebSocket connect to read the bridge handshake protocol.
+
+    Safety notes:
+    - ``open_timeout=timeout`` bounds the TCP/TLS handshake to *timeout* seconds.
+    - ``asyncio.wait_for(..., timeout=timeout)`` bounds the first recv to another
+      *timeout* seconds.
+    - Total worst-case wall time is therefore ≤ 2 × timeout (4 s at the default).
+    - The event loop is always closed in the ``finally`` block, so no loops
+      accumulate even when the caller invokes this function in a tight loop.
+    """
     try:
         import asyncio
         import websockets
@@ -210,7 +219,8 @@ def _ws_probe(ws_url: str, timeout: float = 2.0) -> str | None:
                     return data.get("protocol")
             return None
 
-        # Run in a new event loop (safe from any existing loop)
+        # Run in a fresh event loop (safe to call from any thread, including one
+        # that already has a running loop).  The loop is always closed in finally.
         loop = asyncio.new_event_loop()
         try:
             return loop.run_until_complete(_probe())

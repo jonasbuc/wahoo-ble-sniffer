@@ -93,9 +93,15 @@ async def _handle_connection(ws: ServerConnection) -> None:
         async for message in ws:
             await _process_message(ws, message)
     except ConnectionClosed as exc:
+        # websockets ≥ 13.1 deprecated ConnectionClosed.code / .reason in favour
+        # of exc.rcvd.code / exc.rcvd.reason (rcvd is None when the connection
+        # was lost without a Close frame, e.g. network drop).
+        _rcvd = getattr(exc, "rcvd", None)
+        _code   = _rcvd.code   if _rcvd is not None else None
+        _reason = _rcvd.reason if _rcvd is not None else ""
         logger.info(
             "Unity client disconnected: %s  (code=%s reason=%r)",
-            peer, exc.code, exc.reason,
+            peer, _code, _reason,
         )
     except Exception:
         logger.exception("Unexpected error in ingest connection from %s – closing", peer)
@@ -285,6 +291,63 @@ async def _broadcast_dashboard(session_id: str | None) -> None:
         logger.info(
             "Dashboard subscriber removed after send failure (addr=%s)",
             getattr(d, "remote_address", getattr(d, "client", "<unknown>")),
+        )
+
+
+# ── Session-state eviction ────────────────────────────────────────────
+# How long (seconds) a session must be idle (no new records) before its
+# in-memory state is eligible for eviction.  The default matches a
+# typical session length plus a generous grace period so that the dashboard
+# can still retrieve scores shortly after the rider finishes.
+_SESSION_EVICT_AFTER_SEC: float = 4 * 3600      # 4 hours
+_SESSION_EVICT_CHECK_INTERVAL_SEC: float = 3600  # check once per hour
+
+
+async def _evict_stale_sessions() -> None:
+    """Periodically remove in-memory state for sessions that have been idle
+    for longer than *_SESSION_EVICT_AFTER_SEC*.
+
+    This prevents ``_windows``, ``_record_counts``, ``latest_scores``, and
+    ``latest_records`` from growing without bound during very long server
+    uptimes that process hundreds of sessions.
+
+    A session is considered idle when its ``latest_records`` entry has a
+    ``unix_ms`` older than the eviction threshold.  Active sessions (e.g. a
+    rider currently riding) are never evicted because their ``unix_ms``
+    timestamp is always recent.
+
+    The eviction loop runs as a background asyncio task started by
+    ``main.py`` alongside the ingest server.  It is intentionally
+    low-frequency (once per hour) to minimise overhead.
+    """
+    while True:
+        await asyncio.sleep(_SESSION_EVICT_CHECK_INTERVAL_SEC)
+        cutoff_ms = (asyncio.get_running_loop().time() - _SESSION_EVICT_AFTER_SEC) * 1000
+        # Convert to wall-clock ms.  asyncio loop time is monotonic and may
+        # not be Unix epoch; use time.time() instead for the comparison.
+        import time as _time
+        cutoff_unix_ms = int((_time.time() - _SESSION_EVICT_AFTER_SEC) * 1000)
+
+        stale = [
+            sid
+            for sid, rec in list(latest_records.items())
+            if rec.unix_ms < cutoff_unix_ms
+        ]
+        if not stale:
+            return
+
+        for sid in stale:
+            _windows.pop(sid, None)
+            _record_counts.pop(sid, None)
+            latest_scores.pop(sid, None)
+            latest_records.pop(sid, None)
+
+        logger.info(
+            "Evicted in-memory state for %d stale session(s) "
+            "(idle > %.0f hours): %s",
+            len(stale),
+            _SESSION_EVICT_AFTER_SEC / 3600,
+            stale[:5],  # log first 5 ids to avoid flooding
         )
 
 
