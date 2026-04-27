@@ -1037,7 +1037,7 @@ class TestParseArgs:
         with patch.object(sys, "argv", ["bridge"]):
             args = parse_args()
         assert args.port == 8765
-        assert args.host == "localhost"
+        assert args.host == "0.0.0.0"
         assert args.live is False
         assert args.verbose is False
         assert args.no_binary is False
@@ -1172,7 +1172,7 @@ class TestWahooBridgeServerInit:
         from bridge.bike_bridge import WahooBridgeServer
         s = WahooBridgeServer()
         assert s.port == 8765
-        assert s.host == "localhost"
+        assert s.host == "0.0.0.0"
         assert s.mock is False
         assert s.clients == set()
         assert s.running is False

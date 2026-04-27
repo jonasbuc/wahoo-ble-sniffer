@@ -71,7 +71,7 @@ class TestServerInitAttributes:
 
     def test_default_host_and_port(self):
         s = WahooBridgeServer()
-        assert s.host == "localhost"
+        assert s.host == "0.0.0.0"
         assert s.port == 8765
 
     def test_custom_host_port(self):
@@ -151,7 +151,7 @@ class TestParseArgs:
 
     def test_default_host(self):
         args = self._parse([])
-        assert args.host == "localhost"
+        assert args.host == "0.0.0.0"
 
     def test_default_live_false(self):
         args = self._parse([])

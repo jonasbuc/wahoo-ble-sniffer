@@ -234,9 +234,11 @@ async def healthz() -> dict:
     try:
         import sqlite3
         conn = sqlite3.connect(str(DB_PATH))
-        conn.execute("SELECT 1").fetchone()
-        conn.close()
-        db_ok, db_detail = True, "ok"
+        try:
+            conn.execute("SELECT 1").fetchone()
+            db_ok, db_detail = True, "ok"
+        finally:
+            conn.close()
     except Exception as exc:
         db_ok, db_detail = False, str(exc)
     return {"status": "ok", "db_ok": db_ok, "db_path": str(DB_PATH), "db_detail": db_detail}

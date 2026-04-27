@@ -10,8 +10,8 @@ from pathlib import Path
 from live_analytics.app.env_utils import int_env
 
 
-BASE_DIR = Path(os.getenv("SC_BASE_DIR", Path(__file__).resolve().parent))
-DATA_DIR = Path(os.getenv("SC_DATA_DIR", BASE_DIR / "data"))
+BASE_DIR = Path(os.getenv("SC_BASE_DIR", str(Path(__file__).resolve().parent)))
+DATA_DIR = Path(os.getenv("SC_DATA_DIR", str(BASE_DIR / "data")))
 
 HOST: str = os.getenv("SC_HOST", "0.0.0.0")
 PORT: int = int_env("SC_PORT", 8095)
@@ -20,7 +20,7 @@ LOG_LEVEL: str = os.getenv("SC_LOG_LEVEL", "INFO")
 
 # ── Paths to check ───────────────────────────────────────────────────
 # VRS log base path (Unity writes sessions here)
-VRS_LOG_BASE: Path = Path(os.getenv("SC_VRS_LOG_BASE", Path(__file__).resolve().parent.parent.parent / "Logs"))
+VRS_LOG_BASE: Path = Path(os.getenv("SC_VRS_LOG_BASE", str(Path(__file__).resolve().parent.parent.parent / "Logs")))
 
 # Analytics DB
 ANALYTICS_DB: Path = Path(os.getenv("SC_ANALYTICS_DB",

@@ -395,11 +395,21 @@ def main() -> None:
 
     # Init DB before starting services
     print(f"  {_DIM}Initialising databases {_DOTS}{_RESET}")
-    subprocess.run(
+    init_result = subprocess.run(
         [PYTHON, str(ROOT / "live_analytics" / "scripts" / "init_db.py")],
         cwd=str(ROOT),
         capture_output=True,
+        text=True,
     )
+    if init_result.returncode != 0:
+        print(
+            f"\n  {_RED}✗{_RESET}  Database initialisation failed (exit {init_result.returncode})\n"
+            + (f"     stdout: {init_result.stdout.strip()}\n" if init_result.stdout.strip() else "")
+            + (f"     stderr: {init_result.stderr.strip()}\n" if init_result.stderr.strip() else "")
+            + f"     Fix the error above and re-run the launcher.\n",
+            flush=True,
+        )
+        sys.exit(1)
     print(f"  {_GREEN}{_CHECK}{_RESET} Databases ready")
     print()
 

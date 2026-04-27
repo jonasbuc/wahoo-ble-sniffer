@@ -134,7 +134,7 @@ class WahooBridgeServer:
 
     def __init__(
         self,
-        host: str = "localhost",
+        host: str = "0.0.0.0",
         port: int = 8765,
         use_binary: bool = True,
         mock: bool = False,
@@ -689,7 +689,10 @@ def parse_args():
     """Parse command-line arguments for the bridge server."""
     p = argparse.ArgumentParser()
     p.add_argument("--port", type=int, default=8765)
-    p.add_argument("--host", default="localhost")
+    p.add_argument("--host", default="0.0.0.0",
+                   help="Host/interface to bind the WebSocket server on (default: 0.0.0.0 = all interfaces). "
+                        "On Windows 11 with IPv6 enabled, 'localhost' may resolve to ::1 only, "
+                        "causing Unity IPv4 clients to fail with connection-refused.")
     p.add_argument(
         "--live", action="store_true", help="Try to use BLE via bleak (if available)"
     )
