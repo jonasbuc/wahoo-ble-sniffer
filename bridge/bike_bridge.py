@@ -256,10 +256,11 @@ class WahooBridgeServer:
                         for c in list(self.clients):
                             try:
                                 await c.send(message)
-                            except Exception:
+                            except Exception as exc:
                                 LOG.info(
-                                    "Removing dead broadcast client (send failed): %s",
+                                    "Removing dead broadcast client %s: %s: %s",
                                     getattr(c, "remote_address", "<unknown>"),
+                                    type(exc).__name__, exc,
                                 )
                                 try:
                                     self.clients.discard(c)
@@ -356,10 +357,11 @@ class WahooBridgeServer:
                 continue
             try:
                 await c.send(text)
-            except Exception:
+            except Exception as exc:
                 LOG.info(
-                    "Removing dead JSON broadcast client (send failed): %s",
+                    "Removing dead JSON broadcast client %s: %s: %s",
                     getattr(c, "remote_address", "<unknown>"),
+                    type(exc).__name__, exc,
                 )
                 try:
                     self.clients.discard(c)
@@ -394,8 +396,11 @@ class WahooBridgeServer:
             # Dispatch async handling without blocking the protocol callback
             try:
                 asyncio.create_task(self._handle(text, addr))
-            except Exception:
-                pass
+            except Exception as exc:
+                LOG.warning(
+                    "Could not dispatch UDP datagram from %s:%d – %s: %s",
+                    addr[0], addr[1], type(exc).__name__, exc,
+                )
 
         async def _handle(self, text: str, addr: Tuple[str, int]):
             """Parse the raw UDP text and broadcast it as a JSON event."""
@@ -432,8 +437,11 @@ class WahooBridgeServer:
             try:
                 await self.server.broadcast_json(data)
                 LOG.info("Relayed UDP event to %d clients: %s", len(self.server.clients), data.get("event"))
-            except Exception:
-                LOG.debug("Failed to broadcast UDP event: %s", data)
+            except Exception as exc:
+                LOG.warning(
+                    "Failed to broadcast UDP event '%s' to clients: %s: %s",
+                    data.get("event"), type(exc).__name__, exc,
+                )
 
     # ── BLE helpers ──────────────────────────────────────────────────────────
 
@@ -662,9 +670,12 @@ class WahooBridgeServer:
                 try:
                     pong_waiter = await c.ping()
                     await asyncio.wait_for(pong_waiter, timeout=5)
-                except Exception:
+                except Exception as exc:
                     addr = getattr(c, "remote_address", "<unknown>")
-                    LOG.info("Ping timeout / failed for client %s – removing", addr)
+                    LOG.info(
+                        "Ping failed for client %s – removing (%s: %s)",
+                        addr, type(exc).__name__, exc,
+                    )
                     try:
                         self.clients.discard(c)
                         await c.close()
@@ -681,8 +692,16 @@ class WahooBridgeServer:
         if not self.spawn_interval:
             return
         while self.running:
-            await asyncio.sleep(self.spawn_interval)
-            await self.broadcast_json({"event": "spawn", "source": "bridge", "timestamp": time.time()})
+            try:
+                await asyncio.sleep(self.spawn_interval)
+                await self.broadcast_json({"event": "spawn", "source": "bridge", "timestamp": time.time()})
+            except asyncio.CancelledError:
+                LOG.info("Spawn loop cancelled")
+                break
+            except Exception:
+                LOG.exception(
+                    "Spawn loop encountered an unexpected error – loop will continue"
+                )
 
 
 def parse_args():

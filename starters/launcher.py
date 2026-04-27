@@ -222,7 +222,15 @@ class Service:
             if exc.code >= 500:
                 self.status = "error"
             return False
-        except Exception:
+        except (urllib.error.URLError, OSError):
+            # Connection refused or network error – expected while service is starting up.
+            return False
+        except Exception as exc:
+            import logging as _logging
+            _logging.getLogger("launcher").warning(
+                "Unexpected error checking health of '%s' at %s: %s: %s",
+                self.name, self.health_url, type(exc).__name__, exc,
+            )
             return False
 
     def stop(self) -> None:

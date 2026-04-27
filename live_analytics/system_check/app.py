@@ -46,7 +46,15 @@ logger = logging.getLogger("system_check")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    ensure_dirs()
+    try:
+        ensure_dirs()
+    except Exception as exc:
+        logger.critical(
+            "System Check startup failed: could not create data directories: %s: %s  "
+            "(check that the process has write permission to the data directory)",
+            type(exc).__name__, exc,
+        )
+        raise
     logger.info("System Check GUI ready on %s:%d", HOST, PORT)
     yield
 

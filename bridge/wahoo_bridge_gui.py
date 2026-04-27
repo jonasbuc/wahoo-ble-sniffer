@@ -36,6 +36,7 @@ Trigger      : ``{"event": "hall_hit", "source": "udp", "timestamp": …}``
 
 import asyncio
 import json
+import logging
 import sys
 import threading
 import time
@@ -531,12 +532,19 @@ class WahooBridgeGUI:
                                         struct.unpack("di", message[:12])
                                     )
                                     self.root.after(0, self.update_data, hr)
-                        except Exception:
-                            # Parsing errors are non-fatal; ignore the frame and continue.
-                            pass
+                        except Exception as exc:
+                            # Parsing errors are non-fatal; log at DEBUG and continue.
+                            logging.getLogger("wahoo_bridge_gui").debug(
+                                "Failed to parse frame from bridge (%s: %s) – frame skipped",
+                                type(exc).__name__, exc,
+                            )
 
-            except Exception:
-                # Connection lost or refused — signal disconnected and retry.
+            except Exception as exc:
+                # Connection lost, refused, or unexpected error — signal disconnected and retry.
+                logging.getLogger("wahoo_bridge_gui").warning(
+                    "Bridge connection to %s lost or failed: %s: %s – reconnecting in 3s",
+                    uri, type(exc).__name__, exc,
+                )
                 self.root.after(0, self.update_status, False)
                 await asyncio.sleep(3)
 
