@@ -644,8 +644,15 @@ def watch_sessions(
             manifest = os.path.join(d, 'manifest.json')
             if not os.path.exists(manifest):
                 continue  # session may still be initialising
-            with open(manifest, 'r', encoding='utf-8') as f:
-                m = json.load(f)
+            try:
+                with open(manifest, 'r', encoding='utf-8') as f:
+                    m = json.load(f)
+            except (OSError, json.JSONDecodeError) as exc:
+                LOG.warning(
+                    "Could not read manifest.json for session dir '%s': %s: %s – skipping",
+                    d, type(exc).__name__, exc,
+                )
+                continue
             sid = m.get('session_id')
             # One FileTail per stream file in this session directory.
             tails.append(FileTail(os.path.join(d, 'headpose.vrsf'), 1, sid, rec_size=36, variable=False))
@@ -709,7 +716,10 @@ def watch_sessions(
                 else:
                     inserted = insert_records_batch(conn, t.stream_id, sid, recv_ts_ns, parsed)
             except Exception as e:
-                LOG.error("DB insert error: %s", e)
+                LOG.error(
+                    "DB insert error for session %s stream %d: %s: %s",
+                    sid, t.stream_id, type(e).__name__, e,
+                )
                 inserted = 0
 
             if inserted:
@@ -781,16 +791,22 @@ def watch_sessions(
                 try:
                     conn.commit()
                     pending_inserts = 0
-                except Exception:
-                    pass
+                except Exception as exc:
+                    LOG.error(
+                        "SQLite commit failed (per-chunk mode): %s: %s – data may not be durable",
+                        type(exc).__name__, exc,
+                    )
             else:
                 # Batched: commit only when accumulated rows exceed threshold.
                 if pending_inserts >= sqlite_batch_size:
                     try:
                         conn.commit()
                         pending_inserts = 0
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        LOG.error(
+                            "SQLite commit failed (batched mode, pending=%d rows): %s: %s – data may not be durable",
+                            pending_inserts, type(exc).__name__, exc,
+                        )
 
         # ── Heartbeat print (once per second) ─────────────────────────────
         if time.time() - last_print >= 1.0:
@@ -821,8 +837,12 @@ def watch_sessions(
     try:
         if pending_inserts > 0:
             conn.commit()
-    except Exception:
-        pass
+            LOG.info("Graceful shutdown: committed %d pending rows to SQLite", pending_inserts)
+    except Exception as exc:
+        LOG.error(
+            "Graceful shutdown: failed to commit %d pending rows to SQLite: %s: %s – some data may be lost",
+            pending_inserts, type(exc).__name__, exc,
+        )
     if out_parquet_dir and HAVE_PYARROW:
         flush_parquet_parts(out_parquet_dir, part_rows=parquet_rows)
     # Close remaining JSONL loggers and flush to MSSQL.
@@ -864,11 +884,21 @@ def main():
     out_dir = os.path.dirname(os.path.abspath(args.out))
     os.makedirs(out_dir, exist_ok=True)
     # Pass the same directory as the Parquet output so parts sit next to the DB.
-    watch_sessions(
-        args.logs, args.out, out_parquet_dir=out_dir,
-        sqlite_batch_size=args.sqlite_batch_size, parquet_rows=args.parquet_rows,
-        jsonl_dir=args.jsonl_dir, mssql_conn_str=args.mssql_conn,
-    )
+    try:
+        watch_sessions(
+            args.logs, args.out, out_parquet_dir=out_dir,
+            sqlite_batch_size=args.sqlite_batch_size, parquet_rows=args.parquet_rows,
+            jsonl_dir=args.jsonl_dir, mssql_conn_str=args.mssql_conn,
+        )
+    except KeyboardInterrupt:
+        LOG.info("Collector stopped by user (KeyboardInterrupt)")
+    except Exception:
+        LOG.critical(
+            "Collector crashed unexpectedly – watch loop for '%s' → '%s' is now offline",
+            args.logs, args.out,
+            exc_info=True,
+        )
+        raise
 
 
 if __name__ == '__main__':

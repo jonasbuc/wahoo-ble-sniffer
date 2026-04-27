@@ -531,14 +531,47 @@ def main() -> None:
             any_down = False
             for svc in services:
                 if svc.process and svc.process.poll() is not None and svc.status == "ok":
+                    exit_code = svc.process.poll()
                     svc.status = "error"
                     any_down = True
+                    # Print exit code + last log lines immediately so the operator
+                    # doesn't have to find the log file manually.
+                    tail: list[str] = []
+                    if svc.log_file and svc.log_file.exists():
+                        try:
+                            with svc.log_file.open("r", encoding="utf-8", errors="replace") as _lf:
+                                _lf.seek(0, 2)
+                                size = _lf.tell()
+                                _lf.seek(max(0, size - 8192))
+                                tail = _lf.read().splitlines()[-10:]
+                        except OSError:
+                            pass
+                    print(
+                        f"\n  {_RED}{_BOLD}{_WARN}  '{svc.name}' crashed "
+                        f"(exit code {exit_code})!{_RESET}",
+                        flush=True,
+                    )
+                    if tail:
+                        print(
+                            f"  {_DIM}Last log lines ({svc.log_file}):{_RESET}",
+                            flush=True,
+                        )
+                        for line in tail:
+                            print(f"     {line}", flush=True)
+                    elif svc.log_file:
+                        print(
+                            f"  {_DIM}No log output before crash. "
+                            f"Log: {svc.log_file}\n"
+                            f"  Run manually to see the error: {' '.join(svc.cmd)}{_RESET}",
+                            flush=True,
+                        )
+                    print()
             if any_down:
-                print(f"\n  {_RED}{_BOLD}{_WARN} A service has stopped!{_RESET}")
-                for svc in services:
-                    if svc.status == "error":
-                        print(f"    {_RED}{_CROSS} {svc.name}{_RESET}")
-                print()
+                print(
+                    f"  {_RED}{_BOLD}{_WARN} One or more services have stopped.{_RESET}  "
+                    f"{_DIM}Press Ctrl+C to shut everything down.{_RESET}",
+                    flush=True,
+                )
 
     except KeyboardInterrupt:
         pass

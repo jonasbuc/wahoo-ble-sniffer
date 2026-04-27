@@ -208,11 +208,15 @@ class WahooBridgeServer:
                         # Binary data from clients is not expected in this direction
                         pass
                 except Exception as e:
-                    LOG.debug(
-                        "Error handling message from %s: %s", ws.remote_address, e
+                    LOG.warning(
+                        "Error handling message from %s: %s: %s",
+                        ws.remote_address, type(e).__name__, e,
                     )
         except Exception as e:
-            LOG.debug("Client handling error: %s", e)
+            LOG.warning(
+                "Unexpected error on client connection from %s – closing: %s: %s",
+                ws.remote_address, type(e).__name__, e,
+            )
         finally:
             # Always clean up, even if an exception occurred mid-connection
             if ws in self.clients:
@@ -324,9 +328,27 @@ class WahooBridgeServer:
                 )
 
             # Run broadcast loop and ping loop concurrently while server context is active
-            ping_task = asyncio.create_task(self.ping_loop())
-            broadcast_task = asyncio.create_task(self.broadcast_loop())
-            spawn_task = asyncio.create_task(self.spawn_loop())
+            ping_task = asyncio.create_task(self.ping_loop(), name="ping_loop")
+            broadcast_task = asyncio.create_task(self.broadcast_loop(), name="broadcast_loop")
+            spawn_task = asyncio.create_task(self.spawn_loop(), name="spawn_loop")
+
+            def _task_done(task: asyncio.Task) -> None:
+                if task.cancelled():
+                    return  # normal shutdown via cancel()
+                exc = task.exception() if not task.cancelled() else None
+                if exc is not None:
+                    LOG.critical(
+                        "Background task '%s' crashed unexpectedly: %s: %s  "
+                        "(ws://%s:%d may now be degraded – the other tasks will also be cancelled)",
+                        task.get_name(), type(exc).__name__, exc,
+                        self.host, self.port,
+                        exc_info=exc,
+                    )
+
+            ping_task.add_done_callback(_task_done)
+            broadcast_task.add_done_callback(_task_done)
+            spawn_task.add_done_callback(_task_done)
+
             try:
                 await asyncio.gather(ping_task, broadcast_task, spawn_task)
             finally:
@@ -569,8 +591,11 @@ class WahooBridgeServer:
                                 hr = int.from_bytes(data[1:3], "little")  # 2-byte HR value
                             self._ble_hr = int(hr)
                             LOG.debug("BLE HR update: %d", hr)
-                        except Exception:
-                            LOG.debug("Failed to parse HR notification")
+                        except Exception as exc:
+                            LOG.debug(
+                                "Failed to parse HR notification (len=%d): %s: %s",
+                                len(data) if data else 0, type(exc).__name__, exc,
+                            )
 
                     # Robust service discovery (some bleak versions vary API)
                     services = []
