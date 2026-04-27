@@ -520,13 +520,17 @@ class TestWsIngestBatchIngestion:
         ) for i in range(n)]
 
     def test_no_raw_writer_logs_warning_but_scores(self, caplog):
-        """When _raw_writer is None, telemetry is scored but not persisted to JSONL."""
+        """When _raw_writer is None, telemetry is scored but not persisted to JSONL.
+
+        The message is now logged at DEBUG level (was WARNING) and only on the
+        first batch for a session to avoid flooding the log at 20 Hz.
+        """
         import logging
         from live_analytics.app import ws_ingest as m
 
         assert m._raw_writer is None  # confirmed by setup_method
         records = self._make_records(5, session_id="no_writer_ses")
-        with caplog.at_level(logging.WARNING, logger="live_analytics.ws_ingest"):
+        with caplog.at_level(logging.DEBUG, logger="live_analytics.ws_ingest"):
             with patch("live_analytics.app.ws_ingest.upsert_session"), \
                  patch("live_analytics.app.ws_ingest.increment_record_count"):
                 m._ingest_session_batch("no_writer_ses", records)

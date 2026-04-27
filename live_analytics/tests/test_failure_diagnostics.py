@@ -278,11 +278,11 @@ class TestIngestDegradedModeNoWriter:
                 "sent_at": "2024-01-01T00:00:00Z",
             })
 
-            with caplog.at_level(logging.WARNING, logger="live_analytics.ws_ingest"):
+            with caplog.at_level(logging.DEBUG, logger="live_analytics.ws_ingest"):
                 await ingest._process_message(ws, payload)
 
-        assert any("raw_writer is not initialised" in r.message for r in caplog.records), \
-            "Expected WARNING about degraded mode (no raw_writer)"
+        assert any("raw_writer" in r.message for r in caplog.records), \
+            "Expected DEBUG log about degraded mode (no raw_writer)"
 
 
 # ─────────────────────────────────────────────────────────────────────────────

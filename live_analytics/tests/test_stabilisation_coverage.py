@@ -505,22 +505,25 @@ class TestWsIngestUncoveredBranches:
     # ── _ingest_session_batch: no raw_writer degraded mode ──────────
 
     def test_no_raw_writer_emits_warning_and_still_scores(self, caplog):
-        """When _raw_writer is None the else-branch at ws_ingest.py:179 must run."""
+        """When _raw_writer is None the else-branch at ws_ingest.py must run.
+
+        The message is now emitted at DEBUG level (was WARNING) and only on the
+        very first batch for a new session to avoid flooding logs at 20 Hz.
+        """
         import logging
         from live_analytics.app import ws_ingest as m
 
         assert m._raw_writer is None  # setup_method sets this to None
         sid = "degraded_ses"
         records = self._make_records(3, session_id=sid)
-        with caplog.at_level(logging.WARNING, logger="live_analytics.ws_ingest"), \
+        with caplog.at_level(logging.DEBUG, logger="live_analytics.ws_ingest"), \
              patch("live_analytics.app.ws_ingest.upsert_session"), \
              patch("live_analytics.app.ws_ingest.increment_record_count"):
             m._ingest_session_batch(sid, records)
 
-        # The warning must have been emitted
-        assert any("raw_writer" in r.message and "degraded mode" in r.message
-                   for r in caplog.records), \
-            "Expected degraded-mode raw_writer warning"
+        # The log must have been emitted (now at DEBUG, not WARNING)
+        assert any("raw_writer" in r.message for r in caplog.records), \
+            "Expected debug-mode raw_writer log"
         # Scoring still happened despite no raw_writer
         assert sid in m.latest_scores
 

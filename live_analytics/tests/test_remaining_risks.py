@@ -431,6 +431,44 @@ class TestSessionEviction:
         assert "fresh-session" in ws.latest_records
         assert "fresh-session" in ws._windows
 
+    def test_loop_continues_after_clean_eviction_pass(self):
+        """Critical regression: when no sessions are stale, the loop must NOT return.
+        Previously `return` was used instead of `continue`, which silently killed
+        the eviction coroutine after the very first clean pass.
+        """
+        import asyncio
+        import time
+        import live_analytics.app.ws_ingest as ws
+        from live_analytics.app.ws_ingest import _evict_stale_sessions
+
+        # Fresh session – should NOT be evicted
+        rec = MagicMock()
+        rec.unix_ms = int(time.time() * 1000)
+        ws.latest_records["persist-session"] = rec
+        ws._windows["persist-session"] = []
+
+        # Let the loop run twice: first pass does nothing (no stale sessions),
+        # second pass raises CancelledError to exit cleanly.
+        call_count = 0
+        async def _fake_sleep(_):
+            nonlocal call_count
+            call_count += 1
+            if call_count >= 2:
+                raise asyncio.CancelledError
+            # first call: return to let the coroutine continue past `if not stale: continue`
+
+        with patch("live_analytics.app.ws_ingest.asyncio.sleep", side_effect=_fake_sleep):
+            with pytest.raises(asyncio.CancelledError):
+                asyncio.run(_evict_stale_sessions())
+
+        # The session must still be present (not evicted, and loop did not die early)
+        assert "persist-session" in ws.latest_records, \
+            "Fresh session must not be evicted"
+        assert call_count == 2, (
+            f"asyncio.sleep should have been called 2 times "
+            f"(got {call_count}) – if only called once the `continue` is broken (was `return`)"
+        )
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  R3 – _ws_probe event-loop guard

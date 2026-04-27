@@ -24,6 +24,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 from collections import deque
 from typing import Any
 
@@ -200,10 +201,13 @@ def _ingest_session_batch(sid: str, records: list[TelemetryRecord]) -> None:
     # Persist raw records – one file open/close for the whole batch
     if _raw_writer:
         _raw_writer.append_many(records)
-    else:
-        logger.warning(
-            "raw_writer is not initialised – telemetry for session %s not persisted to JSONL "
-            "(running in degraded mode; DB record count and scoring still active)",
+    elif sid not in _record_counts or _record_counts[sid] == 0:
+        # Only emit this warning once per session (when record_count is still 0,
+        # i.e. this is the very first batch). On subsequent batches it would spam
+        # the log at 20 Hz with the same message.
+        logger.debug(
+            "raw_writer not initialised – JSONL persistence disabled for session %s "
+            "(running in degraded/test mode; scoring and DB record counts still active)",
             sid,
         )
 
@@ -322,11 +326,7 @@ async def _evict_stale_sessions() -> None:
     """
     while True:
         await asyncio.sleep(_SESSION_EVICT_CHECK_INTERVAL_SEC)
-        cutoff_ms = (asyncio.get_running_loop().time() - _SESSION_EVICT_AFTER_SEC) * 1000
-        # Convert to wall-clock ms.  asyncio loop time is monotonic and may
-        # not be Unix epoch; use time.time() instead for the comparison.
-        import time as _time
-        cutoff_unix_ms = int((_time.time() - _SESSION_EVICT_AFTER_SEC) * 1000)
+        cutoff_unix_ms = int((time.time() - _SESSION_EVICT_AFTER_SEC) * 1000)
 
         stale = [
             sid
@@ -334,7 +334,7 @@ async def _evict_stale_sessions() -> None:
             if rec.unix_ms < cutoff_unix_ms
         ]
         if not stale:
-            return
+            continue  # nothing to evict – keep the loop running
 
         for sid in stale:
             _windows.pop(sid, None)

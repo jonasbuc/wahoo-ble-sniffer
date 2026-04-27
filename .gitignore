@@ -42,6 +42,7 @@ training.db
 
 # Logs
 *.log
+*.log.*
 *.pid
 
 # Capture debug dirs
