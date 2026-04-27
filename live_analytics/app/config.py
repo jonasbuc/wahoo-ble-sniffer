@@ -23,15 +23,16 @@ _log = logging.getLogger("live_analytics.config")
 
 
 # ── Paths ─────────────────────────────────────────────────────────────
-_DEFAULT_BASE_DIR = str(Path(__file__).resolve().parent.parent)
-_DEFAULT_DATA_DIR = str(Path(_DEFAULT_BASE_DIR) / "data")
-_DEFAULT_DB_PATH  = str(Path(_DEFAULT_DATA_DIR) / "live_analytics.db")
-_DEFAULT_SESS_DIR = str(Path(_DEFAULT_DATA_DIR) / "sessions")
+_DEFAULT_BASE_DIR = Path(__file__).resolve().parent.parent
 
-BASE_DIR    = Path(os.getenv("LA_BASE_DIR",    _DEFAULT_BASE_DIR))
-DATA_DIR    = Path(os.getenv("LA_DATA_DIR",    _DEFAULT_DATA_DIR))
-DB_PATH     = Path(os.getenv("LA_DB_PATH",     _DEFAULT_DB_PATH))
-SESSIONS_DIR = Path(os.getenv("LA_SESSIONS_DIR", _DEFAULT_SESS_DIR))
+# Path defaults are intentionally *chained*:
+#   BASE_DIR -> DATA_DIR -> DB_PATH / SESSIONS_DIR
+# so overriding LA_BASE_DIR alone relocates all runtime files unless a more
+# specific LA_* override is provided.
+BASE_DIR = Path(os.getenv("LA_BASE_DIR", str(_DEFAULT_BASE_DIR)))
+DATA_DIR = Path(os.getenv("LA_DATA_DIR", str(BASE_DIR / "data")))
+DB_PATH = Path(os.getenv("LA_DB_PATH", str(DATA_DIR / "live_analytics.db")))
+SESSIONS_DIR = Path(os.getenv("LA_SESSIONS_DIR", str(DATA_DIR / "sessions")))
 
 # ── Network ───────────────────────────────────────────────────────────
 HTTP_HOST: str = os.getenv("LA_HTTP_HOST", "0.0.0.0")
@@ -59,4 +60,6 @@ def ensure_dirs() -> None:
     """
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
+    # Support custom LA_DB_PATH outside DATA_DIR.
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 

@@ -167,7 +167,7 @@ def check_bridge_connection(ws_url: str = "ws://127.0.0.1:8765") -> dict[str, An
     import urllib.parse
 
     parsed = urllib.parse.urlparse(ws_url)
-    host = parsed.hostname or "localhost"
+    host = parsed.hostname or "127.0.0.1"
     port = parsed.port or 8765
 
     try:

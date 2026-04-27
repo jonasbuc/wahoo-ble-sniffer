@@ -52,8 +52,11 @@ def _first_record(jsonl_path: Path) -> dict | None:
                         return json.loads(line)
                     except json.JSONDecodeError:
                         continue
-    except OSError:
-        pass
+    except OSError as exc:
+        logger.warning(
+            "Could not read first record from '%s': %s: %s",
+            jsonl_path, type(exc).__name__, exc,
+        )
     return None
 
 
@@ -69,8 +72,11 @@ def _last_record(jsonl_path: Path) -> dict | None:
                         last = json.loads(line)
                     except json.JSONDecodeError:
                         continue
-    except OSError:
-        pass
+    except OSError as exc:
+        logger.warning(
+            "Could not read last record from '%s': %s: %s",
+            jsonl_path, type(exc).__name__, exc,
+        )
     return last
 
 
@@ -93,8 +99,11 @@ def _count_records(jsonl_path: Path) -> int:
                         count += 1
                     except json.JSONDecodeError:
                         pass
-    except OSError:
-        pass
+    except OSError as exc:
+        logger.warning(
+            "Could not count records in '%s': %s: %s",
+            jsonl_path, type(exc).__name__, exc,
+        )
     return count
 
 
@@ -110,6 +119,7 @@ def backfill(db_path: Path, sessions_dir: Path, dry_run: bool = False) -> int:
 
     if not dry_run:
         ensure_dirs()
+        db_path.parent.mkdir(parents=True, exist_ok=True)
         init_db(db_path)
 
     # Build set of already-known session IDs

@@ -22,7 +22,6 @@ import importlib
 import os
 import sys
 from pathlib import Path
-import tempfile
 
 import pytest
 
@@ -71,9 +70,13 @@ class TestPathResolution:
         expected_root = launcher.resolve().parent.parent
         assert expected_root == REPO_ROOT
 
-    def test_path_contains_no_hardcoded_home(self) -> None:
+    def test_path_contains_no_hardcoded_home(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """No config path should contain a hardcoded home dir."""
-        from live_analytics.app import config as cfg
+        for key in ("LA_BASE_DIR", "LA_DATA_DIR", "LA_DB_PATH", "LA_SESSIONS_DIR"):
+            monkeypatch.delenv(key, raising=False)
+
+        import live_analytics.app.config as cfg
+        importlib.reload(cfg)
         for attr in ("BASE_DIR", "DATA_DIR", "DB_PATH", "SESSIONS_DIR"):
             p = str(getattr(cfg, attr))
             assert "/home/" not in p and "C:\\Users\\" not in p.upper() or True
@@ -106,15 +109,20 @@ class TestRuntimeDirCreation:
         import live_analytics.app.config as cfg
         orig_data = cfg.DATA_DIR
         orig_sess = cfg.SESSIONS_DIR
+        orig_db = cfg.DB_PATH
+        custom_db = tmp_path / "nested" / "db" / "custom.db"
         cfg.DATA_DIR = data
         cfg.SESSIONS_DIR = sessions
+        cfg.DB_PATH = custom_db
         try:
             cfg.ensure_dirs()
             assert data.is_dir()
             assert sessions.is_dir()
+            assert custom_db.parent.is_dir(), "ensure_dirs() did not create custom DB parent directory"
         finally:
             cfg.DATA_DIR = orig_data
             cfg.SESSIONS_DIR = orig_sess
+            cfg.DB_PATH = orig_db
 
     def test_questionnaire_ensure_dirs_creates_missing(self, tmp_path: Path) -> None:
         import live_analytics.questionnaire.config as qcfg
@@ -179,6 +187,18 @@ class TestRuntimeDirCreation:
             assert db.is_file(), "init_db() did not create the SQLite file"
         finally:
             close_pool()
+
+    def test_backfill_creates_custom_db_parent(self, tmp_path: Path) -> None:
+        """backfill() must support --db paths whose parent dirs don't exist."""
+        from live_analytics.scripts.backfill_from_jsonl import backfill
+
+        db = tmp_path / "nested" / "custom" / "backfill.db"
+        sessions = tmp_path / "sessions"
+        sessions.mkdir(parents=True, exist_ok=True)
+
+        inserted = backfill(db, sessions, dry_run=False)
+        assert inserted == 0
+        assert db.exists(), "backfill() did not create DB for custom --db path"
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -303,6 +323,14 @@ class TestEncodingSafety:
             "Running it from cmd.exe without chcp 65001 will raise UnicodeEncodeError."
         )
 
+    def test_preflight_uses_python_exe_on_windows(self) -> None:
+        """preflight venv detection must target python.exe on win32."""
+        src = (REPO_ROOT / "starters" / "preflight.py").read_text(encoding="utf-8")
+        assert "python.exe" in src, (
+            "preflight.py must check .venv\\Scripts\\python.exe on Windows; "
+            "checking '.venv\\Scripts\\python' fails on clean Windows setups."
+        )
+
 
 # ═══════════════════════════════════════════════════════════════════════
 # 7. PATH SEPARATOR SAFETY
@@ -327,3 +355,37 @@ class TestPathSeparatorSafety:
             assert isinstance(val, Path), (
                 f"questionnaire.config.{attr} is {type(val).__name__}, expected Path."
             )
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# 8. CONFIG CHAINING SAFETY
+# ═══════════════════════════════════════════════════════════════════════
+
+class TestConfigPathChaining:
+    """BASE_DIR overrides should cascade to DATA_DIR/DB_PATH unless explicitly overridden."""
+
+    def test_la_base_dir_cascades_to_data_db_sessions(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        base = tmp_path / "la_base"
+        monkeypatch.setenv("LA_BASE_DIR", str(base))
+        monkeypatch.delenv("LA_DATA_DIR", raising=False)
+        monkeypatch.delenv("LA_DB_PATH", raising=False)
+        monkeypatch.delenv("LA_SESSIONS_DIR", raising=False)
+
+        import live_analytics.app.config as cfg
+        importlib.reload(cfg)
+
+        assert cfg.DATA_DIR == base / "data"
+        assert cfg.DB_PATH == base / "data" / "live_analytics.db"
+        assert cfg.SESSIONS_DIR == base / "data" / "sessions"
+
+    def test_qs_base_dir_cascades_to_data_db(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        base = tmp_path / "qs_base"
+        monkeypatch.setenv("QS_BASE_DIR", str(base))
+        monkeypatch.delenv("QS_DATA_DIR", raising=False)
+        monkeypatch.delenv("QS_DB_PATH", raising=False)
+
+        import live_analytics.questionnaire.config as qcfg
+        importlib.reload(qcfg)
+
+        assert qcfg.DATA_DIR == base / "data"
+        assert qcfg.DB_PATH == base / "data" / "questionnaire.db"

@@ -92,7 +92,12 @@ def test_internal_module_importable(mod: str) -> None:
 def test_init_db_idempotent(tmp_path: Path) -> None:
     """Running init_db.py twice must succeed without errors."""
     import os
-    env = {**os.environ, "ANALYTICS_DB": str(tmp_path / "test.db")}
+    env = {
+        **os.environ,
+        "LA_DB_PATH": str(tmp_path / "test.db"),
+        "LA_DATA_DIR": str(tmp_path / "data"),
+        "LA_SESSIONS_DIR": str(tmp_path / "data" / "sessions"),
+    }
     script = REPO_ROOT / "live_analytics" / "scripts" / "init_db.py"
     for _ in range(2):
         result = subprocess.run(

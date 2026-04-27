@@ -58,12 +58,13 @@ class TestChain1Bootstrap:
         init_db(db)  # second call — must not raise
         close_pool()
 
-    def test_ensure_dirs_creates_paths(self, tmp_path: Path) -> None:
+    def test_ensure_dirs_creates_paths(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """ensure_dirs() must create DATA_DIR and SESSIONS_DIR."""
-        import importlib, os
-        os.environ["LA_BASE_DIR"] = str(tmp_path / "la")
-        os.environ["LA_DATA_DIR"] = str(tmp_path / "la" / "data")
-        os.environ["LA_SESSIONS_DIR"] = str(tmp_path / "la" / "data" / "sessions")
+        import importlib
+        monkeypatch.setenv("LA_BASE_DIR", str(tmp_path / "la"))
+        monkeypatch.setenv("LA_DATA_DIR", str(tmp_path / "la" / "data"))
+        monkeypatch.setenv("LA_SESSIONS_DIR", str(tmp_path / "la" / "data" / "sessions"))
+        monkeypatch.delenv("LA_DB_PATH", raising=False)
         # Re-import to pick up new env vars
         import live_analytics.app.config as cfg
         importlib.reload(cfg)
@@ -263,18 +264,31 @@ class TestChain4BackendRequest:
     """Verify FastAPI endpoint behaviour."""
 
     @pytest.fixture()
-    def client(self, tmp_path: Path):  # Generator[TestClient, None, None]
+    def client(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):  # Generator[TestClient, None, None]
         """Return a TestClient wired to a fresh in-memory DB."""
-        import os
+        import importlib
         db = tmp_path / "test.db"
-        os.environ["LA_DB_PATH"] = str(db)
-        os.environ["LA_SESSIONS_DIR"] = str(tmp_path / "sessions")
-        os.environ["LA_DATA_DIR"] = str(tmp_path)
+        monkeypatch.setenv("LA_DB_PATH", str(db))
+        monkeypatch.setenv("LA_SESSIONS_DIR", str(tmp_path / "sessions"))
+        monkeypatch.setenv("LA_DATA_DIR", str(tmp_path))
 
-        from live_analytics.app.main import app
-        from live_analytics.app.storage.sqlite_store import init_db, close_pool
+        # Important: several modules cache DB_PATH at import time.
+        # Reload the config and dependent modules so this fixture never leaks
+        # state from a previously imported app/main module.
+        from live_analytics.app import config as cfg
+        from live_analytics.app import api_sessions
+        from live_analytics.app import ws_ingest
+        from live_analytics.app import main as main_mod
+        from live_analytics.app.storage.sqlite_store import close_pool, init_db
+
+        close_pool()
+        importlib.reload(cfg)
+        importlib.reload(api_sessions)
+        importlib.reload(ws_ingest)
+        importlib.reload(main_mod)
+
         init_db(db)
-        with TestClient(app) as c:
+        with TestClient(main_mod.app) as c:
             yield c
         close_pool()
 
@@ -426,10 +440,20 @@ class TestChain5FileSystem:
         assert len(lines_a) == 2
         assert len(lines_b) == 1
 
-    def test_data_dir_alignment_between_backend_and_dashboard(self) -> None:
+    def test_data_dir_alignment_between_backend_and_dashboard(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Backend SESSIONS_DIR must equal Dashboard DATA_DIR / 'sessions'."""
-        from live_analytics.app.config import SESSIONS_DIR
-        from live_analytics.dashboard.streamlit_app import DATA_DIR as DASH_DATA_DIR
+        import importlib
+
+        for key in ("LA_BASE_DIR", "LA_DATA_DIR", "LA_DB_PATH", "LA_SESSIONS_DIR"):
+            monkeypatch.delenv(key, raising=False)
+
+        import live_analytics.app.config as cfg
+        import live_analytics.dashboard.streamlit_app as dash
+        importlib.reload(cfg)
+        importlib.reload(dash)
+
+        SESSIONS_DIR = cfg.SESSIONS_DIR
+        DASH_DATA_DIR = dash.DATA_DIR
         assert SESSIONS_DIR == DASH_DATA_DIR / "sessions", (
             f"Path mismatch: backend writes to {SESSIONS_DIR} "
             f"but dashboard reads from {DASH_DATA_DIR / 'sessions'}"

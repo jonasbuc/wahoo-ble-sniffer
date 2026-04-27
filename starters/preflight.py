@@ -79,14 +79,17 @@ else:
 # 2. Virtual environment
 # ─────────────────────────────────────────────────────────────────────
 print(f"\n{_BOLD}[2/5] Virtual environment{_R}")
-venv_python = REPO_ROOT / ".venv" / ("Scripts" if sys.platform == "win32" else "bin") / "python"
+venv_bin = "Scripts" if sys.platform == "win32" else "bin"
+venv_exe = "python.exe" if sys.platform == "win32" else "python"
+venv_python = REPO_ROOT / ".venv" / venv_bin / venv_exe
 
 if Path(sys.executable).resolve() == venv_python.resolve():
     _ok(f"Running inside project venv ({sys.prefix})")
 elif venv_python.exists():
+    activate_hint = ".venv\\Scripts\\activate" if sys.platform == "win32" else "source .venv/bin/activate"
     _warn(
         "Not running inside the project venv",
-        f"Run: source .venv/bin/activate  (or use {venv_python})",
+        f"Run: {activate_hint}  (or use {venv_python})",
     )
 else:
     _fail(
