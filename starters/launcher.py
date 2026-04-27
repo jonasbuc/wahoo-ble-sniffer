@@ -167,6 +167,7 @@ class Service:
         """Return True if the service is responding."""
         if self.process and self.process.poll() is not None:
             self.status = "error"
+            exit_code = self.process.poll()
             if self.log_file and self.log_file.exists():
                 # Read only the last 8 KB to avoid blocking on multi-MB logs
                 try:
@@ -182,11 +183,30 @@ class Service:
                 if tail:
                     print(
                         f"\n  {_RED}✗{_RESET}  '{self.name}' crashed "
-                        f"(exit {self.process.poll()}). "
+                        f"(exit {exit_code}). "
                         f"Log: {self.log_file}\n"
                         + "\n".join(f"     {l}" for l in tail) + "\n",
                         flush=True,
                     )
+                else:
+                    # Log file exists but is empty – crash happened before any output
+                    print(
+                        f"\n  {_RED}✗{_RESET}  '{self.name}' exited with code {exit_code} "
+                        f"before writing any log output.\n"
+                        f"     Log file: {self.log_file}\n"
+                        f"     Command:  {' '.join(self.cmd)}\n"
+                        f"     Hint: try running the command manually to see the error:\n"
+                        f"       {' '.join(self.cmd)}\n",
+                        flush=True,
+                    )
+            else:
+                # No log file at all (service had no cmd, or log creation failed)
+                print(
+                    f"\n  {_RED}✗{_RESET}  '{self.name}' exited with code {exit_code} "
+                    f"(no log file available).\n"
+                    f"     Command: {' '.join(self.cmd) if self.cmd else '<none>'}\n",
+                    flush=True,
+                )
             return False
 
         if self.health_url:

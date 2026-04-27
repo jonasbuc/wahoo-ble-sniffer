@@ -257,8 +257,11 @@ class WahooBridgeGUI:
             timestamp = time.time()
         try:
             self.triggers.append((float(timestamp), str(name)))
-        except Exception:
-            pass
+        except Exception as exc:
+            logging.getLogger("wahoo_bridge_gui").debug(
+                "Could not record trigger event '%s' (ts=%r): %s: %s",
+                name, timestamp, type(exc).__name__, exc,
+            )
 
     def update_data(self, hr):
         self.heart_rate = hr
@@ -420,8 +423,11 @@ class WahooBridgeGUI:
                     x_tr + 3, 2, text=str(name),
                     fill="#ffcc88", anchor="nw", font=("Arial", 8), tag="graph",
                 )
-        except Exception:
-            pass
+        except Exception as exc:
+            logging.getLogger("wahoo_bridge_gui").debug(
+                "Error while rendering trigger markers on graph: %s: %s",
+                type(exc).__name__, exc,
+            )
 
         # ── HR line ───────────────────────────────────────────────────────
         # Convert (t_rel, bpm) pairs to (x_pixel, y_pixel) and draw as a
@@ -456,7 +462,10 @@ class WahooBridgeGUI:
             start_i = int(round(start_rel))
             end_i   = int(round(start_rel + self.graph_seconds))
             self.window_label.config(text=f"Viewing: {start_i}s → {end_i}s")
-        except Exception:
+        except Exception as exc:
+            logging.getLogger("wahoo_bridge_gui").debug(
+                "Could not update window range label: %s: %s", type(exc).__name__, exc,
+            )
             self.window_label.config(text="")
 
     def run_websocket(self):
@@ -465,7 +474,16 @@ class WahooBridgeGUI:
         Creates a new asyncio event loop (Tkinter already owns the main loop so
         we can't use the default one) and blocks until the coroutine returns.
         """
-        asyncio.run(self.websocket_client())
+        try:
+            asyncio.run(self.websocket_client())
+        except Exception as exc:
+            logging.getLogger("wahoo_bridge_gui").critical(
+                "WebSocket background thread crashed – bridge connection is permanently lost: %s: %s",
+                type(exc).__name__, exc,
+                exc_info=True,
+            )
+            # Signal the GUI that the connection is gone so the LED turns red.
+            self.root.after(0, self.update_status, False)
 
     async def websocket_client(self):
         """Continuously connect to the bridge server and process incoming frames.
