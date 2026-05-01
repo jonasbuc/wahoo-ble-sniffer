@@ -14,6 +14,7 @@ from contextlib import asynccontextmanager
 
 import uvicorn
 from fastapi import FastAPI
+from fastapi import Request
 
 from live_analytics.app.api_sessions import router as sessions_router
 from live_analytics.app.config import (
@@ -124,6 +125,38 @@ def _ingest_task_done(task: asyncio.Task) -> None:
 app = FastAPI(title="Live Analytics", version="0.1.0", lifespan=lifespan)
 app.include_router(sessions_router)
 app.add_api_websocket_route("/ws/dashboard", dashboard_ws)
+
+
+@app.middleware("http")
+async def _log_unhandled_request_exceptions(request: Request, call_next):
+    """Middleware that logs any unhandled exception during HTTP request
+    processing with request context so first-request crashes are actionable.
+
+    This is intentionally generous with captured context (method, url, a
+    short preview of the body) because on a clean Windows install the
+    first failing request often happens before normal diagnostics are
+    configured. The middleware keeps the original exception semantics by
+    re-raising after logging.
+    """
+    try:
+        return await call_next(request)
+    except Exception as exc:  # capture anything unexpected
+        try:
+            # Read a tiny preview of the body without consuming too much
+            # memory. Request.stream() can only be read once so use .body()
+            # which FastAPI/Starlette buffers for us in most deployment
+            # setups. Guard with try/except in case the body is large or
+            # not available on the first request path.
+            body = await request.body()
+            body_preview = body[:2048].decode('utf-8', errors='replace')
+        except Exception:
+            body_preview = '<unavailable>'
+        logger.exception(
+            "Unhandled exception while serving HTTP %s %s – body_preview=%r",
+            request.method, request.url, body_preview,
+            exc_info=exc,
+        )
+        raise
 
 
 def main() -> None:

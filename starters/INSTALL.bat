@@ -91,18 +91,30 @@ if %errorlevel% neq 0 (
 echo   OK  Alle pakker installeret
 echo.
 
-REM -- 4. Verify ------------------------------------------------------
-echo   [4/5] Verificerer installation ...
+REM -- 4. Verify (generic) --------------------------------------------
+echo   [4/6] Verificerer installation (generisk) ...
 .venv\Scripts\python.exe starters\preflight.py
 if %errorlevel% neq 0 (
-    echo   X  Verifikation fejlede!
+    echo   X  Generel verifikation fejlede!
+    pause
+    exit /b 1
+)
+echo.
+
+REM -- 4b. Verify (Windows-specific) ----------------------------------
+echo   [4b/6] Verificerer Windows-deployment ...
+.venv\Scripts\python.exe starters\preflight_windows.py
+if %errorlevel% neq 0 (
+    echo.
+    echo   X  Windows preflight-tjek fejlede!
+    echo      Ret fejlene ovenfor og koer INSTALL.bat igen.
     pause
     exit /b 1
 )
 echo.
 
 REM -- 5. Init database -----------------------------------------------
-echo   [5/5] Initialiserer database ...
+echo   [5/6] Initialiserer database ...
 .venv\Scripts\python.exe live_analytics\scripts\init_db.py
 if %errorlevel% neq 0 (
     echo   X  Database init fejlede!
@@ -114,6 +126,7 @@ echo.
 
 echo   ================================================
 echo      INSTALLATION FAERDIG!
+echo   ================================================
 echo   ================================================
 echo.
 echo   Naeste trin:
