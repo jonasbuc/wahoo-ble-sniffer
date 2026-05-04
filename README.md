@@ -33,6 +33,7 @@ Arduino ────────UDP────┘                              
 | Streamlit dashboard | `live_analytics/dashboard/streamlit_app.py` | **8501** |
 | Questionnaire service (FastAPI) | `live_analytics/questionnaire/app.py` | **8090** |
 | System Check GUI (FastAPI) | `live_analytics/system_check/app.py` | **8095** |
+| External research API | `10.200.130.98:5001` | **5001** (ekstern — puls-dual-write) |
 | Wahoo BLE bridge | `bridge/bike_bridge.py` | **8765** (WS to Unity) |
 | Mock bridge (no hardware) | `bridge/mock_wahoo_bridge.py` | **8765** |
 | Bridge GUI monitor (Tkinter) | `bridge/wahoo_bridge_gui.py` | — |
@@ -59,17 +60,27 @@ Arduino ────────UDP────┘                              
 │   │   ├── config.py                 #   Configuration via env vars (LA_*)
 │   │   ├── env_utils.py              #   int_env / float_env helpers
 │   │   ├── api_sessions.py           #   /healthz, /api/sessions, /api/live/latest
+│   │   │                             #   PUT /api/sessions/{id}/participant  ← NY
 │   │   ├── ws_ingest.py              #   WebSocket ingest server (:8766)
+│   │   │                             #   Auto-resolver: henter participant_id ved ny session ← NY
 │   │   ├── ws_dashboard.py           #   WebSocket dashboard feed (/ws/dashboard)
 │   │   ├── models/                   #   Pydantic v2 data models
 │   │   ├── scoring/                  #   Real-time scoring (features.py, rules.py, anomaly.py)
-│   │   └── storage/                  #   SQLite pool (sqlite_store.py) + JSONL writer (raw_writer.py)
+│   │   └── storage/
+│   │       ├── sqlite_store.py       #   Session metadata & scores (WAL mode)
+│   │       │                         #   sessions.participant_id kolonne  ← NY
+│   │       │                         #   set_session_participant()  ← NY
+│   │       ├── raw_writer.py         #   Per-session JSONL raw telemetry
+│   │       └── web_api_client.py     #   Udgående HTTP-kald (puls → QS + ekstern DB)
+│   │                                 #   resolve_participant() + _participant_cache  ← NY
 │   ├── dashboard/
 │   │   └── streamlit_app.py          # Streamlit dashboard (:8501)
 │   ├── questionnaire/
 │   │   ├── app.py                    #   FastAPI questionnaire service (:8090)
+│   │   │                             #   GET /api/participants/by-session/{id}  ← NY
 │   │   ├── config.py                 #   Configuration via env vars (QS_*)
 │   │   ├── db.py                     #   SQLite CRUD
+│   │   │                             #   get_participant_by_session()  ← NY
 │   │   ├── questions.py              #   Pre/post question definitions
 │   │   ├── models.py                 #   Pydantic models
 │   │   └── static/                   #   SPA web UI (served at /)
@@ -330,6 +341,14 @@ All services are configured via **environment variables**. Every variable has a 
 | `LA_HR_BASELINE_BPM` | `70.0` | Resting HR baseline for scoring |
 | `LA_LOG_LEVEL` | `INFO` | Logging level |
 
+### Udgående HTTP-kald / ekstern DB (`live_analytics/app/storage/web_api_client.py`)
+
+| Variable | Default | Description |
+|---|---|---|
+| `QS_BASE_URL` | `http://localhost:8090` | Base URL til lokalt questionnaire-service |
+| `EXTERNAL_API_URL` | `https://10.200.130.98:5001` | Ekstern forsknings-API (self-signed TLS) |
+| `EXTERNAL_USER_ID` | `0` | Fallback `UserId` (TestPersonNumber) til ekstern DB — bruges kun hvis questionnaire ikke har linket en deltager til sessionen endnu |
+
 ### Streamlit dashboard (`live_analytics/dashboard/streamlit_app.py`)
 
 | Variable | Default | Description |
@@ -393,18 +412,34 @@ live_analytics/app/ws_ingest.py
   • maintains in-memory sliding window (default 5 s)
   • calls compute_scores() → stores in latest_scores dict
   • broadcasts score update to /ws/dashboard subscribers
+  • [NY] ved ny session: henter participant_id fra questionnaire API
+    og gemmer det på sessionen i SQLite (asynkron baggrundsopgave)
         │
         ├── GET /api/live/latest  ◄── Streamlit dashboard (polls every REFRESH_SEC)
         ├── GET /api/sessions     ◄── Streamlit dashboard
         └── WS  /ws/dashboard     ◄── Streamlit dashboard (push updates)
 
-Streamlit dashboard (:8501)
-  • reads LA_API_BASE (default http://127.0.0.1:8080)
-  • polls REST + subscribes to /ws/dashboard
+live_analytics/app/storage/web_api_client.py  [NY dual-write + participant-resolver]
+  • send_pulse() sender puls til to destinationer simultaneously:
+      1. POST :8090/api/pulse  →  questionnaire.db  (rig schema med session_id etc.)
+      2. POST 10.200.130.98:5001/api/cardatasqlite/loglitepd
+             →  ekstern SQLite PulseData { UserId=TestPersonNumber, Pulse }
+  • resolve_participant(session_id): slår deltager op via questionnaire API og cacher
+    resultatet — bruges som UserId i ekstern DB (fallback: EXTERNAL_USER_ID env var)
+  • Fejl i én destination blokerer aldrig den anden
 
 Questionnaire service (:8090)
-  • standalone FastAPI process with its own SQLite DB
+  • standalone FastAPI process med eget SQLite-DB
   • REST API + static SPA served from live_analytics/questionnaire/static/
+  • participants-tabel: participant_id (TestPersonNumber), session_id, svar, puls
+  • [NY] GET /api/participants/by-session/{session_id}: opslag fra analytics → QS
+
+Operatør-workflow for at koble en testperson til en session:
+  1. POST /api/participants  →  opret testperson (f.eks. participant_id="7")
+  2. PUT /api/participants/7/session  { "session_id": "..." }  (questionnaire API)
+     ELLER
+     PUT /api/sessions/.../participant  { "participant_id": "7" }  (analytics API)
+  Herefter bruges TestPersonNumber=7 automatisk som UserId i alle eksterne DB-skrivninger.
 
 System Check GUI (:8095)
   • probes all other services (HTTP health + WebSocket TCP check)
@@ -425,11 +460,14 @@ Wahoo BLE Bridge (:8765)
 
 All HTTP endpoints are served on port **8080**.
 
+### Analytics API
+
 | Method | Path | Description |
 |---|---|---|
 | `GET` | `/healthz` | API status + SQLite DB reachability |
 | `GET` | `/api/sessions` | List all sessions (summary) |
 | `GET` | `/api/sessions/{session_id}` | Session detail + latest scores |
+| `PUT` | `/api/sessions/{session_id}/participant` | Kobl deltager til session — body: `{ "participant_id": "P001" }` |
 | `GET` | `/api/live/latest` | Latest live telemetry across all active sessions |
 | `WS` | `/ws/dashboard` | Push live score updates to dashboard clients |
 
@@ -438,6 +476,23 @@ WebSocket ingest (port **8766**, separate `websockets` server):
 | Protocol | URL | Description |
 |---|---|---|
 | WebSocket | `ws://localhost:8766` | Unity telemetry ingest (JSON `TelemetryBatch` messages) |
+
+### Questionnaire API (port 8090)
+
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/api/participants` | Opret testperson |
+| `GET` | `/api/participants` | Alle testpersoner |
+| `GET` | `/api/participants/{participant_id}` | Hent enkelt testperson |
+| `GET` | `/api/participants/by-session/{session_id}` | Hent testperson via analytics-session ID |
+| `PUT` | `/api/participants/{participant_id}/session` | Kobl analytics session til testperson |
+| `DELETE` | `/api/participants/{participant_id}` | Slet testperson og alle svar |
+| `POST` | `/api/participants/{participant_id}/answers/{phase}` | Gem enkelt svar (pre/post) |
+| `PUT` | `/api/participants/{participant_id}/answers/{phase}` | Gem alle svar i bulk (pre/post) |
+| `GET` | `/api/participants/{participant_id}/answers/{phase}` | Hent alle svar |
+| `GET` | `/api/participants/{participant_id}/progress` | Besvarelsesprogress |
+| `POST` | `/api/pulse` | Modtag puls-sample (fra ws_ingest) |
+| `GET` | `/api/pulse/{session_id}` | Hent puls-data for en session |
 
 ---
 
@@ -698,10 +753,15 @@ these exact steps on the Windows machine:
 | Store | Location | Written by |
 |---|---|---|
 | Analytics SQLite (WAL) | `live_analytics/data/live_analytics.db` | `init_db.py` / WS ingest |
+| — sessions.participant_id | kolonne i ovenstående DB | `ws_ingest` (auto-resolve) / `PUT /api/sessions/{id}/participant` |
 | Per-session raw JSONL | `live_analytics/data/sessions/<session_id>.jsonl` | WS ingest (first event) |
 | Questionnaire SQLite | `live_analytics/questionnaire/data/questionnaire.db` | `init_db.py` / questionnaire API |
+| — pulse_data tabel | del af questionnaire.db | `web_api_client.send_pulse()` via `/api/pulse` endpoint |
+| Ekstern SQLite (PulseData) | `10.200.130.98:5001` (ekstern server) | `web_api_client.send_pulse()` dual-write |
 | VRSF binary sessions | `Logs/` (Unity-controlled path) | Unity `VrsSessionLogger.cs` |
 | Collector SQLite / Parquet | `collector_out/` | `bridge/collector_tail.py` |
+
+> **Puls-flow:** puls skrives **ikke** til `live_analytics.db`. Den skrives udelukkende til `questionnaire.db` (via questionnaire API) og til den eksterne forsknings-DB (via `web_api_client`). `live_analytics.db`'s `sessions`-tabel gemmer kun `participant_id` som et fremmednøgle-link.
 
 The analytics database is opened in **WAL mode** with a thread-safe connection pool, allowing concurrent reads from the dashboard while the ingest server is writing.
 

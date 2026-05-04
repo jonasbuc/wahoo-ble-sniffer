@@ -67,21 +67,35 @@ pytest live_analytics/tests/
 ```
 Unity VR Simulator
   └── TelemetryPublisher (C#)
-        │  WebSocket (ws://127.0.0.1:8765/ws/ingest)
+        │  WebSocket (ws://127.0.0.1:8766/ws/ingest)
         ▼
   FastAPI Analytics Server (Python 3.11)
-  ├── ws_ingest.py      – WebSocket ingest from Unity
-  ├── api_sessions.py   – REST API for session data
-  ├── ws_dashboard.py   – WebSocket push to dashboard
+  ├── ws_ingest.py      – WebSocket ingest fra Unity
+  │     └── ved ny session: resolve_participant() → questionnaire API → gemmer participant_id
+  ├── api_sessions.py   – REST API for session-data
+  │     └── PUT /api/sessions/{id}/participant  – manuel deltager-kobling
+  ├── ws_dashboard.py   – WebSocket push til dashboard
   ├── scoring/rules.py  – Rule-based stress & risk scoring
   ├── storage/
-  │   ├── sqlite_store.py – Session metadata & scores (WAL mode)
-  │   └── raw_writer.py   – Per-session JSONL raw telemetry
+  │   ├── sqlite_store.py – Session metadata, scores & participant_id (WAL mode)
+  │   ├── raw_writer.py   – Per-session JSONL raw telemetry
+  │   └── web_api_client.py – Udgående HTTP (puls → QS + ekstern DB)
+  │         ├── send_pulse() → dual-write: questionnaire.db + ekstern PulseData
+  │         └── resolve_participant() → slår deltager op fra questionnaire API
   └── data/
       ├── live_analytics.db
       └── sessions/{session_id}/telemetry.jsonl
 
-  Streamlit Dashboard
+  Questionnaire Service (:8090)
+  ├── questionnaire/app.py  – FastAPI + SPA
+  ├── questionnaire/db.py   – SQLite CRUD (participants, pulse_data, svar)
+  │     └── get_participant_by_session()  – opslag via session_id
+  └── GET /api/participants/by-session/{session_id}  – endpoint til analytics
+
+  Ekstern forsknings-DB (10.200.130.98:5001)
+  └── POST /api/cardatasqlite/loglitepd  – PulseData { UserId=TestPersonNumber, Pulse }
+
+  Streamlit Dashboard (:8501)
   └── dashboard/streamlit_app.py
 ```
 
@@ -145,27 +159,52 @@ Dashboard: `http://127.0.0.1:8501`
 
 ## API Endpoints
 
+### Analytics API (:8080)
+
 | Method | Path | Description |
 |---|---|---|
 | GET | `/healthz` | Health check |
 | GET | `/api/sessions` | List all sessions |
 | GET | `/api/sessions/{session_id}` | Session detail with latest scores |
+| PUT | `/api/sessions/{session_id}/participant` | Kobl testperson til session — body: `{ "participant_id": "P001" }` |
 | GET | `/api/live/latest` | Latest live state snapshot |
 | WS  | `/ws/dashboard` | Real-time dashboard feed |
 
+### Questionnaire API (:8090)
+
+| Method | Path | Description |
+|---|---|---|
+| POST | `/api/participants` | Opret testperson |
+| GET  | `/api/participants` | Alle testpersoner |
+| GET  | `/api/participants/{id}` | Hent enkelt testperson |
+| GET  | `/api/participants/by-session/{session_id}` | Hent testperson via analytics-session ID |
+| PUT  | `/api/participants/{id}/session` | Kobl analytics session til testperson |
+| POST | `/api/pulse` | Modtag puls-sample |
+| GET  | `/api/pulse/{session_id}` | Hent puls for en session |
+
 ## Environment Variables
+
+### Analytics API
 
 | Variable | Default | Description |
 |---|---|---|
 | `LA_HTTP_HOST` | `0.0.0.0` | FastAPI bind host |
 | `LA_HTTP_PORT` | `8080` | FastAPI HTTP port |
 | `LA_WS_INGEST_HOST` | `0.0.0.0` | Ingest WS bind host |
-| `LA_WS_INGEST_PORT` | `8765` | Ingest WS port |
+| `LA_WS_INGEST_PORT` | `8766` | Ingest WS port |
 | `LA_DASHBOARD_PORT` | `8501` | Streamlit port |
 | `LA_DATA_DIR` | `live_analytics/data` | Data directory |
 | `LA_DB_PATH` | `live_analytics/data/live_analytics.db` | SQLite DB path |
 | `LA_LOG_LEVEL` | `INFO` | Python log level |
 | `LA_HR_BASELINE_BPM` | `70.0` | Resting HR for scoring |
+
+### Udgående HTTP / ekstern DB (`web_api_client`)
+
+| Variable | Default | Description |
+|---|---|---|
+| `QS_BASE_URL` | `http://localhost:8090` | URL til questionnaire-service |
+| `EXTERNAL_API_URL` | `https://10.200.130.98:5001` | Ekstern forsknings-API |
+| `EXTERNAL_USER_ID` | `0` | Fallback `UserId` (TestPersonNumber) — bruges kun hvis questionnaire ikke har linket en deltager til sessionen |
 
 ## Scoring Metrics
 
