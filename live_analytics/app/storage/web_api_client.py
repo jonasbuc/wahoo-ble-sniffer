@@ -56,6 +56,10 @@ _TIMEOUT = httpx.Timeout(connect=3.0, read=8.0, write=8.0, pool=3.0)
 # Populated lazily on first pulse per session via resolve_participant().
 _participant_cache: dict[str, str | None] = {}
 
+# In-flight events: if another coroutine is already resolving a session,
+# latecomers wait on the event instead of firing a duplicate HTTP request.
+_resolve_in_flight: dict[str, asyncio.Event] = {}
+
 
 async def resolve_participant(session_id: str) -> str | None:
     """Fetch and cache the participant_id for a session from the questionnaire API.
@@ -63,20 +67,32 @@ async def resolve_participant(session_id: str) -> str | None:
     Returns the participant_id string (e.g. ``"P001"`` or ``"3"``) when found,
     or ``None`` when no participant has been linked to this session yet.
     Never raises — failures are logged as warnings.
+
+    Concurrent callers for the same *session_id* share one HTTP request via an
+    asyncio.Event gate — no duplicate 404s or race conditions.
     """
     if session_id in _participant_cache:
         return _participant_cache[session_id]
-    url = f"{_QS_BASE_URL}/api/participants/by-session/{session_id}"
+
+    # Another coroutine is already resolving this session → wait for it.
+    if session_id in _resolve_in_flight:
+        await _resolve_in_flight[session_id].wait()
+        return _participant_cache.get(session_id)
+
+    event = asyncio.Event()
+    _resolve_in_flight[session_id] = event
     try:
+        url = f"{_QS_BASE_URL}/api/participants/by-session/{session_id}"
         async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
             resp = await client.get(url)
             if resp.status_code == 404:
-                logger.warning(
-                    "resolve_participant: no participant linked to session %r yet — "
-                    "will fall back to EXTERNAL_USER_ID env var for external DB writes",
+                # Session not yet linked to a participant — normal during warm-up.
+                # Don't cache None permanently: the participant might register
+                # shortly after, so we only gate duplicate in-flight requests.
+                logger.debug(
+                    "resolve_participant: session %r not yet linked to a participant",
                     session_id,
                 )
-                _participant_cache[session_id] = None
                 return None
             resp.raise_for_status()
             data = resp.json()
@@ -91,6 +107,9 @@ async def resolve_participant(session_id: str) -> str | None:
             "resolve_participant: failed for session %r: %s", session_id, exc
         )
         return None
+    finally:
+        event.set()
+        _resolve_in_flight.pop(session_id, None)
 
 
 def clear_participant_cache(session_id: str | None = None) -> None:
@@ -247,12 +266,15 @@ async def send_pulse(session_id: str, unix_ms: int, pulse: int) -> bool:
     # This runs regardless of HTTP success/failure so the log file is always
     # up to date even when the questionnaire service is temporarily down.
     if participant_id:
+        _now = datetime.now(timezone.utc)
+        _local = datetime.now().astimezone()
         _append_pulse_to_file(PARTICIPANTS_DIR, participant_id, {
             "session_id": session_id,
             "unix_ms": unix_ms,
             "pulse": pulse,
             "participant_id": participant_id,
-            "created_at": datetime.now(timezone.utc).isoformat(),
+            "created_at": _now.isoformat(),
+            "local_time": _local.strftime("%Y-%m-%d %H:%M:%S %Z"),
         })
 
     return qs_ok and ext_ok

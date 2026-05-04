@@ -42,8 +42,8 @@ logger = logging.getLogger("live_analytics.participant_logs")
 # ── JSONL header comments (written as the first line) ─────────────────
 # These are NOT valid JSON lines — they start with '#' so standard JSONL
 # parsers (which skip lines that fail json.loads) will silently ignore them.
-_PULSE_HEADER = "# pulse log — fields: session_id, unix_ms, pulse, participant_id, created_at\n"
-_SESSION_HEADER = "# session log — fields: session_id, scenario_id, started_at, ended_at, participant_id\n"
+_PULSE_HEADER = "# pulse log — fields: session_id, unix_ms, pulse, participant_id, created_at, local_time\n"
+_SESSION_HEADER = "# session log — fields: session_id, scenario_id, started_at, ended_at, participant_id, local_time\n"
 
 
 def create_participant_log_dir(
