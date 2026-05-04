@@ -1,7 +1,7 @@
 """
 HTTP client for outbound calls from the analytics ingest server.
 
-Pulse data is written to TWO destinations simultaneously:
+Pulse data is written to THREE destinations:
   1. Local questionnaire API  (QS_BASE_URL, default http://localhost:8090)
      → questionnaire.db  (our own SQLite, rich schema with session_id etc.)
 
@@ -9,8 +9,11 @@ Pulse data is written to TWO destinations simultaneously:
      → POST /api/cardatasqlite/loglitepd
      → external SQLite PulseData table  { UserId INTEGER, Pulse INTEGER }
 
-Both sends are fire-and-forget — a failure in one never blocks the other,
-and neither ever crashes the ingest pipeline.
+  3. Participant log file  (live_analytics/data/participants/<participant_id>/pulse.jsonl)
+     → appended locally so each test person has their own pulse log file
+
+All sends are fire-and-forget — a failure in one never blocks the others,
+and none ever crash the ingest pipeline.
 
 Environment variables
 ---------------------
@@ -33,8 +36,12 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+from datetime import datetime, timezone
 
 import httpx
+
+from live_analytics.app.config import PARTICIPANTS_DIR
+from live_analytics.app.storage.participant_logs import append_pulse as _append_pulse_to_file
 
 logger = logging.getLogger("live_analytics.web_api_client")
 
@@ -235,6 +242,18 @@ async def send_pulse(session_id: str, unix_ms: int, pulse: int) -> bool:
             "send_pulse: pulse=%d for session %r was NOT saved to external research DB",
             pulse, session_id,
         )
+
+    # ── Write to participant's local pulse.jsonl ──────────────────────
+    # This runs regardless of HTTP success/failure so the log file is always
+    # up to date even when the questionnaire service is temporarily down.
+    if participant_id:
+        _append_pulse_to_file(PARTICIPANTS_DIR, participant_id, {
+            "session_id": session_id,
+            "unix_ms": unix_ms,
+            "pulse": pulse,
+            "participant_id": participant_id,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        })
 
     return qs_ok and ext_ok
 

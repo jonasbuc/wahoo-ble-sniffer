@@ -10,6 +10,8 @@ Coverage
 * append_session_event — appends a JSON line to session.jsonl
 * info.json content matches the arguments passed in
 * questionnaire POST /api/participants creates the log directory
+* send_pulse appends to pulse.jsonl when participant_id is known
+* ws_ingest session-start writes session_start event to session.jsonl
 """
 
 from __future__ import annotations
@@ -158,3 +160,109 @@ def test_create_participant_endpoint_creates_log_dir(tmp_path: Path) -> None:
     info = json.loads((pdir / "T42" / "info.json").read_text())
     assert info["participant_id"] == "T42"
     assert info["display_name"] == "Testperson 42"
+
+
+# ── Data population: pulse and session events ─────────────────────────
+
+class TestDataPopulation:
+    """Verify that pulse.jsonl and session.jsonl are populated with real data."""
+
+    def test_send_pulse_writes_to_pulse_jsonl(self, tmp_path: Path) -> None:
+        """send_pulse() must append a line to pulse.jsonl when participant is linked."""
+        import asyncio
+        from unittest.mock import AsyncMock, MagicMock, patch
+        from live_analytics.app.storage import web_api_client
+
+        pdir = tmp_path / "participants"
+        create_participant_log_dir(pdir, "P007")
+
+        mock_resp = MagicMock()
+        mock_resp.raise_for_status = MagicMock()
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.post = AsyncMock(return_value=mock_resp)
+        mock_client.get = AsyncMock(return_value=mock_resp)
+
+        with patch("live_analytics.app.storage.web_api_client.httpx.AsyncClient", return_value=mock_client), \
+             patch("live_analytics.app.storage.web_api_client.resolve_participant", new=AsyncMock(return_value="P007")), \
+             patch.object(web_api_client, "PARTICIPANTS_DIR", pdir):
+            asyncio.run(web_api_client.send_pulse("sess-1", 1_000_000, 72))
+
+        pulse_path = pdir / "P007" / "pulse.jsonl"
+        lines = [l for l in pulse_path.read_text().splitlines() if not l.startswith("#")]
+        assert len(lines) == 1
+        row = json.loads(lines[0])
+        assert row["pulse"] == 72
+        assert row["session_id"] == "sess-1"
+        assert row["participant_id"] == "P007"
+
+    def test_send_pulse_no_write_when_no_participant(self, tmp_path: Path) -> None:
+        """If resolve_participant returns None, pulse.jsonl must NOT be written."""
+        import asyncio
+        from unittest.mock import AsyncMock, MagicMock, patch
+        from live_analytics.app.storage import web_api_client
+
+        pdir = tmp_path / "participants"
+
+        mock_resp = MagicMock()
+        mock_resp.raise_for_status = MagicMock()
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.post = AsyncMock(return_value=mock_resp)
+        mock_client.get = AsyncMock(return_value=mock_resp)
+
+        with patch("live_analytics.app.storage.web_api_client.httpx.AsyncClient", return_value=mock_client), \
+             patch("live_analytics.app.storage.web_api_client.resolve_participant", new=AsyncMock(return_value=None)), \
+             patch.object(web_api_client, "PARTICIPANTS_DIR", pdir):
+            asyncio.run(web_api_client.send_pulse("sess-no-p", 1_000_000, 80))
+
+        assert not list(pdir.glob("*/pulse.jsonl")), "No pulse.jsonl should be created without participant"
+
+    def test_append_session_event_session_start(self, tmp_path: Path) -> None:
+        """append_session_event with event=session_start writes correct fields."""
+        pdir = tmp_path / "participants"
+        create_participant_log_dir(pdir, "P010")
+        append_session_event(pdir, "P010", {
+            "event": "session_start",
+            "session_id": "sess-10",
+            "scenario_id": "scenario-A",
+            "participant_id": "P010",
+            "started_at": "2024-01-01T10:00:00+00:00",
+        })
+        lines = [l for l in (pdir / "P010" / "session.jsonl").read_text().splitlines() if not l.startswith("#")]
+        assert len(lines) == 1
+        row = json.loads(lines[0])
+        assert row["event"] == "session_start"
+        assert row["session_id"] == "sess-10"
+        assert row["scenario_id"] == "scenario-A"
+        assert row["participant_id"] == "P010"
+
+    def test_append_session_event_session_end(self, tmp_path: Path) -> None:
+        """append_session_event with event=session_end writes correct fields."""
+        pdir = tmp_path / "participants"
+        create_participant_log_dir(pdir, "P010")
+        append_session_event(pdir, "P010", {
+            "event": "session_end",
+            "session_id": "sess-10",
+            "participant_id": "P010",
+            "ended_at": "2024-01-01T10:30:00+00:00",
+            "record_count": 180,
+        })
+        lines = [l for l in (pdir / "P010" / "session.jsonl").read_text().splitlines() if not l.startswith("#")]
+        assert len(lines) == 1
+        row = json.loads(lines[0])
+        assert row["event"] == "session_end"
+        assert row["record_count"] == 180
+
+    def test_full_session_lifecycle_in_session_jsonl(self, tmp_path: Path) -> None:
+        """session.jsonl should record session_start then session_end in order."""
+        pdir = tmp_path / "participants"
+        create_participant_log_dir(pdir, "P020")
+        append_session_event(pdir, "P020", {"event": "session_start", "session_id": "s20"})
+        append_session_event(pdir, "P020", {"event": "session_end", "session_id": "s20", "record_count": 5})
+        lines = [l for l in (pdir / "P020" / "session.jsonl").read_text().splitlines() if not l.startswith("#")]
+        assert len(lines) == 2
+        assert json.loads(lines[0])["event"] == "session_start"
+        assert json.loads(lines[1])["event"] == "session_end"

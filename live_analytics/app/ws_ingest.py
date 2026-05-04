@@ -26,12 +26,13 @@ import json
 import logging
 import time
 from collections import deque
+from datetime import datetime, timezone
 from typing import Any
 
 import websockets
 from websockets import ConnectionClosed, ServerConnection
 
-from live_analytics.app.config import DB_PATH, WS_INGEST_HOST, WS_INGEST_PORT
+from live_analytics.app.config import DB_PATH, PARTICIPANTS_DIR, WS_INGEST_HOST, WS_INGEST_PORT
 from live_analytics.app.models import (
     LiveFeedback,
     ScoringResult,
@@ -41,6 +42,7 @@ from live_analytics.app.models import (
 from live_analytics.app.scoring.rules import compute_scores
 from live_analytics.app.storage.raw_writer import RawWriter
 from live_analytics.app.storage import web_api_client
+from live_analytics.app.storage.participant_logs import append_session_event as _append_session_event
 from live_analytics.app.storage.sqlite_store import (
     increment_record_count,
     set_session_participant,
@@ -162,11 +164,12 @@ async def _process_message(ws: ServerConnection, raw: str) -> None:
     await _broadcast_dashboard(session_id)
 
 
-async def _resolve_and_link_participant(sid: str) -> None:
+async def _resolve_and_link_participant(sid: str, scenario_id: str, started_at: str) -> None:
     """Fetch the questionnaire participant for *sid* and store it in the analytics DB.
 
     Called once per new session.  Failures are logged but never propagated so
     the ingest pipeline is not affected.
+    Also writes a session-start event to the participant's session.jsonl log.
     """
     pid = await web_api_client.resolve_participant(sid)
     if pid:
@@ -178,6 +181,14 @@ async def _resolve_and_link_participant(sid: str) -> None:
                 "for session %r in analytics DB",
                 pid, sid,
             )
+        # Write session-start event to participant's local log file
+        _append_session_event(PARTICIPANTS_DIR, pid, {
+            "event": "session_start",
+            "session_id": sid,
+            "scenario_id": scenario_id,
+            "participant_id": pid,
+            "started_at": started_at,
+        })
 
 
 def _ingest_session_batch(sid: str, records: list[TelemetryRecord]) -> None:
@@ -222,7 +233,12 @@ def _ingest_session_batch(sid: str, records: list[TelemetryRecord]) -> None:
         # this session (pulse, scores, etc.) without blocking the ingest pipeline.
         try:
             loop = asyncio.get_running_loop()
-            loop.create_task(_resolve_and_link_participant(sid))
+            _started_at = datetime.fromtimestamp(
+                first_rec.unix_ms / 1000, tz=timezone.utc
+            ).isoformat()
+            loop.create_task(_resolve_and_link_participant(
+                sid, first_rec.scenario_id or "", _started_at
+            ))
         except RuntimeError:
             pass  # No running event loop (e.g. synchronous unit tests)
 
@@ -389,7 +405,21 @@ async def _evict_stale_sessions() -> None:
             _windows.pop(sid, None)
             _record_counts.pop(sid, None)
             latest_scores.pop(sid, None)
-            latest_records.pop(sid, None)
+            # Write session-end event to participant's log file before evicting
+            last_rec = latest_records.pop(sid, None)
+            if last_rec is not None:
+                pid = web_api_client._participant_cache.get(sid)
+                if pid:
+                    ended_at = datetime.fromtimestamp(
+                        last_rec.unix_ms / 1000, tz=timezone.utc
+                    ).isoformat()
+                    _append_session_event(PARTICIPANTS_DIR, pid, {
+                        "event": "session_end",
+                        "session_id": sid,
+                        "participant_id": pid,
+                        "ended_at": ended_at,
+                        "record_count": _record_counts.get(sid, 0),
+                    })
 
         logger.info(
             "Evicted in-memory state for %d stale session(s) "
