@@ -95,13 +95,12 @@ async def _handle_connection(ws: ServerConnection) -> None:
     peer = ws.remote_address
     logger.info("Unity client connected from %s", peer)
     # Sessions seen on *this* connection — used to write session_end on disconnect.
+    # We track ALL session_ids mentioned in any message so that both new sessions
+    # AND reconnections to existing session_ids get a session_end written.
     connection_sessions: set[str] = set()
     try:
         async for message in ws:
-            before = set(_windows.keys())
-            await _process_message(ws, message)
-            after = set(_windows.keys())
-            connection_sessions.update(after - before)
+            await _process_message(ws, message, connection_sessions)
     except ConnectionClosed as exc:
         # websockets ≥ 13.1 deprecated ConnectionClosed.code / .reason in favour
         # of exc.rcvd.code / exc.rcvd.reason (rcvd is None when the connection
@@ -123,33 +122,61 @@ async def _on_disconnect(session_ids: set[str]) -> None:
     """Write session_end for all sessions that belonged to the disconnected client."""
     if not session_ids:
         return
-    ended_at = datetime.now(timezone.utc).isoformat()
+    # Capture both UTC and local time once for all sessions in this disconnect.
+    _now = datetime.now().astimezone()
+    ended_at = _now.astimezone(timezone.utc).isoformat()
+    local_time = _now.strftime("%Y-%m-%d %H:%M:%S %Z")
+
     for sid in session_ids:
         pid = web_api_client._participant_cache.get(sid)
         if not pid:
             # Participant not yet resolved — try one last lookup before giving up.
             try:
                 pid = await web_api_client.resolve_participant(sid)
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning(
+                    "_on_disconnect: resolve_participant failed for session %r: %s — "
+                    "session_end will NOT be written for this session",
+                    sid, exc,
+                )
+                continue
         last_rec = latest_records.get(sid)
-        if last_rec is not None and pid:
-            _append_session_event(PARTICIPANTS_DIR, pid, {
-                "event": "session_end",
-                "session_id": sid,
-                "participant_id": pid,
-                "ended_at": ended_at,
-                "local_time": datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S %Z"),
-                "record_count": _record_counts.get(sid, 0),
-            })
-            logger.info(
-                "session_end written for session %r (participant=%r, records=%d)",
-                sid, pid, _record_counts.get(sid, 0),
+        if last_rec is None:
+            logger.debug(
+                "_on_disconnect: no latest record for session %r "
+                "(evicted before disconnect?) — session_end not written",
+                sid,
             )
+            continue
+        if not pid:
+            logger.warning(
+                "_on_disconnect: no participant linked to session %r "
+                "— session_end not written (was a participant registered before the session started?)",
+                sid,
+            )
+            continue
+        _append_session_event(PARTICIPANTS_DIR, pid, {
+            "event": "session_end",
+            "session_id": sid,
+            "participant_id": pid,
+            "ended_at": ended_at,
+            "local_time": local_time,
+            "record_count": _record_counts.get(sid, 0),
+        })
+        logger.info(
+            "session_end written for session %r (participant=%r, records=%d)",
+            sid, pid, _record_counts.get(sid, 0),
+        )
 
 
-async def _process_message(ws: ServerConnection, raw: str) -> None:
-    """Parse, validate, store, score, and optionally send feedback."""
+async def _process_message(ws: ServerConnection, raw: str, connection_sessions: set[str] | None = None) -> None:
+    """Parse, validate, store, score, and optionally send feedback.
+
+    *connection_sessions* is mutated in-place to record every session_id that
+    appears in this message.  Callers use this set to write session_end events
+    on disconnect.  The parameter is optional so unit tests that call
+    _process_message directly don't need to pass it.
+    """
     try:
         data = json.loads(raw)
     except json.JSONDecodeError:
@@ -174,6 +201,10 @@ async def _process_message(ws: ServerConnection, raw: str) -> None:
         by_session.setdefault(rec.session_id, []).append(rec)
 
     for sid, records in by_session.items():
+        # Track every session_id seen on this connection regardless of whether
+        # it is new or a continuation — covers reconnect scenarios.
+        if connection_sessions is not None:
+            connection_sessions.add(sid)
         try:
             _ingest_session_batch(sid, records)
         except Exception:
@@ -226,6 +257,11 @@ async def _resolve_and_link_participant(sid: str, scenario_id: str, started_at: 
             "started_at": started_at,
             "local_time": datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S %Z"),
         })
+        logger.info(
+            "_resolve_and_link_participant: session_start written for session %r "
+            "(participant=%r, scenario=%r)",
+            sid, pid, scenario_id,
+        )
 
 
 def _ingest_session_batch(sid: str, records: list[TelemetryRecord]) -> None:
@@ -440,25 +476,31 @@ async def _evict_stale_sessions() -> None:
 
         for sid in stale:
             _windows.pop(sid, None)
-            _record_counts.pop(sid, None)
+            # Capture record_count BEFORE popping so session_end gets the real value.
+            final_record_count = _record_counts.pop(sid, 0)
             latest_scores.pop(sid, None)
-            # Write session-end event to participant's log file before evicting
             last_rec = latest_records.pop(sid, None)
-            if last_rec is not None:
-                pid = web_api_client._participant_cache.get(sid)
-                if pid:
-                    ended_at = datetime.fromtimestamp(
-                        last_rec.unix_ms / 1000, tz=timezone.utc
-                    ).isoformat()
-                    _append_session_event(PARTICIPANTS_DIR, pid, {
-                        "event": "session_end",
-                        "session_id": sid,
-                        "participant_id": pid,
-                        "ended_at": ended_at,
-                        "local_time": datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S %Z"),
-                        "record_count": _record_counts.get(sid, 0),
-                        "reason": "idle_eviction",
-                    })
+            # Read participant BEFORE evicting the cache entry.
+            pid = web_api_client._participant_cache.pop(sid, None)
+            # Write session-end event to participant's log file.
+            if last_rec is not None and pid:
+                ended_at = datetime.fromtimestamp(
+                    last_rec.unix_ms / 1000, tz=timezone.utc
+                ).isoformat()
+                _append_session_event(PARTICIPANTS_DIR, pid, {
+                    "event": "session_end",
+                    "session_id": sid,
+                    "participant_id": pid,
+                    "ended_at": ended_at,
+                    "local_time": datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S %Z"),
+                    "record_count": final_record_count,
+                    "reason": "idle_eviction",
+                })
+            elif last_rec is not None and not pid:
+                logger.debug(
+                    "Evicting session %r: no participant linked — session_end not written",
+                    sid,
+                )
 
         logger.info(
             "Evicted in-memory state for %d stale session(s) "

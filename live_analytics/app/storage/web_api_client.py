@@ -37,6 +37,7 @@ import asyncio
 import logging
 import os
 from datetime import datetime, timezone
+from urllib.parse import urlparse
 
 import httpx
 
@@ -48,6 +49,9 @@ logger = logging.getLogger("live_analytics.web_api_client")
 _QS_BASE_URL: str = os.getenv("QS_BASE_URL", "http://localhost:8090")
 _EXTERNAL_API_URL: str = os.getenv("EXTERNAL_API_URL", "https://10.200.130.98:5001")
 _EXTERNAL_USER_ID: int = int(os.getenv("EXTERNAL_USER_ID", "0"))
+# Derive SNI hostname from EXTERNAL_API_URL so it stays correct even when the
+# URL is changed via env var (avoids hardcoding "10.200.130.98" in the request).
+_EXTERNAL_SNI_HOSTNAME: str = urlparse(_EXTERNAL_API_URL).hostname or "10.200.130.98"
 
 _TIMEOUT = httpx.Timeout(connect=3.0, read=8.0, write=8.0, pool=3.0)
 
@@ -175,7 +179,7 @@ async def _send_to_external(client: httpx.AsyncClient, pulse: int, user_id: int)
     payload = {"UserId": user_id, "Pulse": pulse}
     try:
         # verify=False because the research server uses a self-signed certificate.
-        resp = await client.post(url, json=payload, extensions={"sni_hostname": "10.200.130.98"})
+        resp = await client.post(url, json=payload, extensions={"sni_hostname": _EXTERNAL_SNI_HOSTNAME})
         resp.raise_for_status()
         logger.debug(
             "send_pulse[external]: OK — UserId=%d pulse=%d → %s",
@@ -266,15 +270,16 @@ async def send_pulse(session_id: str, unix_ms: int, pulse: int) -> bool:
     # This runs regardless of HTTP success/failure so the log file is always
     # up to date even when the questionnaire service is temporarily down.
     if participant_id:
-        _now = datetime.now(timezone.utc)
-        _local = datetime.now().astimezone()
+        # Derive local_time from the same instant as created_at so both fields
+        # always represent the identical point in time.
+        _now = datetime.now().astimezone()   # aware local time
         _append_pulse_to_file(PARTICIPANTS_DIR, participant_id, {
             "session_id": session_id,
             "unix_ms": unix_ms,
             "pulse": pulse,
             "participant_id": participant_id,
-            "created_at": _now.isoformat(),
-            "local_time": _local.strftime("%Y-%m-%d %H:%M:%S %Z"),
+            "created_at": _now.astimezone(timezone.utc).isoformat(),
+            "local_time": _now.strftime("%Y-%m-%d %H:%M:%S %Z"),
         })
 
     return qs_ok and ext_ok

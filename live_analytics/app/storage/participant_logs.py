@@ -160,7 +160,21 @@ def _touch_jsonl(path: Path, header: str) -> None:
 
 def _append_jsonl(path: Path, record: dict) -> None:
     try:
+        line = json.dumps(record, ensure_ascii=False, default=str) + "\n"
+    except Exception as exc:  # noqa: BLE001
+        logger.error(
+            "participant_logs: could not serialise record for '%s': %s — "
+            "record dropped: %r",
+            path, exc, record,
+        )
+        return
+    try:
         with path.open("a", encoding="utf-8") as f:
-            f.write(json.dumps(record, ensure_ascii=False) + "\n")
+            f.write(line)
+            f.flush()   # ensure OS buffer is flushed on clean + abnormal shutdown
     except OSError as exc:
-        logger.warning("participant_logs: could not append to '%s': %s", path, exc)
+        logger.warning(
+            "participant_logs: could not append to '%s': %s — "
+            "1 record dropped (does the participant directory exist?)",
+            path, exc,
+        )
