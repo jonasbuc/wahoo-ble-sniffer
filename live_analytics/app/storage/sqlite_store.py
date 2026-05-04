@@ -87,6 +87,17 @@ CREATE TABLE IF NOT EXISTS events (
 );
 
 CREATE INDEX IF NOT EXISTS idx_events_session ON events(session_id);
+
+CREATE TABLE IF NOT EXISTS pulse_data (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id   TEXT    NOT NULL,
+    unix_ms      INTEGER NOT NULL,
+    user_id      INTEGER,
+    pulse        INTEGER NOT NULL,
+    FOREIGN KEY (session_id) REFERENCES sessions(session_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_pulse_data_session ON pulse_data(session_id);
 """
 
 
@@ -281,6 +292,72 @@ def get_recent_events(
     rows = conn.execute(
         "SELECT id, session_id, unix_ms, event_type, payload "
         "FROM events WHERE session_id = ? ORDER BY unix_ms DESC LIMIT ?",
+        (session_id, limit),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+# ── Pulse data ────────────────────────────────────────────────────────
+
+def insert_pulse_data(
+    db_path: Path | str,
+    session_id: str,
+    unix_ms: int,
+    pulse: int,
+    user_id: Optional[int] = None,
+) -> None:
+    """Persist a single heart-rate sample to the ``pulse_data`` table.
+
+    Parameters
+    ----------
+    db_path    : path to the SQLite database file.
+    session_id : opaque session identifier (matches ``sessions.session_id``).
+    unix_ms    : wall-clock timestamp of the sample in milliseconds since epoch.
+    pulse      : heart-rate in beats per minute (integer).  Values ≤ 0 are
+                 silently rejected — they indicate a missing or invalid reading.
+    user_id    : optional foreign key to a ``Users`` table; pass ``None``
+                 when user identity is unavailable (column stored as NULL).
+
+    Raises
+    ------
+    sqlite3.Error
+        Propagated on genuine DB failures so the caller can decide whether
+        to log-and-continue or bubble up.
+    """
+    if pulse <= 0:
+        logger.debug(
+            "insert_pulse_data: ignoring non-positive pulse=%d for session %s",
+            pulse, session_id,
+        )
+        return
+    conn = _connect(db_path)
+    conn.execute(
+        "INSERT INTO pulse_data (session_id, unix_ms, user_id, pulse) VALUES (?, ?, ?, ?)",
+        (session_id, unix_ms, user_id, pulse),
+    )
+    conn.commit()
+
+
+def get_pulse_data(
+    db_path: Path | str, session_id: str, limit: int = 500
+) -> list[dict]:
+    """Return heart-rate samples for *session_id*, newest first.
+
+    Parameters
+    ----------
+    db_path    : path to the SQLite database file.
+    session_id : the session to query.
+    limit      : maximum number of rows to return (default 500).
+
+    Returns
+    -------
+    list of dicts with keys: ``id``, ``session_id``, ``unix_ms``,
+    ``user_id``, ``pulse``.
+    """
+    conn = _connect(db_path)
+    rows = conn.execute(
+        "SELECT id, session_id, unix_ms, user_id, pulse "
+        "FROM pulse_data WHERE session_id = ? ORDER BY unix_ms DESC LIMIT ?",
         (session_id, limit),
     ).fetchall()
     return [dict(r) for r in rows]

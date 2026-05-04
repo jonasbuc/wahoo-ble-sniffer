@@ -42,6 +42,7 @@ from live_analytics.app.scoring.rules import compute_scores
 from live_analytics.app.storage.raw_writer import RawWriter
 from live_analytics.app.storage.sqlite_store import (
     increment_record_count,
+    insert_pulse_data,
     update_latest_scores,
     upsert_session,
 )
@@ -231,6 +232,24 @@ def _ingest_session_batch(sid: str, records: list[TelemetryRecord]) -> None:
     # Always update the latest record pointer so the dashboard shows the
     # actual newest record even when scoring fails.
     latest_records[sid] = records[-1]
+
+    # Persist heart-rate sample once per batch.
+    # Pick the last record in the batch that carries a valid (>0) HR reading.
+    # Writing once per batch (rather than once per record) keeps SQLite write
+    # amplification low — at 20 Hz / batch_size=10 this is ≈2 writes/sec.
+    _hr_rec = next(
+        (r for r in reversed(records) if r.heart_rate > 0),
+        None,
+    )
+    if _hr_rec is not None:
+        try:
+            insert_pulse_data(DB_PATH, sid, _hr_rec.unix_ms, int(_hr_rec.heart_rate))
+        except Exception:
+            logger.exception(
+                "DB error: could not persist pulse data for session %s in %s – "
+                "scoring and other persistence continue normally",
+                sid, DB_PATH,
+            )
 
     # Score once on the updated window
     try:
