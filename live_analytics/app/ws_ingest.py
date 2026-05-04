@@ -40,9 +40,9 @@ from live_analytics.app.models import (
 )
 from live_analytics.app.scoring.rules import compute_scores
 from live_analytics.app.storage.raw_writer import RawWriter
+from live_analytics.app.storage import web_api_client
 from live_analytics.app.storage.sqlite_store import (
     increment_record_count,
-    insert_pulse_data,
     update_latest_scores,
     upsert_session,
 )
@@ -243,12 +243,15 @@ def _ingest_session_batch(sid: str, records: list[TelemetryRecord]) -> None:
     )
     if _hr_rec is not None:
         try:
-            insert_pulse_data(DB_PATH, sid, _hr_rec.unix_ms, int(_hr_rec.heart_rate))
-        except Exception:
-            logger.exception(
-                "DB error: could not persist pulse data for session %s in %s – "
-                "scoring and other persistence continue normally",
-                sid, DB_PATH,
+            loop = asyncio.get_running_loop()
+            loop.create_task(
+                web_api_client.send_pulse(sid, _hr_rec.unix_ms, int(_hr_rec.heart_rate))
+            )
+        except RuntimeError:
+            # No running event loop (e.g. during unit tests called synchronously).
+            # Fire-and-forget via a new loop so the call is not silently dropped.
+            asyncio.run(
+                web_api_client.send_pulse(sid, _hr_rec.unix_ms, int(_hr_rec.heart_rate))
             )
 
     # Score once on the updated window

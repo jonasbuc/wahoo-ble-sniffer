@@ -26,13 +26,15 @@ from live_analytics.questionnaire.db import (
     get_answers,
     get_participant,
     get_progress,
+    get_pulse_data,
     init_db,
+    insert_pulse_data,
     link_session,
     list_participants,
     save_answer,
     save_answers_bulk,
 )
-from live_analytics.questionnaire.models import AnswerSave, AnswersBulkSave, LinkSession, ParticipantCreate
+from live_analytics.questionnaire.models import AnswerSave, AnswersBulkSave, LinkSession, ParticipantCreate, PulseDataCreate, PulseDataOut
 from live_analytics.questionnaire.questions import QUESTIONNAIRES
 
 # ── Logging ───────────────────────────────────────────────────────────
@@ -223,6 +225,35 @@ async def get_all_answers_endpoint(participant_id: str) -> list[dict]:
 @app.get("/api/participants/{participant_id}/progress")
 async def get_progress_endpoint(participant_id: str) -> dict:
     return get_progress(DB_PATH, participant_id)
+
+
+# ── Pulse data ────────────────────────────────────────────────────────
+
+@app.post("/api/pulse", response_model=PulseDataOut, status_code=201)
+async def create_pulse_sample(body: PulseDataCreate) -> dict:
+    """Receive a heart-rate sample from the analytics ingest server and persist it."""
+    try:
+        result = insert_pulse_data(DB_PATH, body.session_id, body.unix_ms, body.pulse)
+    except ValueError as exc:
+        logger.warning("Rejected invalid pulse payload: %s", exc)
+        raise HTTPException(status_code=422, detail=str(exc))
+    except Exception as exc:
+        logger.exception(
+            "DB error saving pulse data session=%r unix_ms=%d pulse=%d: %s",
+            body.session_id, body.unix_ms, body.pulse, exc,
+        )
+        raise HTTPException(status_code=500, detail="Failed to save pulse data – see server log")
+    return result
+
+
+@app.get("/api/pulse/{session_id}", response_model=list[PulseDataOut])
+async def get_pulse_samples(session_id: str, limit: int = 500) -> list[dict]:
+    """Return persisted heart-rate samples for a session."""
+    try:
+        return get_pulse_data(DB_PATH, session_id, limit)
+    except Exception as exc:
+        logger.exception("DB error loading pulse data for session %r: %s", session_id, exc)
+        raise HTTPException(status_code=503, detail="Failed to load pulse data – see server log")
 
 
 # ── Health ────────────────────────────────────────────────────────────

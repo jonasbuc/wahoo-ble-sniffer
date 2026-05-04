@@ -64,3 +64,26 @@ class QuestionnaireDef(BaseModel):
     title: str
     description: str = ""
     questions: list[QuestionDef]
+
+
+# ── Pulse data ────────────────────────────────────────────────────────
+
+class PulseDataCreate(BaseModel):
+    """Payload sent from the analytics ingest server to POST /api/pulse.
+
+    The questionnaire service resolves ``participant_id`` automatically from
+    ``session_id``.  Callers do not need to supply it.
+    """
+    session_id: str = Field(..., min_length=1, description="Analytics session identifier")
+    unix_ms: int = Field(..., description="Timestamp of the sample (ms since Unix epoch, UTC)")
+    pulse: int = Field(..., gt=0, le=300, description="Heart-rate in BPM (1–300)")
+
+
+class PulseDataOut(BaseModel):
+    """Response from POST /api/pulse."""
+    id: int
+    session_id: str
+    participant_id: Optional[str]
+    unix_ms: int
+    pulse: int
+    created_at: str

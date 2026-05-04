@@ -106,6 +106,18 @@ CREATE TABLE IF NOT EXISTS questionnaire_responses (
 
 CREATE INDEX IF NOT EXISTS idx_resp_participant
     ON questionnaire_responses(participant_id, phase);
+
+CREATE TABLE IF NOT EXISTS pulse_data (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id      TEXT    NOT NULL,
+    participant_id  TEXT,
+    unix_ms         INTEGER NOT NULL,
+    pulse           INTEGER NOT NULL,
+    created_at      TEXT    NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_pulse_session
+    ON pulse_data(session_id);
 """
 
 
@@ -276,4 +288,92 @@ def delete_participant_data(db_path: Path | str, participant_id: str) -> None:
     conn.execute("DELETE FROM questionnaire_responses WHERE participant_id = ?", (participant_id,))
     conn.execute("DELETE FROM participants WHERE participant_id = ?", (participant_id,))
     conn.commit()
+
+
+# ── Pulse data ────────────────────────────────────────────────────────
+
+def insert_pulse_data(
+    db_path: Path | str,
+    session_id: str,
+    unix_ms: int,
+    pulse: int,
+) -> dict:
+    """Persist one heart-rate sample to the ``pulse_data`` table.
+
+    Automatically resolves the ``participant_id`` by looking up which
+    participant is currently linked to *session_id*.  If no participant has
+    been linked to this session yet, ``participant_id`` is stored as NULL —
+    the row can be updated later when the questionnaire is filled in.
+
+    Parameters
+    ----------
+    db_path    : path to the questionnaire SQLite database.
+    session_id : the analytics session identifier (from Unity).
+    unix_ms    : wall-clock timestamp of the sample (ms since Unix epoch, UTC).
+    pulse      : heart-rate in beats per minute.  Values ≤ 0 are rejected with
+                 a ValueError so callers can guard against missing sensors.
+
+    Returns
+    -------
+    dict with keys ``id``, ``session_id``, ``participant_id``, ``unix_ms``,
+    ``pulse``, ``created_at``.
+
+    Raises
+    ------
+    ValueError  if ``pulse <= 0`` (invalid reading — caller should skip).
+    sqlite3.Error on genuine DB failures.
+    """
+    if pulse <= 0:
+        raise ValueError(
+            f"insert_pulse_data: pulse={pulse} is not a valid heart-rate value "
+            f"(session_id={session_id!r}). Zero/negative values indicate a "
+            "missing or disconnected sensor — call not persisted."
+        )
+
+    # Resolve participant for this session (may be None if not yet linked).
+    conn = _connect(db_path)
+    row = conn.execute(
+        "SELECT participant_id FROM participants WHERE session_id = ? LIMIT 1",
+        (session_id,),
+    ).fetchone()
+    participant_id: str | None = row["participant_id"] if row else None
+
+    now = _now()
+    cur = conn.execute(
+        "INSERT INTO pulse_data (session_id, participant_id, unix_ms, pulse, created_at)"
+        " VALUES (?, ?, ?, ?, ?)",
+        (session_id, participant_id, unix_ms, pulse, now),
+    )
+    conn.commit()
+    row_id = cur.lastrowid
+    return {
+        "id": row_id,
+        "session_id": session_id,
+        "participant_id": participant_id,
+        "unix_ms": unix_ms,
+        "pulse": pulse,
+        "created_at": now,
+    }
+
+
+def get_pulse_data(
+    db_path: Path | str,
+    session_id: str,
+    limit: int = 500,
+) -> list[dict]:
+    """Return heart-rate samples for *session_id*, newest first.
+
+    Parameters
+    ----------
+    db_path    : path to the questionnaire SQLite database.
+    session_id : the analytics session to query.
+    limit      : maximum number of rows to return (default 500).
+    """
+    conn = _connect(db_path)
+    rows = conn.execute(
+        "SELECT id, session_id, participant_id, unix_ms, pulse, created_at"
+        " FROM pulse_data WHERE session_id = ? ORDER BY unix_ms DESC LIMIT ?",
+        (session_id, limit),
+    ).fetchall()
+    return [dict(r) for r in rows]
 

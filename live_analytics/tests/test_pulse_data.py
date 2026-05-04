@@ -1,125 +1,191 @@
 """
-Tests for pulse-data persistence: sqlite_store.insert_pulse_data /
-get_pulse_data, and the ws_ingest integration path.
+Tests for the pulse-data pipeline under the new architecture:
+
+  ws_ingest  →  web_api_client.send_pulse()  →  questionnaire API  →  questionnaire.db
+
+Coverage
+--------
+* questionnaire.db: insert_pulse_data / get_pulse_data
+* web_api_client.send_pulse – happy path, ConnectError, TimeoutException,
+  HTTPStatusError, non-positive pulse
+* ws_ingest._ingest_session_batch – fires send_pulse, skips zero HR
+* sqlite_store: pulse_data table is GONE (regression guard)
 """
 
 from __future__ import annotations
 
-import sqlite3
-from collections.abc import Generator
+import asyncio
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
 
-from live_analytics.app.storage.sqlite_store import (
-    close_pool,
-    get_pulse_data,
-    init_db,
-    insert_pulse_data,
-    upsert_session,
+# ── questionnaire DB layer ─────────────────────────────────────────────
+
+from live_analytics.questionnaire.db import (
+    get_pulse_data as qs_get_pulse,
+    init_db as qs_init_db,
+    insert_pulse_data as qs_insert_pulse,
 )
 
 
-# ── Fixtures ──────────────────────────────────────────────────────────
-
 @pytest.fixture()
-def db_path(tmp_path: Path) -> Generator[Path, None, None]:
-    p = tmp_path / "test.db"
-    init_db(p)
-    yield p
-    close_pool()
+def qs_db(tmp_path: Path) -> Path:
+    p = tmp_path / "questionnaire.db"
+    qs_init_db(p)
+    return p
 
 
-@pytest.fixture()
-def seeded_db(db_path: Path) -> Path:
-    upsert_session(db_path, "sess-1", 1_000_000)
-    return db_path
+class TestQuestionnairePulseDb:
+    def test_happy_path_stores_row(self, qs_db: Path) -> None:
+        row = qs_insert_pulse(qs_db, "sess-1", unix_ms=1_000_100, pulse=72)
+        assert row["pulse"] == 72
+        assert row["session_id"] == "sess-1"
+        assert row["unix_ms"] == 1_000_100
 
+    def test_participant_id_none_when_no_link(self, qs_db: Path) -> None:
+        row = qs_insert_pulse(qs_db, "sess-no-link", unix_ms=1_000_100, pulse=60)
+        assert row["participant_id"] is None
 
-# ── insert_pulse_data ─────────────────────────────────────────────────
+    def test_participant_id_resolved_from_session(self, qs_db: Path) -> None:
+        import sqlite3
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc).isoformat()
+        conn = sqlite3.connect(str(qs_db))
+        conn.execute(
+            "INSERT INTO participants (participant_id, session_id, display_name, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+            ("p-abc", "linked-sess", "Alice", now, now),
+        )
+        conn.commit()
+        conn.close()
 
-class TestInsertPulseData:
-    def test_happy_path_stores_row(self, seeded_db: Path) -> None:
-        insert_pulse_data(seeded_db, "sess-1", 1_000_100, pulse=72)
-        rows = get_pulse_data(seeded_db, "sess-1")
-        assert len(rows) == 1
-        assert rows[0]["pulse"] == 72
-        assert rows[0]["unix_ms"] == 1_000_100
-        assert rows[0]["user_id"] is None
+        row = qs_insert_pulse(qs_db, "linked-sess", unix_ms=2_000_000, pulse=88)
+        assert row["participant_id"] == "p-abc"
 
-    def test_with_user_id(self, seeded_db: Path) -> None:
-        insert_pulse_data(seeded_db, "sess-1", 1_000_200, pulse=85, user_id=7)
-        rows = get_pulse_data(seeded_db, "sess-1")
-        assert rows[0]["user_id"] == 7
+    def test_non_positive_pulse_rejected(self, qs_db: Path) -> None:
+        with pytest.raises(ValueError):
+            qs_insert_pulse(qs_db, "sess-1", unix_ms=1_000_100, pulse=0)
 
-    def test_multiple_samples_ordered_newest_first(self, seeded_db: Path) -> None:
-        insert_pulse_data(seeded_db, "sess-1", 1_000_100, pulse=70)
-        insert_pulse_data(seeded_db, "sess-1", 1_000_200, pulse=75)
-        insert_pulse_data(seeded_db, "sess-1", 1_000_300, pulse=80)
-        rows = get_pulse_data(seeded_db, "sess-1")
+    def test_negative_pulse_rejected(self, qs_db: Path) -> None:
+        with pytest.raises(ValueError):
+            qs_insert_pulse(qs_db, "sess-1", unix_ms=1_000_100, pulse=-5)
+
+    def test_multiple_samples_ordered_newest_first(self, qs_db: Path) -> None:
+        for bpm, ts in [(70, 1_000_100), (75, 1_000_200), (80, 1_000_300)]:
+            qs_insert_pulse(qs_db, "sess-1", unix_ms=ts, pulse=bpm)
+        rows = qs_get_pulse(qs_db, "sess-1")
         assert [r["pulse"] for r in rows] == [80, 75, 70]
 
-    def test_zero_pulse_ignored(self, seeded_db: Path) -> None:
-        insert_pulse_data(seeded_db, "sess-1", 1_000_100, pulse=0)
-        assert get_pulse_data(seeded_db, "sess-1") == []
-
-    def test_negative_pulse_ignored(self, seeded_db: Path) -> None:
-        insert_pulse_data(seeded_db, "sess-1", 1_000_100, pulse=-5)
-        assert get_pulse_data(seeded_db, "sess-1") == []
-
-    def test_db_error_propagates(self, seeded_db: Path) -> None:
-        """A genuine DB failure (e.g. locked file) must propagate so callers can log it."""
-        with patch(
-            "live_analytics.app.storage.sqlite_store._connect",
-            side_effect=sqlite3.OperationalError("disk full"),
-        ):
-            with pytest.raises(sqlite3.OperationalError):
-                insert_pulse_data(seeded_db, "sess-1", 1_000_100, pulse=72)
-
-    def test_limit_respected(self, seeded_db: Path) -> None:
+    def test_limit_respected(self, qs_db: Path) -> None:
         for i in range(10):
-            insert_pulse_data(seeded_db, "sess-1", 1_000_000 + i, pulse=60 + i)
-        rows = get_pulse_data(seeded_db, "sess-1", limit=3)
+            qs_insert_pulse(qs_db, "sess-1", unix_ms=1_000_000 + i, pulse=60 + i)
+        rows = qs_get_pulse(qs_db, "sess-1", limit=3)
         assert len(rows) == 3
 
-    def test_separate_sessions_do_not_mix(self, db_path: Path) -> None:
-        upsert_session(db_path, "sess-A", 1_000_000)
-        upsert_session(db_path, "sess-B", 2_000_000)
-        insert_pulse_data(db_path, "sess-A", 1_000_100, pulse=65)
-        insert_pulse_data(db_path, "sess-B", 2_000_100, pulse=90)
-        assert len(get_pulse_data(db_path, "sess-A")) == 1
-        assert len(get_pulse_data(db_path, "sess-B")) == 1
-        assert get_pulse_data(db_path, "sess-A")[0]["pulse"] == 65
-        assert get_pulse_data(db_path, "sess-B")[0]["pulse"] == 90
+    def test_separate_sessions_do_not_mix(self, qs_db: Path) -> None:
+        qs_insert_pulse(qs_db, "sess-A", unix_ms=1_000_100, pulse=65)
+        qs_insert_pulse(qs_db, "sess-B", unix_ms=2_000_100, pulse=90)
+        assert qs_get_pulse(qs_db, "sess-A")[0]["pulse"] == 65
+        assert qs_get_pulse(qs_db, "sess-B")[0]["pulse"] == 90
 
 
-# ── Schema: table must exist after init_db ────────────────────────────
+# ── web_api_client.send_pulse ─────────────────────────────────────────
 
-def test_pulse_data_table_created(db_path: Path) -> None:
-    """init_db() must create the pulse_data table."""
-    from live_analytics.app.storage.sqlite_store import _connect
-    conn = _connect(db_path)
-    row = conn.execute(
-        "SELECT name FROM sqlite_master WHERE type='table' AND name='pulse_data'"
-    ).fetchone()
-    assert row is not None, "pulse_data table was not created by init_db()"
+from live_analytics.app.storage import web_api_client  # noqa: E402
 
 
-# ── ws_ingest integration: pulse written per batch ────────────────────
+def _run(coro):
+    return asyncio.run(coro)
 
-def test_ingest_batch_persists_pulse(tmp_path: Path) -> None:
-    """_ingest_session_batch() must call insert_pulse_data() for HR > 0."""
+
+class TestSendPulse:
+    def test_happy_path_returns_true(self) -> None:
+        mock_resp = MagicMock()
+        mock_resp.raise_for_status = MagicMock()
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.post = AsyncMock(return_value=mock_resp)
+
+        with patch("live_analytics.app.storage.web_api_client.httpx.AsyncClient", return_value=mock_client):
+            result = _run(web_api_client.send_pulse("sess-1", 1_000_000, 75))
+
+        assert result is True
+        mock_client.post.assert_called_once()
+        call_kwargs = mock_client.post.call_args
+        assert call_kwargs.kwargs["json"]["pulse"] == 75
+        assert call_kwargs.kwargs["json"]["session_id"] == "sess-1"
+
+    def test_non_positive_pulse_skips_http(self) -> None:
+        with patch("live_analytics.app.storage.web_api_client.httpx.AsyncClient") as mock_cls:
+            result = _run(web_api_client.send_pulse("sess-1", 1_000_000, 0))
+        assert result is False
+        mock_cls.assert_not_called()
+
+    def test_connect_error_returns_false(self) -> None:
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.post = AsyncMock(side_effect=httpx.ConnectError("refused"))
+
+        with patch("live_analytics.app.storage.web_api_client.httpx.AsyncClient", return_value=mock_client):
+            result = _run(web_api_client.send_pulse("sess-1", 1_000_000, 75))
+
+        assert result is False
+
+    def test_timeout_returns_false(self) -> None:
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.post = AsyncMock(side_effect=httpx.ReadTimeout("timed out"))
+
+        with patch("live_analytics.app.storage.web_api_client.httpx.AsyncClient", return_value=mock_client):
+            result = _run(web_api_client.send_pulse("sess-1", 1_000_000, 75))
+
+        assert result is False
+
+    def test_http_status_error_returns_false(self) -> None:
+        mock_resp = MagicMock()
+        mock_resp.status_code = 500
+        mock_resp.text = "Internal Server Error"
+
+        def _raise_for_status():
+            raise httpx.HTTPStatusError(
+                "500", request=MagicMock(), response=mock_resp
+            )
+
+        mock_resp.raise_for_status = _raise_for_status
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.post = AsyncMock(return_value=mock_resp)
+
+        with patch("live_analytics.app.storage.web_api_client.httpx.AsyncClient", return_value=mock_client):
+            result = _run(web_api_client.send_pulse("sess-1", 1_000_000, 75))
+
+        assert result is False
+
+
+# ── ws_ingest integration ─────────────────────────────────────────────
+
+async def test_ingest_batch_fires_send_pulse(tmp_path: Path) -> None:
+    """_ingest_session_batch() must schedule send_pulse for HR > 0."""
     import live_analytics.app.ws_ingest as ingest
     from live_analytics.app.models import TelemetryRecord
-    from live_analytics.app.storage.sqlite_store import init_db, get_pulse_data, close_pool
+    from live_analytics.app.storage.sqlite_store import init_db, close_pool
 
     db = tmp_path / "ingest_test.db"
     init_db(db)
 
-    # Patch DB_PATH so the ingest module writes to our temp DB.
-    with patch.object(ingest, "DB_PATH", db):
-        # Reset module-level state so there's no leftover session data.
+    fired: list[tuple] = []
+
+    async def _fake_send(session_id, unix_ms, pulse):
+        fired.append((session_id, unix_ms, pulse))
+        return True
+
+    with patch.object(ingest, "DB_PATH", db), \
+         patch.object(ingest.web_api_client, "send_pulse", side_effect=_fake_send):
         ingest._windows.clear()
         ingest._record_counts.clear()
         ingest.latest_scores.clear()
@@ -137,23 +203,32 @@ def test_ingest_batch_persists_pulse(tmp_path: Path) -> None:
             for i in range(5)
         ]
         ingest._ingest_session_batch("test-sess", records)
+        # Yield control so that the ensure_future task can run.
+        await asyncio.sleep(0)
 
-    rows = get_pulse_data(db, "test-sess")
-    assert len(rows) == 1, "Expected exactly one pulse row per batch"
-    assert rows[0]["pulse"] == 75
+    assert len(fired) == 1, "Expected exactly one send_pulse call per batch"
+    assert fired[0][0] == "test-sess"
+    assert fired[0][2] == 75
     close_pool()
 
 
-def test_ingest_batch_skips_zero_hr(tmp_path: Path) -> None:
-    """No pulse row must be written when all records have heart_rate == 0."""
+async def test_ingest_batch_skips_zero_hr(tmp_path: Path) -> None:
+    """No send_pulse call when all records have heart_rate == 0."""
     import live_analytics.app.ws_ingest as ingest
     from live_analytics.app.models import TelemetryRecord
-    from live_analytics.app.storage.sqlite_store import init_db, get_pulse_data, close_pool
+    from live_analytics.app.storage.sqlite_store import init_db, close_pool
 
     db = tmp_path / "ingest_zero_hr.db"
     init_db(db)
 
-    with patch.object(ingest, "DB_PATH", db):
+    fired: list = []
+
+    async def _fake_send(session_id, unix_ms, pulse):
+        fired.append(pulse)
+        return True
+
+    with patch.object(ingest, "DB_PATH", db), \
+         patch.object(ingest.web_api_client, "send_pulse", side_effect=_fake_send):
         ingest._windows.clear()
         ingest._record_counts.clear()
         ingest.latest_scores.clear()
@@ -166,43 +241,42 @@ def test_ingest_batch_skips_zero_hr(tmp_path: Path) -> None:
                 unity_time=float(i),
                 scenario_id="test",
                 speed=5.0,
-                heart_rate=0.0,  # missing HR
+                heart_rate=0.0,
             )
             for i in range(3)
         ]
         ingest._ingest_session_batch("zero-sess", records)
+        await asyncio.sleep(0)
 
-    assert get_pulse_data(db, "zero-sess") == []
+    assert fired == [], "send_pulse must not be called when HR is 0"
     close_pool()
 
 
-def test_ingest_batch_db_failure_does_not_crash(tmp_path: Path) -> None:
-    """A DB failure in insert_pulse_data must be logged, not re-raised."""
-    import live_analytics.app.ws_ingest as ingest
-    from live_analytics.app.models import TelemetryRecord
+# ── Regression: pulse_data table must NOT exist in sqlite_store ───────
+
+def test_sqlite_store_has_no_pulse_data_table(tmp_path: Path) -> None:
+    """sqlite_store must NOT create a pulse_data table — it belongs in questionnaire.db."""
+    import sqlite3
     from live_analytics.app.storage.sqlite_store import init_db, close_pool
 
-    db = tmp_path / "ingest_fail.db"
+    db = tmp_path / "regression.db"
     init_db(db)
-
-    with patch.object(ingest, "DB_PATH", db):
-        with patch.object(ingest, "insert_pulse_data", side_effect=sqlite3.OperationalError("forced")):
-            ingest._windows.clear()
-            ingest._record_counts.clear()
-            ingest.latest_scores.clear()
-            ingest.latest_records.clear()
-
-            records = [
-                TelemetryRecord(
-                    session_id="fail-sess",
-                    unix_ms=1_000_000,
-                    unity_time=0.0,
-                    scenario_id="test",
-                    speed=8.0,
-                    heart_rate=80.0,
-                )
-            ]
-            # Must NOT raise — failure is logged and swallowed.
-            ingest._ingest_session_batch("fail-sess", records)
-
+    conn = sqlite3.connect(str(db))
+    row = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='pulse_data'"
+    ).fetchone()
+    conn.close()
     close_pool()
+    assert row is None, (
+        "pulse_data table must NOT exist in sqlite_store (live_analytics.db). "
+        "Pulse data belongs in questionnaire.db via the Web API."
+    )
+
+
+def test_sqlite_store_has_no_insert_pulse_data() -> None:
+    """insert_pulse_data must not be importable from sqlite_store."""
+    import importlib
+    store = importlib.import_module("live_analytics.app.storage.sqlite_store")
+    assert not hasattr(store, "insert_pulse_data"), (
+        "insert_pulse_data must be removed from sqlite_store"
+    )
