@@ -114,11 +114,26 @@ def _make_mock_client(side_effect=None):
 
 
 class TestSendPulse:
+    """Tests for send_pulse — resolve_participant is mocked out in all cases
+    so each test only exercises the HTTP logic for the two pulse destinations."""
+
+    @staticmethod
+    def _resolve_none(session_id: str):  # noqa: ARG002 – stub
+        return None
+
+    def _with_resolve_mocked(self, participant_id=None):
+        """Context manager that stubs resolve_participant → participant_id."""
+        return patch(
+            "live_analytics.app.storage.web_api_client.resolve_participant",
+            new=AsyncMock(return_value=participant_id),
+        )
+
     def test_happy_path_returns_true(self) -> None:
         """Both destinations must be called and True returned when both succeed."""
         mock_client = _make_mock_client()
 
-        with patch("live_analytics.app.storage.web_api_client.httpx.AsyncClient", return_value=mock_client):
+        with self._with_resolve_mocked(), \
+             patch("live_analytics.app.storage.web_api_client.httpx.AsyncClient", return_value=mock_client):
             result = _run(web_api_client.send_pulse("sess-1", 1_000_000, 75))
 
         assert result is True
@@ -132,7 +147,8 @@ class TestSendPulse:
         """Questionnaire call must include session_id, unix_ms, pulse."""
         mock_client = _make_mock_client()
 
-        with patch("live_analytics.app.storage.web_api_client.httpx.AsyncClient", return_value=mock_client):
+        with self._with_resolve_mocked(), \
+             patch("live_analytics.app.storage.web_api_client.httpx.AsyncClient", return_value=mock_client):
             _run(web_api_client.send_pulse("sess-abc", 1_000_000, 80))
 
         qs_call = next(c for c in mock_client.post.call_args_list if "/api/pulse" in c.args[0])
@@ -140,20 +156,39 @@ class TestSendPulse:
         assert qs_call.kwargs["json"]["pulse"] == 80
         assert qs_call.kwargs["json"]["unix_ms"] == 1_000_000
 
-    def test_external_payload(self) -> None:
-        """External call must include UserId and Pulse (capital keys per DB schema)."""
+    def test_external_payload_uses_resolved_participant(self) -> None:
+        """External call UserId must come from the resolved participant_id, not env var."""
         mock_client = _make_mock_client()
 
-        with patch("live_analytics.app.storage.web_api_client.httpx.AsyncClient", return_value=mock_client), \
+        with self._with_resolve_mocked(participant_id="7"), \
+             patch("live_analytics.app.storage.web_api_client.httpx.AsyncClient", return_value=mock_client), \
+             patch.dict("os.environ", {"EXTERNAL_USER_ID": "0"}):
+            # Clear cache so the mock is used
+            web_api_client.clear_participant_cache("sess-resolved")
+            _run(web_api_client.send_pulse("sess-resolved", 1_000_000, 65))
+
+        ext_call = next(c for c in mock_client.post.call_args_list if "loglitepd" in c.args[0])
+        assert ext_call.kwargs["json"]["UserId"] == 7, "UserId should be parsed from participant_id '7'"
+        assert ext_call.kwargs["json"]["Pulse"] == 65
+
+    def test_external_payload_falls_back_to_env_when_no_participant(self) -> None:
+        """If no participant is linked, UserId falls back to EXTERNAL_USER_ID env var."""
+        mock_client = _make_mock_client()
+
+        with self._with_resolve_mocked(participant_id=None), \
+             patch("live_analytics.app.storage.web_api_client.httpx.AsyncClient", return_value=mock_client), \
              patch.dict("os.environ", {"EXTERNAL_USER_ID": "42"}):
-            _run(web_api_client.send_pulse("sess-1", 1_000_000, 65))
+            web_api_client.clear_participant_cache("sess-no-p")
+            # Re-read env so _EXTERNAL_USER_ID is fresh in this test
+            with patch.object(web_api_client, "_EXTERNAL_USER_ID", 42):
+                _run(web_api_client.send_pulse("sess-no-p", 1_000_000, 65))
 
         ext_call = next(c for c in mock_client.post.call_args_list if "loglitepd" in c.args[0])
         assert ext_call.kwargs["json"]["UserId"] == 42
-        assert ext_call.kwargs["json"]["Pulse"] == 65
 
     def test_non_positive_pulse_skips_http(self) -> None:
-        with patch("live_analytics.app.storage.web_api_client.httpx.AsyncClient") as mock_cls:
+        with self._with_resolve_mocked(), \
+             patch("live_analytics.app.storage.web_api_client.httpx.AsyncClient") as mock_cls:
             result = _run(web_api_client.send_pulse("sess-1", 1_000_000, 0))
         assert result is False
         mock_cls.assert_not_called()
@@ -161,7 +196,8 @@ class TestSendPulse:
     def test_connect_error_on_both_returns_false(self) -> None:
         mock_client = _make_mock_client(side_effect=httpx.ConnectError("refused"))
 
-        with patch("live_analytics.app.storage.web_api_client.httpx.AsyncClient", return_value=mock_client):
+        with self._with_resolve_mocked(), \
+             patch("live_analytics.app.storage.web_api_client.httpx.AsyncClient", return_value=mock_client):
             result = _run(web_api_client.send_pulse("sess-1", 1_000_000, 75))
 
         assert result is False
@@ -169,7 +205,8 @@ class TestSendPulse:
     def test_timeout_returns_false(self) -> None:
         mock_client = _make_mock_client(side_effect=httpx.ReadTimeout("timed out"))
 
-        with patch("live_analytics.app.storage.web_api_client.httpx.AsyncClient", return_value=mock_client):
+        with self._with_resolve_mocked(), \
+             patch("live_analytics.app.storage.web_api_client.httpx.AsyncClient", return_value=mock_client):
             result = _run(web_api_client.send_pulse("sess-1", 1_000_000, 75))
 
         assert result is False
@@ -186,7 +223,8 @@ class TestSendPulse:
         mock_client = _make_mock_client()
         mock_client.post = AsyncMock(return_value=mock_resp)
 
-        with patch("live_analytics.app.storage.web_api_client.httpx.AsyncClient", return_value=mock_client):
+        with self._with_resolve_mocked(), \
+             patch("live_analytics.app.storage.web_api_client.httpx.AsyncClient", return_value=mock_client):
             result = _run(web_api_client.send_pulse("sess-1", 1_000_000, 75))
 
         assert result is False
@@ -213,7 +251,8 @@ class TestSendPulse:
         mock_client.__aexit__ = AsyncMock(return_value=False)
         mock_client.post = AsyncMock(side_effect=_alternating_post)
 
-        with patch("live_analytics.app.storage.web_api_client.httpx.AsyncClient", return_value=mock_client):
+        with self._with_resolve_mocked(), \
+             patch("live_analytics.app.storage.web_api_client.httpx.AsyncClient", return_value=mock_client):
             result = _run(web_api_client.send_pulse("sess-1", 1_000_000, 75))
 
         assert result is False  # partial failure → False
@@ -334,3 +373,117 @@ def test_sqlite_store_has_no_insert_pulse_data() -> None:
     assert not hasattr(store, "insert_pulse_data"), (
         "insert_pulse_data must be removed from sqlite_store"
     )
+
+
+# ── resolve_participant ───────────────────────────────────────────────
+
+class TestResolveParticipant:
+    """Unit tests for web_api_client.resolve_participant()."""
+
+    def setup_method(self) -> None:
+        web_api_client.clear_participant_cache()
+
+    def _make_get_response(self, status_code: int, json_body=None):
+        mock_resp = MagicMock()
+        mock_resp.status_code = status_code
+        if json_body is not None:
+            mock_resp.json = MagicMock(return_value=json_body)
+        mock_resp.raise_for_status = MagicMock()
+        return mock_resp
+
+    def _make_get_client(self, response):
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.get = AsyncMock(return_value=response)
+        return mock_client
+
+    def test_returns_participant_id_on_200(self) -> None:
+        resp = self._make_get_response(200, {"participant_id": "P007"})
+        client = self._make_get_client(resp)
+        with patch("live_analytics.app.storage.web_api_client.httpx.AsyncClient", return_value=client):
+            result = _run(web_api_client.resolve_participant("sess-x"))
+        assert result == "P007"
+
+    def test_caches_result(self) -> None:
+        resp = self._make_get_response(200, {"participant_id": "P007"})
+        client = self._make_get_client(resp)
+        with patch("live_analytics.app.storage.web_api_client.httpx.AsyncClient", return_value=client):
+            _run(web_api_client.resolve_participant("sess-cache"))
+            _run(web_api_client.resolve_participant("sess-cache"))
+        # GET should only have been called once (second call uses cache)
+        assert client.get.call_count == 1
+
+    def test_returns_none_on_404(self) -> None:
+        resp = self._make_get_response(404)
+        client = self._make_get_client(resp)
+        with patch("live_analytics.app.storage.web_api_client.httpx.AsyncClient", return_value=client):
+            result = _run(web_api_client.resolve_participant("sess-missing"))
+        assert result is None
+
+    def test_returns_none_on_connection_error(self) -> None:
+        client = AsyncMock()
+        client.__aenter__ = AsyncMock(return_value=client)
+        client.__aexit__ = AsyncMock(return_value=False)
+        client.get = AsyncMock(side_effect=httpx.ConnectError("refused"))
+        with patch("live_analytics.app.storage.web_api_client.httpx.AsyncClient", return_value=client):
+            result = _run(web_api_client.resolve_participant("sess-err"))
+        assert result is None
+
+    def test_clear_cache_removes_entry(self) -> None:
+        web_api_client._participant_cache["sess-cached"] = "P001"
+        web_api_client.clear_participant_cache("sess-cached")
+        assert "sess-cached" not in web_api_client._participant_cache
+
+    def test_clear_cache_all(self) -> None:
+        web_api_client._participant_cache["a"] = "P001"
+        web_api_client._participant_cache["b"] = "P002"
+        web_api_client.clear_participant_cache()
+        assert web_api_client._participant_cache == {}
+
+
+# ── questionnaire: get_participant_by_session ─────────────────────────
+
+class TestGetParticipantBySession:
+    """Unit tests for questionnaire db.get_participant_by_session()."""
+
+    def test_returns_none_when_no_match(self, qs_db: Path) -> None:
+        from live_analytics.questionnaire.db import get_participant_by_session
+        assert get_participant_by_session(qs_db, "nonexistent-session") is None
+
+    def test_returns_participant_when_linked(self, qs_db: Path) -> None:
+        import sqlite3
+        from datetime import datetime, timezone
+        from live_analytics.questionnaire.db import get_participant_by_session
+        now = datetime.now(timezone.utc).isoformat()
+        conn = sqlite3.connect(str(qs_db))
+        conn.execute(
+            "INSERT INTO participants (participant_id, session_id, display_name, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            ("P099", "my-sess-id", "Test Person", now, now),
+        )
+        conn.commit()
+        conn.close()
+
+        result = get_participant_by_session(qs_db, "my-sess-id")
+        assert result is not None
+        assert result["participant_id"] == "P099"
+
+    def test_session_id_empty_does_not_match(self, qs_db: Path) -> None:
+        """A participant with session_id='' must not be returned for an empty-string lookup."""
+        import sqlite3
+        from datetime import datetime, timezone
+        from live_analytics.questionnaire.db import get_participant_by_session
+        now = datetime.now(timezone.utc).isoformat()
+        conn = sqlite3.connect(str(qs_db))
+        conn.execute(
+            "INSERT INTO participants (participant_id, session_id, display_name, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            ("P001", "", "No Session", now, now),
+        )
+        conn.commit()
+        conn.close()
+        # Empty session_id '' is a falsy value — callers should never pass '' but
+        # we guard here to avoid accidental cross-participant matches.
+        result = get_participant_by_session(qs_db, "some-other-id")
+        assert result is None

@@ -43,6 +43,7 @@ from live_analytics.app.storage.raw_writer import RawWriter
 from live_analytics.app.storage import web_api_client
 from live_analytics.app.storage.sqlite_store import (
     increment_record_count,
+    set_session_participant,
     update_latest_scores,
     upsert_session,
 )
@@ -161,6 +162,24 @@ async def _process_message(ws: ServerConnection, raw: str) -> None:
     await _broadcast_dashboard(session_id)
 
 
+async def _resolve_and_link_participant(sid: str) -> None:
+    """Fetch the questionnaire participant for *sid* and store it in the analytics DB.
+
+    Called once per new session.  Failures are logged but never propagated so
+    the ingest pipeline is not affected.
+    """
+    pid = await web_api_client.resolve_participant(sid)
+    if pid:
+        try:
+            set_session_participant(DB_PATH, sid, pid)
+        except Exception:
+            logger.exception(
+                "_resolve_and_link_participant: could not store participant %r "
+                "for session %r in analytics DB",
+                pid, sid,
+            )
+
+
 def _ingest_session_batch(sid: str, records: list[TelemetryRecord]) -> None:
     """
     Process a batch of records for a single session.
@@ -198,6 +217,14 @@ def _ingest_session_batch(sid: str, records: list[TelemetryRecord]) -> None:
             "New session started: %s (scenario=%r, db_registered=%s)",
             sid, first_rec.scenario_id, db_ok,
         )
+        # Resolve and cache the participant for this session asynchronously.
+        # This links the questionnaire participant_id to all log entries for
+        # this session (pulse, scores, etc.) without blocking the ingest pipeline.
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(_resolve_and_link_participant(sid))
+        except RuntimeError:
+            pass  # No running event loop (e.g. synchronous unit tests)
 
     # Persist raw records – one file open/close for the whole batch
     if _raw_writer:

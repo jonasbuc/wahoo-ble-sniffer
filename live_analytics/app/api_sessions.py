@@ -17,10 +17,12 @@ from __future__ import annotations
 import logging
 
 from fastapi import APIRouter, HTTPException, Response
+from pydantic import BaseModel
 
 from live_analytics.app.config import DB_PATH
 from live_analytics.app.models import LiveLatest, ScoringResult, SessionDetail, SessionSummary
-from live_analytics.app.storage.sqlite_store import get_session, list_sessions
+from live_analytics.app.storage.sqlite_store import get_session, list_sessions, set_session_participant
+from live_analytics.app.storage import web_api_client
 from live_analytics.app.ws_ingest import latest_records, latest_scores
 
 logger = logging.getLogger("live_analytics.api_sessions")
@@ -132,3 +134,36 @@ async def live_latest() -> LiveLatest | None:
     except Exception:
         logger.warning("live_latest snapshot failed, returning None", exc_info=True)
         return None
+
+
+# ── Participant linking ────────────────────────────────────────────────
+
+class _LinkParticipantBody(BaseModel):
+    participant_id: str
+
+
+@router.put("/api/sessions/{session_id}/participant")
+async def link_participant_to_session(session_id: str, body: _LinkParticipantBody) -> dict:
+    """Link a questionnaire participant to an analytics session.
+
+    Stores the ``participant_id`` in the local analytics DB and clears the
+    in-memory participant cache so the next pulse write uses the updated ID.
+
+    Body: ``{ "participant_id": "P001" }``
+    """
+    try:
+        set_session_participant(DB_PATH, session_id, body.participant_id)
+    except Exception as exc:
+        logger.exception(
+            "link_participant_to_session: DB error for session %r participant %r",
+            session_id, body.participant_id,
+        )
+        raise HTTPException(status_code=500, detail=f"Database error: {exc}")
+
+    # Clear cache so next pulse triggers a fresh lookup
+    web_api_client.clear_participant_cache(session_id)
+    logger.info(
+        "link_participant_to_session: session %r → participant %r",
+        session_id, body.participant_id,
+    )
+    return {"ok": True, "session_id": session_id, "participant_id": body.participant_id}

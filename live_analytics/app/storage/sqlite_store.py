@@ -69,12 +69,13 @@ def close_pool() -> None:
 
 _DDL = """
 CREATE TABLE IF NOT EXISTS sessions (
-    session_id   TEXT PRIMARY KEY,
+    session_id    TEXT PRIMARY KEY,
     start_unix_ms INTEGER NOT NULL,
-    end_unix_ms  INTEGER,
-    scenario_id  TEXT DEFAULT '',
-    record_count INTEGER DEFAULT 0,
-    latest_scores TEXT DEFAULT '{}'
+    end_unix_ms   INTEGER,
+    scenario_id   TEXT DEFAULT '',
+    record_count  INTEGER DEFAULT 0,
+    latest_scores TEXT DEFAULT '{}',
+    participant_id TEXT DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS events (
@@ -87,11 +88,15 @@ CREATE TABLE IF NOT EXISTS events (
 );
 
 CREATE INDEX IF NOT EXISTS idx_events_session ON events(session_id);
+
+-- Migration: add participant_id column to existing DBs that were created before
+-- this column was introduced.  ALTER TABLE IF NOT EXISTS is not supported in
+-- older SQLite versions, so we catch the error in Python.
 """
 
 
 def init_db(db_path: Path | str) -> None:
-    """Create tables if they don't exist."""
+    """Create tables if they don't exist, and apply any pending migrations."""
     try:
         conn = _connect(db_path)
         conn.executescript(_DDL)
@@ -103,6 +108,14 @@ def init_db(db_path: Path | str) -> None:
             db_path, exc,
         )
         raise
+    # Migration: add participant_id to sessions if it was created by an older schema.
+    try:
+        conn = _connect(db_path)
+        conn.execute("ALTER TABLE sessions ADD COLUMN participant_id TEXT DEFAULT ''")
+        conn.commit()
+        logger.info("Migration applied: added participant_id column to sessions table")
+    except sqlite3.OperationalError:
+        pass  # Column already exists – normal on fresh or already-migrated DBs.
     logger.info("SQLite DB initialised at %s", db_path)
 
 
@@ -284,3 +297,31 @@ def get_recent_events(
         (session_id, limit),
     ).fetchall()
     return [dict(r) for r in rows]
+
+
+# ── Participant linkage ───────────────────────────────────────────────
+
+def set_session_participant(
+    db_path: Path | str,
+    session_id: str,
+    participant_id: str,
+) -> None:
+    """Link a participant (test-person) to a session.
+
+    Called when a questionnaire participant is linked to an active analytics
+    session, so that all log files for this session (pulse, head-transform,
+    bike-data, etc.) carry the same participant identifier.
+
+    Raises
+    ------
+    sqlite3.Error  on DB failure — caller should log and continue.
+    """
+    conn = _connect(db_path)
+    conn.execute(
+        "UPDATE sessions SET participant_id = ? WHERE session_id = ?",
+        (participant_id, session_id),
+    )
+    conn.commit()
+    logger.info(
+        "Session %r linked to participant %r", session_id, participant_id
+    )

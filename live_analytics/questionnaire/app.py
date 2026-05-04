@@ -25,6 +25,7 @@ from live_analytics.questionnaire.db import (
     delete_participant_data,
     get_answers,
     get_participant,
+    get_participant_by_session,
     get_progress,
     get_pulse_data,
     init_db,
@@ -136,6 +137,15 @@ async def list_participants_endpoint() -> list[dict]:
     except Exception as exc:
         logger.exception("DB error listing participants: %s", exc)
         raise HTTPException(status_code=503, detail="Failed to list participants – see server log")
+
+
+@app.get("/api/participants/by-session/{session_id}")
+async def get_participant_by_session_endpoint(session_id: str) -> dict:
+    """Look up which participant is linked to an analytics session_id."""
+    p = get_participant_by_session(DB_PATH, session_id)
+    if not p:
+        raise HTTPException(404, f"No participant linked to session {session_id!r}")
+    return p
 
 
 @app.get("/api/participants/{participant_id}")

@@ -181,6 +181,15 @@ def list_participants(db_path: Path | str) -> list[dict]:
     return [dict(r) for r in rows]
 
 
+def get_participant_by_session(db_path: Path | str, session_id: str) -> Optional[dict]:
+    """Return the participant linked to an analytics session_id, or None."""
+    conn = _connect(db_path)
+    row = conn.execute(
+        "SELECT * FROM participants WHERE session_id = ? LIMIT 1", (session_id,)
+    ).fetchone()
+    return dict(row) if row else None
+
+
 def link_session(db_path: Path | str, participant_id: str, session_id: str) -> None:
     conn = _connect(db_path)
     conn.execute(

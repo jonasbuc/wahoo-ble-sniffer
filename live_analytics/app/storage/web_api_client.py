@@ -44,6 +44,59 @@ _EXTERNAL_USER_ID: int = int(os.getenv("EXTERNAL_USER_ID", "0"))
 
 _TIMEOUT = httpx.Timeout(connect=3.0, read=8.0, write=8.0, pool=3.0)
 
+# ── Participant cache ─────────────────────────────────────────────────
+# Maps session_id → participant_id (str) or None (not yet linked).
+# Populated lazily on first pulse per session via resolve_participant().
+_participant_cache: dict[str, str | None] = {}
+
+
+async def resolve_participant(session_id: str) -> str | None:
+    """Fetch and cache the participant_id for a session from the questionnaire API.
+
+    Returns the participant_id string (e.g. ``"P001"`` or ``"3"``) when found,
+    or ``None`` when no participant has been linked to this session yet.
+    Never raises — failures are logged as warnings.
+    """
+    if session_id in _participant_cache:
+        return _participant_cache[session_id]
+    url = f"{_QS_BASE_URL}/api/participants/by-session/{session_id}"
+    try:
+        async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+            resp = await client.get(url)
+            if resp.status_code == 404:
+                logger.warning(
+                    "resolve_participant: no participant linked to session %r yet — "
+                    "will fall back to EXTERNAL_USER_ID env var for external DB writes",
+                    session_id,
+                )
+                _participant_cache[session_id] = None
+                return None
+            resp.raise_for_status()
+            data = resp.json()
+            pid = data.get("participant_id")
+            _participant_cache[session_id] = pid
+            logger.info(
+                "resolve_participant: session %r → participant %r", session_id, pid
+            )
+            return pid
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "resolve_participant: failed for session %r: %s", session_id, exc
+        )
+        return None
+
+
+def clear_participant_cache(session_id: str | None = None) -> None:
+    """Remove a session (or all sessions) from the participant cache.
+
+    Call this when a participant is linked/changed so the next pulse
+    triggers a fresh lookup.
+    """
+    if session_id:
+        _participant_cache.pop(session_id, None)
+    else:
+        _participant_cache.clear()
+
 
 # ── Internal helpers ──────────────────────────────────────────────────
 
@@ -80,18 +133,16 @@ async def _send_to_questionnaire(client: httpx.AsyncClient, session_id: str, uni
     return False
 
 
-async def _send_to_external(client: httpx.AsyncClient, pulse: int) -> bool:
+async def _send_to_external(client: httpx.AsyncClient, pulse: int, user_id: int) -> bool:
     """POST pulse to the external research API → PulseData table.
 
     Payload schema (matches external SQLite):
         { "UserId": <TestPersonNumber>, "Pulse": <bpm> }
     """
-    user_id = int(os.getenv("EXTERNAL_USER_ID", str(_EXTERNAL_USER_ID)))
     if user_id == 0:
         logger.warning(
-            "send_pulse[external]: EXTERNAL_USER_ID is not set (currently 0). "
-            "Pulse will be written with UserId=0. "
-            "Set the EXTERNAL_USER_ID environment variable to the participant's TestPersonNumber."
+            "send_pulse[external]: UserId is 0 — pulse will be written with UserId=0. "
+            "Link a participant to this session to get the correct TestPersonNumber."
         )
 
     url = f"{_EXTERNAL_API_URL}/api/cardatasqlite/loglitepd"
@@ -158,12 +209,20 @@ async def send_pulse(session_id: str, unix_ms: int, pulse: int) -> bool:
         )
         return False
 
+    # Resolve the participant for this session so we can use the correct
+    # TestPersonNumber (UserId) when writing to the external research DB.
+    participant_id = await resolve_participant(session_id)
+    try:
+        user_id = int(participant_id) if participant_id else _EXTERNAL_USER_ID
+    except (ValueError, TypeError):
+        user_id = _EXTERNAL_USER_ID
+
     # Share one AsyncClient across both calls (one connection pool, lower overhead).
     # verify=False for the external server which uses a self-signed TLS certificate.
     async with httpx.AsyncClient(timeout=_TIMEOUT, verify=False) as client:
         qs_ok, ext_ok = await asyncio.gather(
             _send_to_questionnaire(client, session_id, unix_ms, pulse),
-            _send_to_external(client, pulse),
+            _send_to_external(client, pulse, user_id),
         )
 
     if not qs_ok:
