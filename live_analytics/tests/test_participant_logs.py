@@ -1,0 +1,160 @@
+"""
+Tests for live_analytics.app.storage.participant_logs
+
+Coverage
+--------
+* create_participant_log_dir — creates directory + all three files
+* create_participant_log_dir — idempotent (safe to call twice)
+* create_participant_log_dir — bad participant_id with path separators is sanitised
+* append_pulse — appends a JSON line to pulse.jsonl
+* append_session_event — appends a JSON line to session.jsonl
+* info.json content matches the arguments passed in
+* questionnaire POST /api/participants creates the log directory
+"""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import pytest
+
+from live_analytics.app.storage.participant_logs import (
+    append_pulse,
+    append_session_event,
+    create_participant_log_dir,
+)
+
+
+@pytest.fixture()
+def pdir(tmp_path: Path) -> Path:
+    """An empty participants root directory."""
+    d = tmp_path / "participants"
+    d.mkdir()
+    return d
+
+
+class TestCreateParticipantLogDir:
+    def test_creates_directory(self, pdir: Path) -> None:
+        create_participant_log_dir(pdir, "P001")
+        assert (pdir / "P001").is_dir()
+
+    def test_creates_info_json(self, pdir: Path) -> None:
+        create_participant_log_dir(pdir, "P001", display_name="Alice", created_at="2026-05-04T12:00:00+00:00")
+        info = json.loads((pdir / "P001" / "info.json").read_text())
+        assert info["participant_id"] == "P001"
+        assert info["display_name"] == "Alice"
+        assert info["created_at"] == "2026-05-04T12:00:00+00:00"
+
+    def test_creates_pulse_jsonl(self, pdir: Path) -> None:
+        create_participant_log_dir(pdir, "P001")
+        assert (pdir / "P001" / "pulse.jsonl").is_file()
+
+    def test_creates_session_jsonl(self, pdir: Path) -> None:
+        create_participant_log_dir(pdir, "P001")
+        assert (pdir / "P001" / "session.jsonl").is_file()
+
+    def test_idempotent_does_not_overwrite_info(self, pdir: Path) -> None:
+        """Calling twice must not overwrite existing info.json."""
+        create_participant_log_dir(pdir, "P001", display_name="Alice")
+        # Manually change info.json to simulate existing data
+        info_path = pdir / "P001" / "info.json"
+        info_path.write_text(json.dumps({"participant_id": "P001", "display_name": "Alice-MODIFIED"}))
+        create_participant_log_dir(pdir, "P001", display_name="Alice")
+        info = json.loads(info_path.read_text())
+        assert info["display_name"] == "Alice-MODIFIED"  # not overwritten
+
+    def test_idempotent_does_not_clear_pulse_data(self, pdir: Path) -> None:
+        """Calling twice must not wipe pulse.jsonl if it already has data."""
+        create_participant_log_dir(pdir, "P001")
+        pulse_path = pdir / "P001" / "pulse.jsonl"
+        pulse_path.write_text('{"pulse": 70}\n')
+        create_participant_log_dir(pdir, "P001")
+        assert pulse_path.read_text().strip().splitlines()[-1] == '{"pulse": 70}'
+
+    def test_path_separator_in_id_is_sanitised(self, pdir: Path) -> None:
+        """A slash in participant_id must not create a subdirectory escape."""
+        create_participant_log_dir(pdir, "../../evil")
+        # Should land under pdir as a sanitised name, not escape to parent dirs
+        sanitised = pdir / ".._.._evil"
+        assert sanitised.is_dir()
+
+    def test_returns_participant_dir_path(self, pdir: Path) -> None:
+        result = create_participant_log_dir(pdir, "P099")
+        assert result == pdir / "P099"
+        assert result.is_dir()
+
+    def test_participants_dir_auto_created_if_missing(self, tmp_path: Path) -> None:
+        """The parents_dir itself is created if it does not exist yet."""
+        missing = tmp_path / "does" / "not" / "exist"
+        create_participant_log_dir(missing, "P001")
+        assert (missing / "P001").is_dir()
+
+
+class TestAppendHelpers:
+    def test_append_pulse_adds_json_line(self, pdir: Path) -> None:
+        create_participant_log_dir(pdir, "P001")
+        append_pulse(pdir, "P001", {"session_id": "s1", "unix_ms": 1000, "pulse": 72})
+        lines = [
+            l for l in (pdir / "P001" / "pulse.jsonl").read_text().splitlines()
+            if not l.startswith("#")
+        ]
+        assert len(lines) == 1
+        row = json.loads(lines[0])
+        assert row["pulse"] == 72
+
+    def test_append_pulse_accumulates(self, pdir: Path) -> None:
+        create_participant_log_dir(pdir, "P001")
+        for bpm in [70, 75, 80]:
+            append_pulse(pdir, "P001", {"pulse": bpm})
+        lines = [
+            l for l in (pdir / "P001" / "pulse.jsonl").read_text().splitlines()
+            if not l.startswith("#")
+        ]
+        assert [json.loads(l)["pulse"] for l in lines] == [70, 75, 80]
+
+    def test_append_session_event_adds_json_line(self, pdir: Path) -> None:
+        create_participant_log_dir(pdir, "P001")
+        append_session_event(pdir, "P001", {"session_id": "s1", "event": "start"})
+        lines = [
+            l for l in (pdir / "P001" / "session.jsonl").read_text().splitlines()
+            if not l.startswith("#")
+        ]
+        assert len(lines) == 1
+        assert json.loads(lines[0])["event"] == "start"
+
+    def test_append_pulse_missing_dir_does_not_raise(self, pdir: Path) -> None:
+        """append_pulse must not raise even if the participant dir does not exist."""
+        append_pulse(pdir, "NONEXISTENT", {"pulse": 60})  # should not raise
+
+
+# ── Integration: questionnaire API creates log dir ────────────────────
+
+def test_create_participant_endpoint_creates_log_dir(tmp_path: Path) -> None:
+    """POST /api/participants must create the participant log directory."""
+    import os
+    from unittest.mock import patch
+    from fastapi.testclient import TestClient
+
+    qs_db = tmp_path / "questionnaire.db"
+    pdir = tmp_path / "participants"
+
+    from live_analytics.questionnaire.db import init_db
+    init_db(qs_db)
+
+    # Patch both the DB path and the participants dir before importing the app
+    with patch("live_analytics.questionnaire.app.DB_PATH", qs_db), \
+         patch("live_analytics.questionnaire.app.PARTICIPANTS_DIR", pdir):
+        from live_analytics.questionnaire.app import app
+        client = TestClient(app)
+        resp = client.post("/api/participants", json={"participant_id": "T42", "display_name": "Testperson 42"})
+
+    assert resp.status_code == 200
+    assert (pdir / "T42").is_dir(), "Log directory must be created"
+    assert (pdir / "T42" / "info.json").is_file(), "info.json must exist"
+    assert (pdir / "T42" / "pulse.jsonl").is_file(), "pulse.jsonl must exist"
+    assert (pdir / "T42" / "session.jsonl").is_file(), "session.jsonl must exist"
+
+    info = json.loads((pdir / "T42" / "info.json").read_text())
+    assert info["participant_id"] == "T42"
+    assert info["display_name"] == "Testperson 42"

@@ -19,7 +19,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from live_analytics.questionnaire.config import DB_PATH, HOST, LOG_LEVEL, PORT, ensure_dirs
+from live_analytics.questionnaire.config import DB_PATH, HOST, LOG_LEVEL, PARTICIPANTS_DIR, PORT, ensure_dirs
 from live_analytics.questionnaire.db import (
     create_participant,
     delete_participant_data,
@@ -37,6 +37,7 @@ from live_analytics.questionnaire.db import (
 )
 from live_analytics.questionnaire.models import AnswerSave, AnswersBulkSave, LinkSession, ParticipantCreate, PulseDataCreate, PulseDataOut
 from live_analytics.questionnaire.questions import QUESTIONNAIRES
+from live_analytics.app.storage.participant_logs import create_participant_log_dir
 
 # ── Logging ───────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -127,6 +128,25 @@ async def create_participant_endpoint(body: ParticipantCreate) -> dict:
             body.participant_id,
         )
         raise HTTPException(status_code=500, detail="Participant created but could not be retrieved")
+
+    # Create the on-disk log directory and placeholder files for this participant
+    # so that pulse.jsonl, session.jsonl and info.json are ready immediately.
+    try:
+        create_participant_log_dir(
+            PARTICIPANTS_DIR,
+            body.participant_id,
+            display_name=body.display_name,
+            created_at=result.get("created_at", ""),
+        )
+    except Exception:
+        # Never fail the API call because of a filesystem error — the participant
+        # is already in the DB.  The log dir can be re-created on next startup.
+        logger.exception(
+            "create_participant_endpoint: could not create log dir for participant %r "
+            "(DB record was saved — filesystem error only)",
+            body.participant_id,
+        )
+
     return result
 
 
