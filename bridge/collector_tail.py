@@ -221,7 +221,16 @@ class FileTail:
                 return None, None
 
             # ── Parse payload into individual records ─────────────────────
-            recv_ts_ns = time.monotonic_ns()  # timestamp of receipt (not Unity time)
+            # IMPORTANT: time.time_ns() returns nanoseconds since the Unix epoch
+            # (UTC).  The SQLite readable views and the MSSQL schema both rely on
+            # this being a real Unix epoch timestamp:
+            #   SQLite : datetime(recv_ts_ns/1000000000.0, 'unixepoch')
+            #   MSSQL  : DATEADD(SECOND, recv_ts_ns / 1000000000, '1970-01-01')
+            # time.monotonic_ns() must NOT be used here — monotonic time counts
+            # from an arbitrary reference (typically system boot), so it would
+            # produce timestamps near the Unix epoch (year ~1970) rather than the
+            # current date.
+            recv_ts_ns = time.time_ns()  # nanoseconds since Unix epoch (UTC)
             parsed = []
             off = 0
             if not self.variable:

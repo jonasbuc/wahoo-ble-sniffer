@@ -221,9 +221,23 @@ def _get(path: str) -> dict | list | None:
 
 
 def _ms_to_str(unix_ms: int | None) -> str:
-    """Convert unix-ms to human-readable local time string."""
+    """Convert a Unix-millisecond timestamp to a human-readable LOCAL time string.
+
+    The analytics server stores timestamps in UTC milliseconds (Unix epoch).
+    We convert to local time for display so that start/end times shown in the
+    dashboard reflect the wall clock the operator is sitting in front of.
+
+    NOTE: datetime.fromtimestamp() uses the OS local timezone, which is correct
+    for single-machine deployments.  Do not use utcfromtimestamp() here —
+    that would display UTC time without any "UTC" label, which would be
+    confusing on machines not in the UTC timezone.
+    """
     if unix_ms is None:
         return "—"
+    # Guard against obviously wrong values: valid Unix-ms timestamps for
+    # 2000-01-01 → 2100-01-01 are in [946_684_800_000, 4_102_444_800_000].
+    if not (946_684_800_000 <= unix_ms <= 4_102_444_800_000):
+        return f"—(invalid ts: {unix_ms})"
     try:
         return datetime.datetime.fromtimestamp(unix_ms / 1000).strftime("%Y-%m-%d %H:%M:%S")
     except Exception:

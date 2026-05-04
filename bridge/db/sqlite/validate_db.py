@@ -104,6 +104,39 @@ def validate_events(conn):
     return count, problems
 
 
+# Unix-epoch nanosecond bounds for 2000-01-01 → 2100-01-01.
+# recv_ts_ns values outside this range mean time.monotonic_ns() was used
+# instead of time.time_ns() — the most common timestamp bug in this codebase.
+_TS_NS_MIN = 946_684_800 * 1_000_000_000   # 2000-01-01T00:00:00Z in ns
+_TS_NS_MAX = 4_102_444_800 * 1_000_000_000  # 2100-01-01T00:00:00Z in ns
+
+
+def validate_timestamps(conn):
+    """Check that all recv_ts_ns values look like real Unix-epoch nanoseconds.
+
+    A value < _TS_NS_MIN almost certainly came from time.monotonic_ns()
+    (which starts near 0 at boot) instead of time.time_ns().
+    A value > _TS_NS_MAX is similarly implausible.
+    """
+    problems = []
+    total = 0
+    for table in ("headpose", "bike", "hr", "events"):
+        try:
+            cur = conn.cursor()
+            cur.execute(f'SELECT session_id, recv_ts_ns FROM {table} LIMIT 1000')
+        except Exception:
+            continue
+        for sid, ts_ns in cur.fetchall():
+            total += 1
+            if ts_ns is None or not (_TS_NS_MIN <= ts_ns <= _TS_NS_MAX):
+                problems.append(
+                    f'{table} session {sid}: recv_ts_ns={ts_ns!r} is outside valid '
+                    f'Unix-epoch range [{_TS_NS_MIN}, {_TS_NS_MAX}] — '
+                    'likely caused by time.monotonic_ns() instead of time.time_ns()'
+                )
+    return total, problems
+
+
 def main():
     p = argparse.ArgumentParser(description="Validate collector SQLite DB for correctness.")
     p.add_argument("--db", default=_DEFAULT_DB, help="Path to the collector SQLite database")
@@ -123,6 +156,8 @@ def main():
     results.append(('hr', c, p))
     c, p = validate_events(conn)
     results.append(('events', c, p))
+    c, p = validate_timestamps(conn)
+    results.append(('timestamps (recv_ts_ns range)', c, p))
 
     all_ok = True
     for tbl, cnt, probs in results:

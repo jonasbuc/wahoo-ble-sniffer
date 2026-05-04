@@ -186,7 +186,20 @@ def parse_jsonl(path: str | Path) -> Dict[int, List[tuple]]:
 # ── Session upsert ────────────────────────────────────────────────────────────
 
 def _ensure_session(cursor, sid: int, started_ms: int, session_dir: str | None) -> None:
-    """Insert the session row if it doesn't already exist (MERGE / IF NOT EXISTS)."""
+    """Insert the session row if it doesn't already exist (MERGE / IF NOT EXISTS).
+
+    ``started_ms`` must be a Unix-epoch millisecond timestamp (e.g. from
+    ``int(time.time() * 1000)``).  A value of 0 is stored as-is and will
+    produce the date 1970-01-01 in the MSSQL readable view — this is a
+    sign that the caller passed a default/missing value.
+    """
+    if started_ms == 0:
+        LOG.warning(
+            "_ensure_session: started_ms=0 for session %s — "
+            "the sessions table will show 1970-01-01. "
+            "Pass the real session-start Unix-ms when calling flush_session().",
+            sid,
+        )
     cursor.execute(
         "IF NOT EXISTS (SELECT 1 FROM sessions WHERE session_id = ?)"
         " INSERT INTO sessions (session_id, started_unix_ms, session_dir)"
