@@ -99,23 +99,58 @@ def _run(coro):
     return asyncio.run(coro)
 
 
+def _make_mock_client(side_effect=None):
+    """Return an AsyncMock httpx.AsyncClient where .post succeeds by default."""
+    mock_resp = MagicMock()
+    mock_resp.raise_for_status = MagicMock()
+    mock_client = AsyncMock()
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=False)
+    if side_effect is not None:
+        mock_client.post = AsyncMock(side_effect=side_effect)
+    else:
+        mock_client.post = AsyncMock(return_value=mock_resp)
+    return mock_client
+
+
 class TestSendPulse:
     def test_happy_path_returns_true(self) -> None:
-        mock_resp = MagicMock()
-        mock_resp.raise_for_status = MagicMock()
-        mock_client = AsyncMock()
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-        mock_client.post = AsyncMock(return_value=mock_resp)
+        """Both destinations must be called and True returned when both succeed."""
+        mock_client = _make_mock_client()
 
         with patch("live_analytics.app.storage.web_api_client.httpx.AsyncClient", return_value=mock_client):
             result = _run(web_api_client.send_pulse("sess-1", 1_000_000, 75))
 
         assert result is True
-        mock_client.post.assert_called_once()
-        call_kwargs = mock_client.post.call_args
-        assert call_kwargs.kwargs["json"]["pulse"] == 75
-        assert call_kwargs.kwargs["json"]["session_id"] == "sess-1"
+        # Two calls: one to questionnaire API, one to external research API.
+        assert mock_client.post.call_count == 2
+        urls_called = [c.args[0] for c in mock_client.post.call_args_list]
+        assert any("/api/pulse" in u for u in urls_called), "questionnaire endpoint not called"
+        assert any("loglitepd" in u for u in urls_called), "external endpoint not called"
+
+    def test_questionnaire_payload(self) -> None:
+        """Questionnaire call must include session_id, unix_ms, pulse."""
+        mock_client = _make_mock_client()
+
+        with patch("live_analytics.app.storage.web_api_client.httpx.AsyncClient", return_value=mock_client):
+            _run(web_api_client.send_pulse("sess-abc", 1_000_000, 80))
+
+        qs_call = next(c for c in mock_client.post.call_args_list if "/api/pulse" in c.args[0])
+        assert qs_call.kwargs["json"]["session_id"] == "sess-abc"
+        assert qs_call.kwargs["json"]["pulse"] == 80
+        assert qs_call.kwargs["json"]["unix_ms"] == 1_000_000
+
+    def test_external_payload(self) -> None:
+        """External call must include UserId and Pulse (capital keys per DB schema)."""
+        mock_client = _make_mock_client()
+
+        with patch("live_analytics.app.storage.web_api_client.httpx.AsyncClient", return_value=mock_client), \
+             patch.dict("os.environ", {"EXTERNAL_USER_ID": "42"}):
+            _run(web_api_client.send_pulse("sess-1", 1_000_000, 65))
+
+        ext_call = next(c for c in mock_client.post.call_args_list if "loglitepd" in c.args[0])
+        assert ext_call.kwargs["json"]["UserId"] == 42
+        assert ext_call.kwargs["json"]["Pulse"] == 65
 
     def test_non_positive_pulse_skips_http(self) -> None:
         with patch("live_analytics.app.storage.web_api_client.httpx.AsyncClient") as mock_cls:
@@ -123,11 +158,8 @@ class TestSendPulse:
         assert result is False
         mock_cls.assert_not_called()
 
-    def test_connect_error_returns_false(self) -> None:
-        mock_client = AsyncMock()
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-        mock_client.post = AsyncMock(side_effect=httpx.ConnectError("refused"))
+    def test_connect_error_on_both_returns_false(self) -> None:
+        mock_client = _make_mock_client(side_effect=httpx.ConnectError("refused"))
 
         with patch("live_analytics.app.storage.web_api_client.httpx.AsyncClient", return_value=mock_client):
             result = _run(web_api_client.send_pulse("sess-1", 1_000_000, 75))
@@ -135,10 +167,7 @@ class TestSendPulse:
         assert result is False
 
     def test_timeout_returns_false(self) -> None:
-        mock_client = AsyncMock()
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-        mock_client.post = AsyncMock(side_effect=httpx.ReadTimeout("timed out"))
+        mock_client = _make_mock_client(side_effect=httpx.ReadTimeout("timed out"))
 
         with patch("live_analytics.app.storage.web_api_client.httpx.AsyncClient", return_value=mock_client):
             result = _run(web_api_client.send_pulse("sess-1", 1_000_000, 75))
@@ -151,20 +180,45 @@ class TestSendPulse:
         mock_resp.text = "Internal Server Error"
 
         def _raise_for_status():
-            raise httpx.HTTPStatusError(
-                "500", request=MagicMock(), response=mock_resp
-            )
+            raise httpx.HTTPStatusError("500", request=MagicMock(), response=mock_resp)
 
         mock_resp.raise_for_status = _raise_for_status
-        mock_client = AsyncMock()
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client = _make_mock_client()
         mock_client.post = AsyncMock(return_value=mock_resp)
 
         with patch("live_analytics.app.storage.web_api_client.httpx.AsyncClient", return_value=mock_client):
             result = _run(web_api_client.send_pulse("sess-1", 1_000_000, 75))
 
         assert result is False
+
+    def test_partial_failure_returns_false(self) -> None:
+        """If only one destination fails, result must be False (but no exception raised)."""
+        ok_resp = MagicMock()
+        ok_resp.raise_for_status = MagicMock()
+        fail_resp = MagicMock()
+        fail_resp.raise_for_status = MagicMock(
+            side_effect=httpx.HTTPStatusError("500", request=MagicMock(), response=MagicMock(status_code=500, text="err"))
+        )
+
+        call_count = 0
+
+        async def _alternating_post(url, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            # First call (questionnaire) succeeds, second (external) fails.
+            return ok_resp if call_count == 1 else fail_resp
+
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.post = AsyncMock(side_effect=_alternating_post)
+
+        with patch("live_analytics.app.storage.web_api_client.httpx.AsyncClient", return_value=mock_client):
+            result = _run(web_api_client.send_pulse("sess-1", 1_000_000, 75))
+
+        assert result is False  # partial failure → False
+        assert mock_client.post.call_count == 2  # both were still attempted
+
 
 
 # ── ws_ingest integration ─────────────────────────────────────────────
