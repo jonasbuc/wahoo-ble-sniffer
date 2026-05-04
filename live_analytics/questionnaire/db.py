@@ -23,11 +23,20 @@ from __future__ import annotations
 import json
 import logging
 import sqlite3
+import sys
 import threading
-from datetime import datetime, timezone
+
 from pathlib import Path
 from typing import Any, Optional
 
+# Make the repo root importable when questionnaire is launched standalone.
+_HERE = Path(__file__).resolve()
+_REPO_ROOT = _HERE.parent.parent.parent
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
+from live_analytics.app.utils.time_utils import fmt_now as _fmt_now  # noqa: E402
+from live_analytics.app.utils.time_utils import now_utc_iso as _now_utc_iso  # noqa: E402
 logger = logging.getLogger("questionnaire.db")
 
 # ── Connection pool ───────────────────────────────────────────────────
@@ -122,7 +131,8 @@ CREATE INDEX IF NOT EXISTS idx_pulse_session
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    """Return the current UTC time as an ISO-8601 string (DB storage convention)."""
+    return _now_utc_iso()
 
 
 # ── Init ──────────────────────────────────────────────────────────────

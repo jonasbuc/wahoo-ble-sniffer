@@ -1,0 +1,2 @@
+# session log — fields: session_id, scenario_id, started_at, ended_at, participant_id
+{"event": "session_start", "session_id": "live-ws-session-02", "scenario_id": "test-scenario", "participant_id": "TEST-LIVE-02", "started_at": "2026-05-04T12:22:14.960000+00:00"}
