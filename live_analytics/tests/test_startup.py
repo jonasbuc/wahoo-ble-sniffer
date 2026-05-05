@@ -31,7 +31,6 @@ REQUIRED_PACKAGES = [
     "streamlit",
     "pandas",
     "pyarrow",
-    "sqlalchemy",
     "httpx",
     "pydantic",
     "starlette",
@@ -58,7 +57,7 @@ def test_requirements_txt_declares_streamlit() -> None:
     )
 
 
-@pytest.mark.parametrize("pkg", ["aiofiles", "sqlalchemy", "fastapi", "uvicorn", "bleak", "websockets"])
+@pytest.mark.parametrize("pkg", ["aiofiles", "fastapi", "uvicorn", "bleak", "websockets"])
 def test_requirements_txt_declares_package(pkg: str) -> None:
     """Key packages must be declared in requirements.txt."""
     req_txt = (REPO_ROOT / "requirements.txt").read_text(encoding="utf-8")

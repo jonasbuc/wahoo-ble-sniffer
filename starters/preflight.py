@@ -112,7 +112,6 @@ REQUIRED: list[tuple[str, str]] = [
     ("streamlit", "streamlit"),
     ("pandas", "pandas"),
     ("pyarrow", "pyarrow"),
-    ("sqlalchemy", "sqlalchemy"),
     ("httpx", "httpx"),
     ("pydantic", "pydantic"),
     ("starlette", "starlette"),
@@ -127,6 +126,22 @@ for import_name, pip_name in REQUIRED:
             f"'{import_name}' not installed",
             f"pip install \"{pip_name}\"  (or re-run INSTALL script)",
         )
+
+# Numpy 1.x on Windows uses an experimental MINGW-W64 build that crashes on
+# Python 3.12+ and emits scary warnings on 3.11.  Require numpy 2.x on Windows.
+try:
+    import numpy as _np
+    _np_ver = tuple(int(x) for x in _np.__version__.split(".")[:2])
+    if _np_ver < (2, 0) and sys.platform == "win32":
+        _fail(
+            f"numpy {_np.__version__} is too old — numpy 2.x required on Windows "
+            "(the 1.x MINGW-W64 build is experimental and crashes on Python 3.12+)",
+            'pip install --upgrade "numpy>=2"  (or re-run INSTALL script)',
+        )
+    else:
+        _ok(f"numpy {_np.__version__}")
+except ImportError:
+    _fail("numpy not installed", 'pip install "numpy>=2"')
 
 # ─────────────────────────────────────────────────────────────────────
 # 4. Repo structure
