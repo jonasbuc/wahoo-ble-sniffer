@@ -44,11 +44,13 @@ from live_analytics.app.storage.raw_writer import RawWriter
 from live_analytics.app.storage import web_api_client
 from live_analytics.app.storage.participant_logs import append_session_event as _append_session_event
 from live_analytics.app.storage.sqlite_store import (
+    end_session,
     increment_record_count,
     set_session_participant,
     update_latest_scores,
     upsert_session,
 )
+from live_analytics.app.utils.time_utils import fmt_iso as _fmt_iso
 
 logger = logging.getLogger("live_analytics.ws_ingest")
 
@@ -119,27 +121,23 @@ async def _handle_connection(ws: ServerConnection) -> None:
 
 
 async def _on_disconnect(session_ids: set[str]) -> None:
-    """Write session_end for all sessions that belonged to the disconnected client."""
+    """Write session_end for all sessions that belonged to the disconnected client.
+
+    Also updates the SQLite ``end_unix_ms`` column so the HTTP API and
+    dashboard can tell when sessions ended.
+    """
     if not session_ids:
         return
     # Capture both UTC and local time once for all sessions in this disconnect.
     _now = datetime.now().astimezone()
     ended_at = _now.astimezone(timezone.utc).isoformat()
     local_time = _now.strftime("%Y-%m-%d %H:%M:%S %Z")
+    end_unix_ms = int(_now.timestamp() * 1000)
 
     for sid in session_ids:
-        pid = web_api_client._participant_cache.get(sid)
-        if not pid:
-            # Participant not yet resolved — try one last lookup before giving up.
-            try:
-                pid = await web_api_client.resolve_participant(sid)
-            except Exception as exc:
-                logger.warning(
-                    "_on_disconnect: resolve_participant failed for session %r: %s — "
-                    "session_end will NOT be written for this session",
-                    sid, exc,
-                )
-                continue
+        # Guard: if no records were ever received for this session there is
+        # nothing meaningful to record as a session_end — and there is no
+        # point trying to resolve a participant for it either.
         last_rec = latest_records.get(sid)
         if last_rec is None:
             logger.debug(
@@ -148,13 +146,38 @@ async def _on_disconnect(session_ids: set[str]) -> None:
                 sid,
             )
             continue
+
+        pid = web_api_client._participant_cache.get(sid)
+        if not pid:
+            # Participant not yet resolved — try one last lookup before giving up.
+            pid = await web_api_client.resolve_participant(sid)
+
         if not pid:
             logger.warning(
                 "_on_disconnect: no participant linked to session %r "
                 "— session_end not written (was a participant registered before the session started?)",
                 sid,
             )
+            # Still update SQLite end_unix_ms so the session isn't left open.
+            try:
+                end_session(DB_PATH, sid, end_unix_ms)
+            except Exception:
+                logger.exception(
+                    "_on_disconnect: could not set end_unix_ms for session %r in SQLite",
+                    sid,
+                )
             continue
+
+        # ── Update SQLite end_unix_ms ─────────────────────────────────
+        try:
+            end_session(DB_PATH, sid, end_unix_ms)
+        except Exception:
+            logger.exception(
+                "_on_disconnect: could not set end_unix_ms for session %r in SQLite",
+                sid,
+            )
+
+        # ── Write session_end to participant JSONL ────────────────────
         _append_session_event(PARTICIPANTS_DIR, pid, {
             "event": "session_end",
             "session_id": sid,
@@ -248,14 +271,17 @@ async def _resolve_and_link_participant(sid: str, scenario_id: str, started_at: 
                 "for session %r in analytics DB",
                 pid, sid,
             )
-        # Write session-start event to participant's local log file
+        # Write session-start event to participant's local log file.
+        # Derive local_time from the same instant as started_at (the first
+        # telemetry record's timestamp) so both fields always describe the
+        # same point in time regardless of how long the HTTP lookup took.
         _append_session_event(PARTICIPANTS_DIR, pid, {
             "event": "session_start",
             "session_id": sid,
             "scenario_id": scenario_id,
             "participant_id": pid,
             "started_at": started_at,
-            "local_time": datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S %Z"),
+            "local_time": _fmt_iso(started_at),
         })
         logger.info(
             "_resolve_and_link_participant: session_start written for session %r "
@@ -482,23 +508,40 @@ async def _evict_stale_sessions() -> None:
             last_rec = latest_records.pop(sid, None)
             # Read participant BEFORE evicting the cache entry.
             pid = web_api_client._participant_cache.pop(sid, None)
-            # Write session-end event to participant's log file.
+
+            # ── Update SQLite end_unix_ms ─────────────────────────────
+            # Use current wall-clock time as the authoritative end time.
+            _evict_now = datetime.now().astimezone()
+            _evict_end_unix_ms = int(_evict_now.timestamp() * 1000)
+            try:
+                end_session(DB_PATH, sid, _evict_end_unix_ms)
+            except Exception:
+                logger.exception(
+                    "_evict_stale_sessions: could not set end_unix_ms for session %r in SQLite",
+                    sid,
+                )
+
+            # ── Write session-end event to participant JSONL ──────────
             if last_rec is not None and pid:
-                ended_at = datetime.fromtimestamp(
-                    last_rec.unix_ms / 1000, tz=timezone.utc
-                ).isoformat()
                 _append_session_event(PARTICIPANTS_DIR, pid, {
                     "event": "session_end",
                     "session_id": sid,
                     "participant_id": pid,
-                    "ended_at": ended_at,
-                    "local_time": datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S %Z"),
+                    # ended_at = current wall-clock (the eviction moment, not
+                    # the last telemetry time which could be 4 h ago).
+                    "ended_at": _evict_now.astimezone(timezone.utc).isoformat(),
+                    "local_time": _evict_now.strftime("%Y-%m-%d %H:%M:%S %Z"),
+                    # last_record_at = actual last telemetry timestamp so
+                    # analysts can see when the rider truly stopped transmitting.
+                    "last_record_at": datetime.fromtimestamp(
+                        last_rec.unix_ms / 1000, tz=timezone.utc
+                    ).isoformat(),
                     "record_count": final_record_count,
                     "reason": "idle_eviction",
                 })
             elif last_rec is not None and not pid:
                 logger.debug(
-                    "Evicting session %r: no participant linked — session_end not written",
+                    "Evicting session %r: no participant linked — session_end not written to JSONL",
                     sid,
                 )
 

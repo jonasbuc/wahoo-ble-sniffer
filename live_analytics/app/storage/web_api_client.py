@@ -36,6 +36,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import time
 from datetime import datetime, timezone
 from urllib.parse import urlparse
 
@@ -64,6 +65,24 @@ _participant_cache: dict[str, str | None] = {}
 # latecomers wait on the event instead of firing a duplicate HTTP request.
 _resolve_in_flight: dict[str, asyncio.Event] = {}
 
+# ── 404 / unlinked cooldown ───────────────────────────────────────────
+# When resolve_participant gets a 404 (session not yet linked to a participant)
+# we wait _RESOLVE_COOLDOWN_SEC before trying again.  Without this, at 20 Hz
+# with batch_size=10, every 0.5 s a new HTTP request would hit the questionnaire
+# API for each unlinked session — a constant 2 req/s background noise that
+# scales with the number of concurrent unlinked sessions.
+#
+# Maps session_id → monotonic timestamp (time.monotonic()) of last 404.
+_resolve_cooldown_until: dict[str, float] = {}
+_RESOLVE_COOLDOWN_SEC: float = float(os.getenv("LA_RESOLVE_COOLDOWN_SEC", "5.0"))
+
+# ── Per-session UserId=0 warning gate ────────────────────────────────
+# Prevents the "UserId is 0" warning from firing on every pulse (2/s) for
+# sessions where no numeric participant is linked.  Each session_id is added
+# here after the first warning; subsequent pulses in the same session log at
+# DEBUG instead.
+_warned_userid_zero: set[str] = set()
+
 
 async def resolve_participant(session_id: str) -> str | None:
     """Fetch and cache the participant_id for a session from the questionnaire API.
@@ -74,9 +93,24 @@ async def resolve_participant(session_id: str) -> str | None:
 
     Concurrent callers for the same *session_id* share one HTTP request via an
     asyncio.Event gate — no duplicate 404s or race conditions.
+
+    404 cooldown
+    ------------
+    When the questionnaire API returns 404 (session not yet linked to a
+    participant) we record a cooldown timestamp.  Callers within the
+    ``_RESOLVE_COOLDOWN_SEC`` window (default 5 s) receive ``None`` immediately
+    without firing a new HTTP request.  This prevents a 2 req/s HTTP storm for
+    sessions where the rider has not yet registered in the questionnaire.
+    The cooldown is cleared as soon as a participant is successfully linked so
+    the next pulse after registration picks up the participant_id instantly.
     """
     if session_id in _participant_cache:
         return _participant_cache[session_id]
+
+    # Honour 404 cooldown — don't hammer the API for unlinked sessions.
+    cooldown_expires = _resolve_cooldown_until.get(session_id, 0.0)
+    if time.monotonic() < cooldown_expires:
+        return None
 
     # Another coroutine is already resolving this session → wait for it.
     if session_id in _resolve_in_flight:
@@ -91,16 +125,21 @@ async def resolve_participant(session_id: str) -> str | None:
             resp = await client.get(url)
             if resp.status_code == 404:
                 # Session not yet linked to a participant — normal during warm-up.
-                # Don't cache None permanently: the participant might register
-                # shortly after, so we only gate duplicate in-flight requests.
+                # Set a cooldown so we don't keep hitting the API every 0.5 s.
+                _resolve_cooldown_until[session_id] = (
+                    time.monotonic() + _RESOLVE_COOLDOWN_SEC
+                )
                 logger.debug(
-                    "resolve_participant: session %r not yet linked to a participant",
-                    session_id,
+                    "resolve_participant: session %r not yet linked to a participant "
+                    "(cooldown %.0f s)",
+                    session_id, _RESOLVE_COOLDOWN_SEC,
                 )
                 return None
             resp.raise_for_status()
             data = resp.json()
             pid = data.get("participant_id")
+            # Clear any lingering cooldown now that the participant is known.
+            _resolve_cooldown_until.pop(session_id, None)
             _participant_cache[session_id] = pid
             logger.info(
                 "resolve_participant: session %r → participant %r", session_id, pid
@@ -108,7 +147,13 @@ async def resolve_participant(session_id: str) -> str | None:
             return pid
     except Exception as exc:  # noqa: BLE001
         logger.warning(
-            "resolve_participant: failed for session %r: %s", session_id, exc
+            "resolve_participant: failed for session %r: %s: %s",
+            session_id, type(exc).__name__, exc,
+        )
+        # Apply the same cooldown on network errors so a down questionnaire
+        # service doesn't cause a per-pulse HTTP retry storm either.
+        _resolve_cooldown_until[session_id] = (
+            time.monotonic() + _RESOLVE_COOLDOWN_SEC
         )
         return None
     finally:
@@ -119,13 +164,15 @@ async def resolve_participant(session_id: str) -> str | None:
 def clear_participant_cache(session_id: str | None = None) -> None:
     """Remove a session (or all sessions) from the participant cache.
 
-    Call this when a participant is linked/changed so the next pulse
-    triggers a fresh lookup.
+    Also clears the 404 cooldown so the next pulse triggers a fresh lookup
+    immediately — use this after linking a participant to a session.
     """
     if session_id:
         _participant_cache.pop(session_id, None)
+        _resolve_cooldown_until.pop(session_id, None)
     else:
         _participant_cache.clear()
+        _resolve_cooldown_until.clear()
 
 
 # ── Internal helpers ──────────────────────────────────────────────────
@@ -163,16 +210,27 @@ async def _send_to_questionnaire(client: httpx.AsyncClient, session_id: str, uni
     return False
 
 
-async def _send_to_external(client: httpx.AsyncClient, pulse: int, user_id: int) -> bool:
+async def _send_to_external(client: httpx.AsyncClient, session_id: str, pulse: int, user_id: int) -> bool:
     """POST pulse to the external research API → PulseData table.
 
     Payload schema (matches external SQLite):
         { "UserId": <TestPersonNumber>, "Pulse": <bpm> }
     """
-    if user_id == 0:
+    # UserId=0 means no participant is linked or the ID is non-numeric.
+    # Log a WARNING once per session_id; demote subsequent occurrences to DEBUG
+    # to avoid flooding the log at 2 req/s for unlinked sessions.
+    # session_id is passed in via a keyword arg so the per-session gate works.
+    if user_id == 0 and session_id not in _warned_userid_zero:
+        _warned_userid_zero.add(session_id)
         logger.warning(
-            "send_pulse[external]: UserId is 0 — pulse will be written with UserId=0. "
-            "Link a participant to this session to get the correct TestPersonNumber."
+            "send_pulse[external]: UserId is 0 for session %r — pulse written with UserId=0. "
+            "Link a participant with a numeric ID to get the correct TestPersonNumber. "
+            "(This warning fires once per session; further occurrences suppressed.)",
+            session_id,
+        )
+    elif user_id == 0:
+        logger.debug(
+            "send_pulse[external]: UserId is 0 for session %r (already warned)", session_id
         )
 
     url = f"{_EXTERNAL_API_URL}/api/cardatasqlite/loglitepd"
@@ -242,17 +300,38 @@ async def send_pulse(session_id: str, unix_ms: int, pulse: int) -> bool:
     # Resolve the participant for this session so we can use the correct
     # TestPersonNumber (UserId) when writing to the external research DB.
     participant_id = await resolve_participant(session_id)
-    try:
-        user_id = int(participant_id) if participant_id else _EXTERNAL_USER_ID
-    except (ValueError, TypeError):
+    user_id: int
+    if participant_id is None:
         user_id = _EXTERNAL_USER_ID
+    else:
+        try:
+            user_id = int(participant_id)
+        except (ValueError, TypeError):
+            # participant_id is a non-numeric string (e.g. "P007") — the
+            # external API only accepts integer UserIds.  Fall back to the
+            # configured default and warn once per session so the operator
+            # knows to configure a numeric ID if the external DB matters.
+            user_id = _EXTERNAL_USER_ID
+            if session_id not in _warned_userid_zero:
+                _warned_userid_zero.add(session_id)
+                logger.warning(
+                    "send_pulse: participant_id %r for session %r is non-numeric — "
+                    "cannot map to external UserId; falling back to EXTERNAL_USER_ID=%d. "
+                    "Use a numeric participant ID if the external research DB is needed. "
+                    "(Warning fires once per session.)",
+                    participant_id, session_id, _EXTERNAL_USER_ID,
+                )
 
-    # Share one AsyncClient across both calls (one connection pool, lower overhead).
-    # verify=False for the external server which uses a self-signed TLS certificate.
-    async with httpx.AsyncClient(timeout=_TIMEOUT, verify=False) as client:
+    # Use separate clients so that verify=False (required for the external
+    # self-signed-cert server) does NOT affect the localhost questionnaire
+    # connection.  Two AsyncClient instances share no state between them.
+    async with (
+        httpx.AsyncClient(timeout=_TIMEOUT) as qs_client,
+        httpx.AsyncClient(timeout=_TIMEOUT, verify=False) as ext_client,
+    ):
         qs_ok, ext_ok = await asyncio.gather(
-            _send_to_questionnaire(client, session_id, unix_ms, pulse),
-            _send_to_external(client, pulse, user_id),
+            _send_to_questionnaire(qs_client, session_id, unix_ms, pulse),
+            _send_to_external(ext_client, session_id, pulse, user_id),
         )
 
     if not qs_ok:

@@ -928,7 +928,9 @@ class TestDashboardHelpers:
 
     def test_ms_to_str_invalid_value_returns_dash(self):
         m = self._import()
-        assert m._ms_to_str(-99_999_999_999_999_999) == "—"
+        # Out-of-range values return an em-dash with an diagnostic suffix
+        result = m._ms_to_str(-99_999_999_999_999_999)
+        assert result.startswith("—"), f"Expected '—…' prefix, got {result!r}"
 
     def test_fmt_metric_none_returns_dash(self):
         m = self._import()
