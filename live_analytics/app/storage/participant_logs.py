@@ -139,7 +139,13 @@ def _sanitise(participant_id: str) -> str:
     Replaces path separators and null bytes with underscores so that
     malicious or accidentally malformed IDs cannot escape the directory.
     """
-    return participant_id.replace("/", "_").replace("\\", "_").replace("\x00", "_")
+    return (
+        participant_id
+        .replace("/", "_")
+        .replace("\\", "_")
+        .replace(":", "_")       # Windows: colon is not valid in path components
+        .replace("\x00", "_")    # null bytes are illegal on all platforms
+    )
 
 
 def _write_json(path: Path, data: dict) -> None:
@@ -170,6 +176,7 @@ def _append_jsonl(path: Path, record: dict) -> None:
         )
         return
     try:
+        path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("a", encoding="utf-8") as f:
             f.write(line)
             f.flush()   # ensure OS buffer is flushed on clean + abnormal shutdown

@@ -262,45 +262,71 @@ async def _process_message(ws: ServerConnection, raw: str, connection_sessions: 
 async def _resolve_and_link_participant(sid: str, scenario_id: str, started_at: str) -> None:
     """Fetch the questionnaire participant for *sid* and store it in the analytics DB.
 
-    Called once per new session.  Failures are logged but never propagated so
-    the ingest pipeline is not affected.
+    Called once per new session.  Retries up to *_RESOLVE_MAX_RETRIES* times with
+    *_RESOLVE_RETRY_DELAY_SEC* intervals so that athletes who register in the
+    questionnaire slightly after their trainer connects are still linked correctly.
+    Failures are logged but never propagated so the ingest pipeline is not affected.
     Also writes a session-start event to the participant's session.jsonl log.
     """
-    pid = await web_api_client.resolve_participant(sid)
-    if pid:
-        try:
-            set_session_participant(DB_PATH, sid, pid)
-        except Exception:
-            logger.exception(
-                "_resolve_and_link_participant: could not store participant %r "
-                "for session %r in analytics DB",
-                pid, sid,
+    _RESOLVE_MAX_RETRIES = 20        # ≈ 10 minutes at 30-second intervals
+    _RESOLVE_RETRY_DELAY_SEC = 30.0
+
+    for attempt in range(1, _RESOLVE_MAX_RETRIES + 1):
+        pid = await web_api_client.resolve_participant(sid)
+        if pid:
+            try:
+                set_session_participant(DB_PATH, sid, pid)
+            except Exception:
+                logger.exception(
+                    "_resolve_and_link_participant: could not store participant %r "
+                    "for session %r in analytics DB",
+                    pid, sid,
+                )
+            # Write session-start event to participant's local log file.
+            # Derive local_time from the same instant as started_at (the first
+            # telemetry record's timestamp) so both fields always describe the
+            # same point in time regardless of how long the HTTP lookup took.
+            _append_session_event(PARTICIPANTS_DIR, pid, {
+                "event": "session_start",
+                "session_id": sid,
+                "scenario_id": scenario_id,
+                "participant_id": pid,
+                "started_at": started_at,
+                "local_time": _fmt_iso(started_at),
+            })
+            logger.info(
+                "_resolve_and_link_participant: session_start written for session %r "
+                "(participant=%r, scenario=%r, attempt=%d)",
+                sid, pid, scenario_id, attempt,
             )
-        # Write session-start event to participant's local log file.
-        # Derive local_time from the same instant as started_at (the first
-        # telemetry record's timestamp) so both fields always describe the
-        # same point in time regardless of how long the HTTP lookup took.
-        _append_session_event(PARTICIPANTS_DIR, pid, {
-            "event": "session_start",
-            "session_id": sid,
-            "scenario_id": scenario_id,
-            "participant_id": pid,
-            "started_at": started_at,
-            "local_time": _fmt_iso(started_at),
-        })
-        logger.info(
-            "_resolve_and_link_participant: session_start written for session %r "
-            "(participant=%r, scenario=%r)",
-            sid, pid, scenario_id,
-        )
-    else:
-        logger.warning(
-            "_resolve_and_link_participant: no participant found for session %r "
-            "(scenario=%r) — session not linked and session_start not written to JSONL. "
-            "Register the participant in the questionnaire before starting a session "
-            "so that pulse and session logs are correctly attributed.",
-            sid, scenario_id,
-        )
+            return
+
+        # Participant not yet registered; bail out if the session has already
+        # been evicted (the client disconnected before the participant registered).
+        if sid not in _windows:
+            logger.debug(
+                "_resolve_and_link_participant: session %r evicted before participant "
+                "could be resolved — giving up after %d attempt(s)",
+                sid, attempt,
+            )
+            return
+
+        if attempt < _RESOLVE_MAX_RETRIES:
+            logger.debug(
+                "_resolve_and_link_participant: no participant yet for session %r "
+                "(attempt %d/%d) — retrying in %.0f s",
+                sid, attempt, _RESOLVE_MAX_RETRIES, _RESOLVE_RETRY_DELAY_SEC,
+            )
+            await asyncio.sleep(_RESOLVE_RETRY_DELAY_SEC)
+        else:
+            logger.warning(
+                "_resolve_and_link_participant: no participant found for session %r "
+                "(scenario=%r) after %d attempts — session not linked and "
+                "session_start not written to JSONL. "
+                "Register the participant in the questionnaire before starting a session "
+                "so that pulse and session logs are correctly attributed.",
+                sid, scenario_id, _RESOLVE_MAX_RETRIES,
+            )
 
 
 def _ingest_session_batch(sid: str, records: list[TelemetryRecord]) -> None:

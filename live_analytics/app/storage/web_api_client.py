@@ -134,13 +134,27 @@ async def resolve_participant(session_id: str) -> str | None:
             resp.raise_for_status()
             data = resp.json()
             pid = data.get("participant_id")
-            # Clear any lingering cooldown now that the participant is known.
-            _resolve_cooldown_until.pop(session_id, None)
-            _participant_cache[session_id] = pid
-            logger.info(
-                "resolve_participant: session %r → participant %r", session_id, pid
+            if pid is not None:
+                # Participant confirmed — cache and clear any retry cooldown.
+                _resolve_cooldown_until.pop(session_id, None)
+                _participant_cache[session_id] = pid
+                logger.info(
+                    "resolve_participant: session %r → participant %r", session_id, pid
+                )
+                return pid
+            # API returned a valid 2xx response but participant_id is null/absent
+            # (e.g. the questionnaire row exists but the field was not populated).
+            # Do NOT cache None — that would permanently block future resolution.
+            # Instead apply the standard cooldown so we don't hammer the service.
+            _resolve_cooldown_until[session_id] = (
+                time.monotonic() + _RESOLVE_COOLDOWN_SEC
             )
-            return pid
+            logger.debug(
+                "resolve_participant: session %r — API returned null participant_id "
+                "(will retry after %.0f s cooldown)",
+                session_id, _RESOLVE_COOLDOWN_SEC,
+            )
+            return None
     except Exception as exc:  # noqa: BLE001
         logger.warning(
             "resolve_participant: failed for session %r: %s: %s",
