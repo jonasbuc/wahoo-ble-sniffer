@@ -147,10 +147,12 @@ class TestChain3FirstApiCall:
             d._last_api_error_msg = None
 
     def test_get_returns_none_on_connection_refused(self) -> None:
-        """_get() must return None when the backend is not running."""
+        """_get() must return None when the backend refuses the connection."""
+        import requests, live_analytics.dashboard.streamlit_app as d
         self._reset_state()
-        import live_analytics.dashboard.streamlit_app as d
-        result = d._get("/api/sessions")
+        with patch.object(d._http_session(), "get",
+                          side_effect=requests.exceptions.ConnectionError("Connection refused")):
+            result = d._get("/api/sessions")
         assert result is None
 
     def test_get_returns_none_on_timeout(self) -> None:

@@ -42,7 +42,10 @@ from live_analytics.app.models import (
 from live_analytics.app.scoring.rules import compute_scores
 from live_analytics.app.storage.raw_writer import RawWriter
 from live_analytics.app.storage import web_api_client
-from live_analytics.app.storage.participant_logs import append_session_event as _append_session_event
+from live_analytics.app.storage.participant_logs import (
+    append_pulse as _append_pulse_to_file,
+    append_session_event as _append_session_event,
+)
 from live_analytics.app.storage.sqlite_store import (
     end_session,
     increment_record_count,
@@ -404,6 +407,34 @@ def _ingest_session_batch(sid: str, records: list[TelemetryRecord]) -> None:
         None,
     )
     if _hr_rec is not None:
+        # ── 1. Write to local pulse.jsonl (filesystem only, no HTTP) ──────
+        # This is a pure local file operation.  It uses the in-memory
+        # participant cache (populated by _resolve_and_link_participant) so
+        # it NEVER makes an outbound HTTP call and NEVER depends on API/DB
+        # availability.  If the participant is not yet resolved, the cache
+        # returns None and the per-participant log is skipped for this batch.
+        _cached_pid = web_api_client.get_cached_participant(sid)
+        if _cached_pid:
+            _now = datetime.now().astimezone()
+            try:
+                _append_pulse_to_file(PARTICIPANTS_DIR, _cached_pid, {
+                    "session_id": sid,
+                    "unix_ms": _hr_rec.unix_ms,
+                    "pulse": int(_hr_rec.heart_rate),
+                    "participant_id": _cached_pid,
+                    "created_at": _now.astimezone(timezone.utc).isoformat(),
+                    "local_time": _now.strftime("%Y-%m-%d %H:%M:%S %Z"),
+                })
+            except Exception:
+                logger.exception(
+                    "_ingest_session_batch: could not write pulse to local log file "
+                    "(participant=%r, session=%s, path=%s/pulse.jsonl) — "
+                    "API submission continues regardless",
+                    _cached_pid, sid, PARTICIPANTS_DIR / _cached_pid,
+                )
+
+        # ── 2. Submit pulse to questionnaire + external APIs (fire-and-forget) ──
+        # Outbound HTTP only.  A failure here never affects local file writes.
         try:
             loop = asyncio.get_running_loop()
             loop.create_task(
@@ -424,7 +455,7 @@ def _ingest_session_batch(sid: str, records: list[TelemetryRecord]) -> None:
     else:
         logger.debug(
             "_ingest_session_batch: batch for session %s had no valid HR reading "
-            "(all %d records have heart_rate=0) — send_pulse skipped for this batch",
+            "(all %d records have heart_rate=0) — pulse log and send_pulse skipped for this batch",
             sid, len(records),
         )
 

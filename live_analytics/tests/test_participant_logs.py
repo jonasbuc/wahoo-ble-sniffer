@@ -167,8 +167,10 @@ def test_create_participant_endpoint_creates_log_dir(tmp_path: Path) -> None:
 class TestDataPopulation:
     """Verify that pulse.jsonl and session.jsonl are populated with real data."""
 
-    def test_send_pulse_writes_to_pulse_jsonl(self, tmp_path: Path) -> None:
-        """send_pulse() must append a line to pulse.jsonl when participant is linked."""
+    def test_send_pulse_does_not_write_to_pulse_jsonl(self, tmp_path: Path) -> None:
+        """send_pulse() is an API-submission-only function.  It must NOT write
+        to pulse.jsonl — that is the exclusive responsibility of ws_ingest,
+        which calls append_pulse() directly."""
         import asyncio
         from unittest.mock import AsyncMock, MagicMock, patch
         from live_analytics.app.storage import web_api_client
@@ -185,20 +187,17 @@ class TestDataPopulation:
         mock_client.get = AsyncMock(return_value=mock_resp)
 
         with patch("live_analytics.app.storage.web_api_client.httpx.AsyncClient", return_value=mock_client), \
-             patch("live_analytics.app.storage.web_api_client.resolve_participant", new=AsyncMock(return_value="P007")), \
-             patch.object(web_api_client, "PARTICIPANTS_DIR", pdir):
+             patch("live_analytics.app.storage.web_api_client.resolve_participant", new=AsyncMock(return_value="P007")):
             asyncio.run(web_api_client.send_pulse("sess-1", 1_000_000, 72))
 
         pulse_path = pdir / "P007" / "pulse.jsonl"
-        lines = [l for l in pulse_path.read_text().splitlines() if not l.startswith("#")]
-        assert len(lines) == 1
-        row = json.loads(lines[0])
-        assert row["pulse"] == 72
-        assert row["session_id"] == "sess-1"
-        assert row["participant_id"] == "P007"
+        data_lines = [l for l in pulse_path.read_text().splitlines() if not l.startswith("#")]
+        assert data_lines == [], (
+            "send_pulse() must not write to pulse.jsonl — file persistence is ws_ingest's responsibility"
+        )
 
     def test_send_pulse_no_write_when_no_participant(self, tmp_path: Path) -> None:
-        """If resolve_participant returns None, pulse.jsonl must NOT be written."""
+        """send_pulse() must never write local files regardless of participant state."""
         import asyncio
         from unittest.mock import AsyncMock, MagicMock, patch
         from live_analytics.app.storage import web_api_client
@@ -214,8 +213,7 @@ class TestDataPopulation:
         mock_client.get = AsyncMock(return_value=mock_resp)
 
         with patch("live_analytics.app.storage.web_api_client.httpx.AsyncClient", return_value=mock_client), \
-             patch("live_analytics.app.storage.web_api_client.resolve_participant", new=AsyncMock(return_value=None)), \
-             patch.object(web_api_client, "PARTICIPANTS_DIR", pdir):
+             patch("live_analytics.app.storage.web_api_client.resolve_participant", new=AsyncMock(return_value=None)):
             asyncio.run(web_api_client.send_pulse("sess-no-p", 1_000_000, 80))
 
         assert not list(pdir.glob("*/pulse.jsonl")), "No pulse.jsonl should be created without participant"
@@ -400,26 +398,25 @@ class TestAuditRegressions:
         Bug: two separate datetime.now() calls could differ; local_time was also
         re-evaluated per-session inside _on_disconnect loop.
         Fix: single datetime.now().astimezone() call; local_time = _now.strftime(...).
+
+        append_pulse() (called from ws_ingest) is responsible for writing these
+        fields — not send_pulse(), which is now API-only.
         """
-        import asyncio
-        from unittest.mock import AsyncMock, MagicMock, patch
-        from live_analytics.app.storage import web_api_client
+        from live_analytics.app.storage.participant_logs import append_pulse
 
         pdir = tmp_path / "participants"
         create_participant_log_dir(pdir, "P_B5")
 
-        mock_resp = MagicMock()
-        mock_resp.raise_for_status = MagicMock()
-        mock_client = AsyncMock()
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-        mock_client.post = AsyncMock(return_value=mock_resp)
-        mock_client.get = AsyncMock(return_value=mock_resp)
-
-        with patch("live_analytics.app.storage.web_api_client.httpx.AsyncClient", return_value=mock_client), \
-             patch("live_analytics.app.storage.web_api_client.resolve_participant", new=AsyncMock(return_value="P_B5")), \
-             patch.object(web_api_client, "PARTICIPANTS_DIR", pdir):
-            asyncio.run(web_api_client.send_pulse("sess-b5", 1_000_000, 80))
+        from datetime import datetime, timezone
+        _now = datetime.now().astimezone()
+        append_pulse(pdir, "P_B5", {
+            "session_id": "sess-b5",
+            "unix_ms": 1_000_000,
+            "pulse": 80,
+            "participant_id": "P_B5",
+            "created_at": _now.astimezone(timezone.utc).isoformat(),
+            "local_time": _now.strftime("%Y-%m-%d %H:%M:%S"),
+        })
 
         lines = [l for l in (pdir / "P_B5" / "pulse.jsonl").read_text().splitlines()
                  if not l.startswith("#")]

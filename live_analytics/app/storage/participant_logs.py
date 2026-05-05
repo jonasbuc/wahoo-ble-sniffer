@@ -115,9 +115,10 @@ def create_participant_log_dir(
 def append_pulse(participants_dir: Path, participant_id: str, record: dict) -> None:
     """Append a pulse record to ``<participant_id>/pulse.jsonl``.
 
-    Called from ``web_api_client.send_pulse()`` after the questionnaire API
-    confirms the sample.  Failures are logged and silently swallowed so the
-    ingest pipeline is never blocked by a filesystem error.
+    Called directly from ``ws_ingest._ingest_session_batch()`` as a pure local
+    filesystem operation, independent of any API or database availability.
+    Failures are logged and silently swallowed so the ingest pipeline is never
+    blocked by a filesystem error.
     """
     _append_jsonl(participants_dir / _sanitise(participant_id) / "pulse.jsonl", record)
 

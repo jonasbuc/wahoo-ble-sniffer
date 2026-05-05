@@ -234,17 +234,12 @@ class TestNonNumericParticipantIdWarning:
         # Reset per-session warning gate so the warning will fire
         web_api_client._warned_userid_zero.discard("sess-nonnumeric-1")
 
-        pdir = tmp_path / "participants"
-        (pdir / "P007").mkdir(parents=True)
-        (pdir / "P007" / "pulse.jsonl").write_text("")
-
         import logging
         with (
             patch("live_analytics.app.storage.web_api_client.resolve_participant",
                   new=AsyncMock(return_value="P007")),
             patch("live_analytics.app.storage.web_api_client.httpx.AsyncClient",
                   return_value=self._mock_client()),
-            patch.object(web_api_client, "PARTICIPANTS_DIR", pdir),
             caplog.at_level(logging.WARNING, logger="live_analytics.web_api_client"),
         ):
             _run(web_api_client.send_pulse("sess-nonnumeric-1", 1_000_000, 75))
@@ -260,18 +255,12 @@ class TestNonNumericParticipantIdWarning:
         sid = "sess-nonnumeric-2"
         web_api_client._warned_userid_zero.discard(sid)
 
-        pdir = tmp_path / "participants"
-        (pdir / "P007").mkdir(parents=True)
-        (pdir / "P007" / "pulse.jsonl").write_text("")
-
         import logging
-        warning_count = 0
         with (
             patch("live_analytics.app.storage.web_api_client.resolve_participant",
                   new=AsyncMock(return_value="P007")),
             patch("live_analytics.app.storage.web_api_client.httpx.AsyncClient",
                   return_value=self._mock_client()),
-            patch.object(web_api_client, "PARTICIPANTS_DIR", pdir),
             caplog.at_level(logging.WARNING, logger="live_analytics.web_api_client"),
         ):
             for _ in range(3):
@@ -605,16 +594,11 @@ class TestSeparateAsyncClients:
             async def post(self, *args, **kwargs):
                 return self._resp
 
-        pdir = tmp_path / "participants"
-        (pdir / "P001").mkdir(parents=True)
-        (pdir / "P001" / "pulse.jsonl").write_text("")
-
         with (
             patch("live_analytics.app.storage.web_api_client.resolve_participant",
                   new=AsyncMock(return_value="1")),  # numeric → UserId=1
             patch("live_analytics.app.storage.web_api_client.httpx.AsyncClient",
                   side_effect=_TrackingClient),
-            patch.object(web_api_client, "PARTICIPANTS_DIR", pdir),
         ):
             _run(web_api_client.send_pulse("sess-tls-1", 1_000_000, 80))
 

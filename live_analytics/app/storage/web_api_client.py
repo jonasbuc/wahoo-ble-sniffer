@@ -37,13 +37,9 @@ import asyncio
 import logging
 import os
 import time
-from datetime import datetime, timezone
 from urllib.parse import urlparse
 
 import httpx
-
-from live_analytics.app.config import PARTICIPANTS_DIR
-from live_analytics.app.storage.participant_logs import append_pulse as _append_pulse_to_file
 
 logger = logging.getLogger("live_analytics.web_api_client")
 
@@ -175,6 +171,19 @@ def clear_participant_cache(session_id: str | None = None) -> None:
         _resolve_cooldown_until.clear()
 
 
+def get_cached_participant(session_id: str) -> str | None:
+    """Return the participant_id for *session_id* from the in-memory cache.
+
+    This is a pure, synchronous cache read — no HTTP call is made.
+    Returns ``None`` when the participant has not yet been resolved for this
+    session (e.g. questionnaire API not yet reached, or no participant linked).
+
+    Use this when you need the participant_id for *local file persistence* and
+    do not want to trigger or wait for an outbound HTTP request.
+    """
+    return _participant_cache.get(session_id)
+
+
 # ── Internal helpers ──────────────────────────────────────────────────
 
 async def _send_to_questionnaire(client: httpx.AsyncClient, session_id: str, unix_ms: int, pulse: int) -> bool:
@@ -272,7 +281,13 @@ async def _send_to_external(client: httpx.AsyncClient, session_id: str, pulse: i
 # ── Public API ────────────────────────────────────────────────────────
 
 async def send_pulse(session_id: str, unix_ms: int, pulse: int) -> bool:
-    """Send one heart-rate sample to BOTH the questionnaire API and the external research API.
+    """Send one heart-rate sample to the questionnaire API and the external research API.
+
+    This function is responsible for **outbound API/database submission only**.
+    Local file persistence (participant pulse.jsonl) is the caller's
+    responsibility and must be handled separately before or after this call —
+    never inside this function — so that local logs are written regardless of
+    API availability.
 
     The two HTTP calls run concurrently.  A failure in either destination is
     logged but never raises — the ingest pipeline always continues.
@@ -344,22 +359,6 @@ async def send_pulse(session_id: str, unix_ms: int, pulse: int) -> bool:
             "send_pulse: pulse=%d for session %r was NOT saved to external research DB",
             pulse, session_id,
         )
-
-    # ── Write to participant's local pulse.jsonl ──────────────────────
-    # This runs regardless of HTTP success/failure so the log file is always
-    # up to date even when the questionnaire service is temporarily down.
-    if participant_id:
-        # Derive local_time from the same instant as created_at so both fields
-        # always represent the identical point in time.
-        _now = datetime.now().astimezone()   # aware local time
-        _append_pulse_to_file(PARTICIPANTS_DIR, participant_id, {
-            "session_id": session_id,
-            "unix_ms": unix_ms,
-            "pulse": pulse,
-            "participant_id": participant_id,
-            "created_at": _now.astimezone(timezone.utc).isoformat(),
-            "local_time": _now.strftime("%Y-%m-%d %H:%M:%S %Z"),
-        })
 
     return qs_ok and ext_ok
 
