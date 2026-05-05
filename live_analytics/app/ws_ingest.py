@@ -46,6 +46,7 @@ from live_analytics.app.storage.participant_logs import append_session_event as 
 from live_analytics.app.storage.sqlite_store import (
     end_session,
     increment_record_count,
+    insert_records,
     set_session_participant,
     update_latest_scores,
     upsert_session,
@@ -361,6 +362,16 @@ def _ingest_session_batch(sid: str, records: list[TelemetryRecord]) -> None:
             "raw_writer not initialised – JSONL persistence disabled for session %s "
             "(running in degraded/test mode; scoring and DB record counts still active)",
             sid,
+        )
+
+    # Persist all records to local SQLite telemetry_records table.
+    # One executemany + commit per batch keeps write amplification low.
+    try:
+        insert_records(DB_PATH, records)
+    except Exception:
+        logger.exception(
+            "DB error: could not insert %d records for session %s into telemetry_records",
+            len(records), sid,
         )
 
     # Update sliding window for all records

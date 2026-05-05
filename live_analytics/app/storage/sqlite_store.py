@@ -89,6 +89,33 @@ CREATE TABLE IF NOT EXISTS events (
 
 CREATE INDEX IF NOT EXISTS idx_events_session ON events(session_id);
 
+CREATE TABLE IF NOT EXISTS telemetry_records (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id     TEXT    NOT NULL,
+    unix_ms        INTEGER NOT NULL,
+    unity_time     REAL    NOT NULL,
+    scenario_id    TEXT    DEFAULT '',
+    trigger_id     TEXT    DEFAULT '',
+    speed          REAL    DEFAULT 0.0,
+    steering_angle REAL    DEFAULT 0.0,
+    brake_front    INTEGER DEFAULT 0,
+    brake_rear     INTEGER DEFAULT 0,
+    heart_rate     REAL    DEFAULT 0.0,
+    head_pos_x     REAL    DEFAULT 0.0,
+    head_pos_y     REAL    DEFAULT 0.0,
+    head_pos_z     REAL    DEFAULT 0.0,
+    head_rot_x     REAL    DEFAULT 0.0,
+    head_rot_y     REAL    DEFAULT 0.0,
+    head_rot_z     REAL    DEFAULT 0.0,
+    head_rot_w     REAL    DEFAULT 1.0,
+    record_type    TEXT    DEFAULT 'gameplay',
+    FOREIGN KEY (session_id) REFERENCES sessions(session_id)
+);
+
+-- Composite index supports both per-session queries and time-ordered scans.
+CREATE INDEX IF NOT EXISTS idx_telemetry_session_time
+    ON telemetry_records(session_id, unix_ms);
+
 -- Migration: add participant_id column to existing DBs that were created before
 -- this column was introduced.  ALTER TABLE IF NOT EXISTS is not supported in
 -- older SQLite versions, so we catch the error in Python.
@@ -159,6 +186,39 @@ def increment_record_count(db_path: Path | str, session_id: str, n: int = 1) -> 
     conn.execute(
         "UPDATE sessions SET record_count = record_count + ? WHERE session_id = ?",
         (n, session_id),
+    )
+    conn.commit()
+
+
+def insert_records(db_path: Path | str, records: list) -> None:
+    """Bulk-insert a batch of TelemetryRecords into ``telemetry_records``.
+
+    Uses a single ``executemany`` + ``commit`` so the entire batch lands in one
+    SQLite transaction (~2 transactions/sec at 20 Hz / batch_size=10).
+    Failures are raised to the caller — wrap in try/except at the call site.
+    """
+    conn = _connect(db_path)
+    conn.executemany(
+        """
+        INSERT INTO telemetry_records (
+            session_id, unix_ms, unity_time, scenario_id, trigger_id,
+            speed, steering_angle, brake_front, brake_rear, heart_rate,
+            head_pos_x, head_pos_y, head_pos_z,
+            head_rot_x, head_rot_y, head_rot_z, head_rot_w,
+            record_type
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        [
+            (
+                r.session_id, r.unix_ms, r.unity_time,
+                r.scenario_id, r.trigger_id,
+                r.speed, r.steering_angle, r.brake_front, r.brake_rear, r.heart_rate,
+                r.head_pos_x, r.head_pos_y, r.head_pos_z,
+                r.head_rot_x, r.head_rot_y, r.head_rot_z, r.head_rot_w,
+                r.record_type,
+            )
+            for r in records
+        ],
     )
     conn.commit()
 
