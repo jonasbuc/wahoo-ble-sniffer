@@ -187,8 +187,9 @@ async def _on_disconnect(session_ids: set[str]) -> None:
             "record_count": _record_counts.get(sid, 0),
         })
         logger.info(
-            "session_end written for session %r (participant=%r, records=%d)",
-            sid, pid, _record_counts.get(sid, 0),
+            "session_end written — session=%r participant=%r records=%d "
+            "ended_at=%s SQLite.end_unix_ms updated",
+            sid, pid, _record_counts.get(sid, 0), local_time,
         )
 
 
@@ -287,6 +288,14 @@ async def _resolve_and_link_participant(sid: str, scenario_id: str, started_at: 
             "_resolve_and_link_participant: session_start written for session %r "
             "(participant=%r, scenario=%r)",
             sid, pid, scenario_id,
+        )
+    else:
+        logger.warning(
+            "_resolve_and_link_participant: no participant found for session %r "
+            "(scenario=%r) — session not linked and session_start not written to JSONL. "
+            "Register the participant in the questionnaire before starting a session "
+            "so that pulse and session logs are correctly attributed.",
+            sid, scenario_id,
         )
 
 
@@ -392,9 +401,21 @@ def _ingest_session_batch(sid: str, records: list[TelemetryRecord]) -> None:
         except RuntimeError:
             # No running event loop (e.g. during unit tests called synchronously).
             # Fire-and-forget via a new loop so the call is not silently dropped.
+            logger.warning(
+                "_ingest_session_batch: no running event loop for session %s — "
+                "firing send_pulse via asyncio.run() (synchronous context; "
+                "this should not happen in production)",
+                sid,
+            )
             asyncio.run(
                 web_api_client.send_pulse(sid, _hr_rec.unix_ms, int(_hr_rec.heart_rate))
             )
+    else:
+        logger.debug(
+            "_ingest_session_batch: batch for session %s had no valid HR reading "
+            "(all %d records have heart_rate=0) — send_pulse skipped for this batch",
+            sid, len(records),
+        )
 
     # Score once on the updated window
     try:

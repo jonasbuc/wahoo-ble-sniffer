@@ -22,6 +22,7 @@ from live_analytics.app.config import (
     HTTP_HOST,
     HTTP_PORT,
     LOG_LEVEL,
+    PARTICIPANTS_DIR,
     SESSIONS_DIR,
     ensure_dirs,
 )
@@ -43,10 +44,11 @@ logger = logging.getLogger("live_analytics")
 async def lifespan(app: FastAPI):  # noqa: ARG001
     """Startup / shutdown logic for the FastAPI application."""
     logger.info("── Startup ────────────────────────────────────────")
-    logger.info("  DB_PATH     = %s", DB_PATH)
-    logger.info("  SESSIONS_DIR= %s", SESSIONS_DIR)
-    logger.info("  HTTP        = %s:%d", HTTP_HOST, HTTP_PORT)
-    logger.info("  LOG_LEVEL   = %s", LOG_LEVEL)
+    logger.info("  DB_PATH          = %s", DB_PATH)
+    logger.info("  SESSIONS_DIR     = %s", SESSIONS_DIR)
+    logger.info("  PARTICIPANTS_DIR = %s", PARTICIPANTS_DIR)
+    logger.info("  HTTP             = %s:%d", HTTP_HOST, HTTP_PORT)
+    logger.info("  LOG_LEVEL        = %s", LOG_LEVEL)
 
     try:
         ensure_dirs()
@@ -87,7 +89,7 @@ async def lifespan(app: FastAPI):  # noqa: ARG001
     evict_task = asyncio.create_task(_evict_stale_sessions())
     evict_task.add_done_callback(_evict_task_done)
 
-    logger.info("── Startup complete ───────────────────────────────")
+    logger.info("── Startup complete — HTTP API ready on %s:%d ──", HTTP_HOST, HTTP_PORT)
     yield
     logger.info("── Shutdown ───────────────────────────────────────")
 

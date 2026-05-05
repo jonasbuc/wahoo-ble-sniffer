@@ -147,6 +147,10 @@ async def create_participant_endpoint(body: ParticipantCreate) -> dict:
             body.participant_id,
         )
 
+    logger.info(
+        "Participant registered: id=%r display_name=%r session_id=%r",
+        body.participant_id, body.display_name, body.session_id or "(none)",
+    )
     return result
 
 
@@ -182,12 +186,14 @@ async def link_session_endpoint(participant_id: str, body: LinkSession) -> dict:
     if not p:
         raise HTTPException(404, "Participant not found")
     link_session(DB_PATH, participant_id, body.session_id)
+    logger.info("Session linked: participant=%r ↔ session=%r", participant_id, body.session_id)
     return {"ok": True}
 
 
 @app.delete("/api/participants/{participant_id}")
 async def delete_participant_endpoint(participant_id: str) -> dict:
     delete_participant_data(DB_PATH, participant_id)
+    logger.info("Participant deleted: id=%r", participant_id)
     return {"ok": True}
 
 
