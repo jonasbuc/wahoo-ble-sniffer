@@ -23,7 +23,7 @@ from live_analytics.app.config import DB_PATH
 from live_analytics.app.models import LiveLatest, ScoringResult, SessionDetail, SessionSummary
 from live_analytics.app.storage.sqlite_store import get_session, list_sessions, set_session_participant
 from live_analytics.app.storage import web_api_client
-from live_analytics.app.ws_ingest import latest_records, latest_scores
+from live_analytics.app.ws_ingest import latest_gameplay_records, latest_hr, latest_records, latest_scores
 
 logger = logging.getLogger("live_analytics.api_sessions")
 
@@ -123,12 +123,17 @@ async def live_latest() -> LiveLatest | None:
             return None
         sid = max(records_snapshot, key=lambda s: records_snapshot[s].unix_ms)
         rec = records_snapshot[sid]
+        # Use the latest gameplay record for speed (never overwritten by
+        # hr_only relay records which always have speed=0).
+        gameplay_rec = latest_gameplay_records.get(sid)
+        # Use the dedicated HR tracker which is updated from any record source.
+        hr_val = latest_hr.get(sid) or rec.heart_rate
         scores = latest_scores.get(sid, ScoringResult())
         return LiveLatest(
             session_id=sid,
             unix_ms=rec.unix_ms,
-            speed=rec.speed,
-            heart_rate=rec.heart_rate,
+            speed=gameplay_rec.speed if gameplay_rec is not None else None,
+            heart_rate=hr_val,
             scores=scores,
         )
     except Exception:

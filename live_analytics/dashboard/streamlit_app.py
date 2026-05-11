@@ -15,7 +15,6 @@ import logging
 import os
 import sys
 import threading
-from collections import deque
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
@@ -277,29 +276,28 @@ def _fmt_metric(val: Any, fmt: str, unit: str = "") -> str:
 
 def _read_last_jsonl_rows(path: Path, n: int = 600) -> pd.DataFrame:
     """
-    Read only the last n JSONL rows.
-    This avoids loading the entire telemetry file into memory on every refresh.
+    Read ALL JSONL rows from the telemetry file.
+    The ``n`` parameter is kept for API compatibility but ignored — the full
+    dataset is always loaded so the chart spans the entire session, not just
+    the most recent window.
     Ignores incomplete/truncated lines while the file is actively being appended.
     """
     if not path.exists():
         return pd.DataFrame()
 
     try:
-        with path.open("r", encoding="utf-8") as f:
-            last_lines = deque(f, maxlen=n)
-
         rows: list[dict[str, Any]] = []
-        for line in last_lines:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                obj = json.loads(line)
-                if isinstance(obj, dict):
-                    rows.append(obj)
-            except json.JSONDecodeError:
-                # likely a partially-written line while another process appends
-                continue
+        with path.open("r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    obj = json.loads(line)
+                    if isinstance(obj, dict):
+                        rows.append(obj)
+                except json.JSONDecodeError:
+                    continue
 
         if not rows:
             return pd.DataFrame()
@@ -309,6 +307,19 @@ def _read_last_jsonl_rows(path: Path, n: int = 600) -> pd.DataFrame:
     except Exception as exc:
         log.warning("Could not read JSONL %s: %s", path, exc)
         return pd.DataFrame()
+
+
+def _downsample(df: pd.DataFrame, max_points: int = 1200) -> pd.DataFrame:
+    """Evenly downsample a DataFrame for chart display.
+
+    Keeps every Nth row so the chart renders quickly while still showing the
+    full shape of the session from start to end.  When the dataset is already
+    smaller than *max_points* the original DataFrame is returned unchanged.
+    """
+    if len(df) <= max_points:
+        return df
+    step = max(1, len(df) // max_points)
+    return df.iloc[::step].copy()
 
 
 @st.cache_data(ttl=REFRESH_SEC, show_spinner=False)
@@ -327,9 +338,18 @@ def _load_sessions() -> list[dict[str, Any]]:
 
 def _ensure_selected_session(session_ids: list[str]) -> None:
     """Keep _selected_session in sync — uses a private key to avoid
-    conflicting with the selectbox widget key on the same rerun."""
+    conflicting with the selectbox widget key on the same rerun.
+
+    When a new session appears that wasn't in the previous known set, it is
+    auto-selected so the dashboard immediately shows the live session.
+    """
     current = st.session_state.get("_selected_session")
-    if current is None or current not in session_ids:
+    known_ids: set[str] = st.session_state.get("_known_session_ids", set())
+    new_ids = [sid for sid in session_ids if sid not in known_ids]
+    if new_ids:
+        # A brand-new session just appeared — jump to it automatically.
+        st.session_state["_selected_session"] = new_ids[0]
+    elif current is None or current not in session_ids:
         st.session_state["_selected_session"] = session_ids[0] if session_ids else None
 
 
@@ -434,6 +454,19 @@ def _render_live() -> None:
     wait time is max(t1, t2, t3) instead of t1 + t2 + t3 (≤ 1.5 s vs ≤ 4.5 s
     at the configured timeout).
     """
+    # ── Detect new sessions and trigger full page rerun ──────────────
+    # The sidebar renders outside this fragment, so it won't pick up new
+    # Unity sessions unless we force a full st.rerun() when the session
+    # list grows.  We compare against the IDs seen on the last rerun and
+    # call st.rerun() (which exits the fragment immediately) when the set
+    # has changed.
+    fresh_sessions = _load_sessions()
+    fresh_ids = {s.get("session_id") for s in fresh_sessions if isinstance(s, dict) and s.get("session_id")}
+    known_ids: set[str] = st.session_state.get("_known_session_ids", set())
+    if fresh_ids != known_ids:
+        st.session_state["_known_session_ids"] = fresh_ids
+        st.rerun()
+
     selected = st.session_state.get("_selected_session")
 
     # ── Parallel API fetch ───────────────────────────────────────────
@@ -558,7 +591,7 @@ def _render_live() -> None:
         st.info("No telemetry file yet for this session.")
         return
 
-    df = _read_last_jsonl_rows(jsonl_path, n=MAX_CHART_ROWS)
+    df = _read_last_jsonl_rows(jsonl_path)
 
     if df.empty:
         st.info("Waiting for telemetry data…")
@@ -578,18 +611,26 @@ def _render_live() -> None:
     except Exception as exc:
         log.warning("Failed to sort/dedup telemetry DataFrame for session '%s': %s", selected, exc)
 
+    # Downsample for chart display (keeps full session shape, not just recent window)
+    chart_df = _downsample(df)
+
     chart_col1, chart_col2 = st.columns(2)
 
     with chart_col1:
-        if "speed" in df.columns:
-            st.line_chart(df.set_index("unity_time")[["speed"]], height=220)
-            st.caption("Speed (m/s)")
+        if "speed" in chart_df.columns:
+            # Exclude hr_only relay records which always have speed=0
+            speed_df = chart_df[chart_df["record_type"] != "hr_only"] if "record_type" in chart_df.columns else chart_df
+            if not speed_df.empty:
+                st.line_chart(speed_df.set_index("unity_time")[["speed"]], height=220)
+            else:
+                st.info("No speed data yet.")
+            st.caption(f"Speed (m/s) — {len(df):,} records")
         else:
             st.info("No speed data yet.")
 
     with chart_col2:
-        if "heart_rate" in df.columns:
-            st.line_chart(df.set_index("unity_time")[["heart_rate"]], height=220)
+        if "heart_rate" in chart_df.columns:
+            st.line_chart(chart_df.set_index("unity_time")[["heart_rate"]], height=220)
             st.caption("Heart Rate (bpm)")
         else:
             st.info("No heart-rate data yet.")
@@ -597,16 +638,16 @@ def _render_live() -> None:
     chart_col3, chart_col4 = st.columns(2)
 
     with chart_col3:
-        if "steering_angle" in df.columns:
-            st.line_chart(df.set_index("unity_time")[["steering_angle"]], height=220)
+        if "steering_angle" in chart_df.columns:
+            st.line_chart(chart_df.set_index("unity_time")[["steering_angle"]], height=220)
             st.caption("Steering Angle (°)")
         else:
             st.info("No steering data yet.")
 
     with chart_col4:
-        brake_cols = [c for c in ("brake_front", "brake_rear") if c in df.columns]
+        brake_cols = [c for c in ("brake_front", "brake_rear") if c in chart_df.columns]
         if brake_cols:
-            st.line_chart(df.set_index("unity_time")[brake_cols], height=220)
+            st.line_chart(chart_df.set_index("unity_time")[brake_cols], height=220)
             st.caption("Brake Pressure")
         else:
             st.info("No brake data yet.")

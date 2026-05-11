@@ -77,8 +77,12 @@ _record_counts: dict[str, int] = {}
 
 # Latest scores per session – read by the dashboard WS endpoint and /api/live/latest.
 latest_scores: dict[str, ScoringResult] = {}
-# Latest record per session – used to populate the live/latest REST response.
+# Latest record per session – used for session selection and eviction tracking.
 latest_records: dict[str, TelemetryRecord] = {}
+# Latest gameplay (non-hr_only) record per session – used for speed/steering in live metrics.
+latest_gameplay_records: dict[str, TelemetryRecord] = {}
+# Latest HR value per session – updated from any record type (relay or Unity).
+latest_hr: dict[str, float] = {}
 
 # Set of active dashboard WebSocket connections to broadcast score updates to.
 dashboard_subscribers: set[Any] = set()
@@ -380,9 +384,12 @@ def _ingest_session_batch(sid: str, records: list[TelemetryRecord]) -> None:
         except RuntimeError:
             pass  # No running event loop (e.g. synchronous unit tests)
 
-    # Persist raw records – one file open/close for the whole batch
-    if _raw_writer:
-        _raw_writer.append_many(records)
+    # Persist raw records – one file open/close for the whole batch.
+    # hr_only records (BLE relay) are excluded: they contain no gameplay data
+    # and would crowd out real records from the fixed-size chart window.
+    gameplay_to_write = [r for r in records if r.record_type != "hr_only"]
+    if _raw_writer and gameplay_to_write:
+        _raw_writer.append_many(gameplay_to_write)
     elif sid not in _record_counts or _record_counts[sid] == 0:
         # Only emit this warning once per session (when record_count is still 0,
         # i.e. this is the very first batch). On subsequent batches it would spam
@@ -420,9 +427,20 @@ def _ingest_session_batch(sid: str, records: list[TelemetryRecord]) -> None:
             sid, DB_PATH,
         )
 
-    # Always update the latest record pointer so the dashboard shows the
-    # actual newest record even when scoring fails.
+    # Always update the latest record pointer (used for session selection / eviction).
     latest_records[sid] = records[-1]
+
+    # Track HR from any record source (relay hr_only or Unity gameplay).
+    for rec in records:
+        if rec.heart_rate > 0:
+            latest_hr[sid] = rec.heart_rate
+
+    # Track the latest gameplay record separately so speed/steering are never
+    # overwritten by relay hr_only records (which always have speed=0) or
+    # headpose records (which also have speed=0).
+    gameplay_recs = [r for r in records if r.record_type == "gameplay"]
+    if gameplay_recs:
+        latest_gameplay_records[sid] = gameplay_recs[-1]
 
     # Persist heart-rate sample once per batch.
     # Pick the last record in the batch that carries a valid (>0) HR reading.
@@ -595,6 +613,8 @@ async def _evict_stale_sessions() -> None:
             final_record_count = _record_counts.pop(sid, 0)
             latest_scores.pop(sid, None)
             last_rec = latest_records.pop(sid, None)
+            latest_gameplay_records.pop(sid, None)
+            latest_hr.pop(sid, None)
             # Read participant BEFORE evicting the cache entry.
             pid = web_api_client._participant_cache.pop(sid, None)
 

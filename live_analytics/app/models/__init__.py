@@ -120,8 +120,8 @@ class LiveLatest(BaseModel):
 
     session_id: str
     unix_ms: int
-    speed: float
-    heart_rate: float
+    speed: Optional[float]
+    heart_rate: Optional[float]
     scores: ScoringResult
 
 

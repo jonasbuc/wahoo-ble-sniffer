@@ -15,10 +15,10 @@ namespace LiveAnalytics
         public string serverHost = "127.0.0.1";
 
         [Tooltip("WebSocket port for the ingest endpoint.")]
-        public int serverPort = 8765;
+        public int serverPort = 8766;
 
         [Tooltip("WebSocket path for the ingest endpoint.")]
-        public string wsPath = "/ws/ingest";
+        public string wsPath = "";
 
         [Header("Sampling rates (Hz)")]
         [Tooltip("How often gameplay telemetry is sent (speed, steering, brakes, HR).")]
