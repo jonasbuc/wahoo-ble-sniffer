@@ -34,6 +34,7 @@ DATA_DIR = Path(os.getenv("LA_DATA_DIR", str(BASE_DIR / "data")))
 DB_PATH = Path(os.getenv("LA_DB_PATH", str(DATA_DIR / "live_analytics.db")))
 SESSIONS_DIR = Path(os.getenv("LA_SESSIONS_DIR", str(DATA_DIR / "sessions")))
 PARTICIPANTS_DIR = Path(os.getenv("LA_PARTICIPANTS_DIR", str(DATA_DIR / "participants")))
+PULSE_LOG_DIR = Path(os.getenv("LA_PULSE_LOG_DIR", str(BASE_DIR / "logs" / "pulse")))
 
 # ── Network ───────────────────────────────────────────────────────────
 HTTP_HOST: str = os.getenv("LA_HTTP_HOST", "0.0.0.0")
@@ -62,6 +63,7 @@ def ensure_dirs() -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
     PARTICIPANTS_DIR.mkdir(parents=True, exist_ok=True)
+    PULSE_LOG_DIR.mkdir(parents=True, exist_ok=True)
     # Support custom LA_DB_PATH outside DATA_DIR.
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 

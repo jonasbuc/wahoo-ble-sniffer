@@ -47,6 +47,7 @@ from live_analytics.app.storage.participant_logs import (
     append_pulse_session_marker as _append_pulse_marker,
     append_session_event as _append_session_event,
 )
+from live_analytics.app.pulse_session_logger import get_pulse_logger as _get_pulse_logger
 from live_analytics.app.storage.sqlite_store import (
     end_session,
     increment_record_count,
@@ -207,6 +208,12 @@ async def _on_disconnect(session_ids: set[str]) -> None:
             local_time=local_time,
             extra={"record_count": _record_counts.get(sid, 0)},
         )
+        # Close the dedicated PulseSessionLogger file for this participant.
+        _psl = _get_pulse_logger()
+        if _psl is not None:
+            _psl.close_session(
+                pid, extra={"record_count": _record_counts.get(sid, 0)}
+            )
         logger.info(
             "session_end written — session=%r participant=%r records=%d "
             "ended_at=%s SQLite.end_unix_ms updated",
@@ -227,6 +234,44 @@ async def _process_message(ws: ServerConnection, raw: str, connection_sessions: 
     except json.JSONDecodeError:
         logger.warning("Malformed JSON from Unity – skipping.")
         return
+
+    # ── Handle explicit session-signal events from Unity ─────────────
+    # Unity sends {"event": "start_session"|"end_session", "session_id": "…"}
+    # These are treated as hints to the PulseSessionLogger.  The ingest
+    # pipeline's own connect/disconnect handling is authoritative, but the
+    # explicit signals allow Unity to mark clean starts without waiting for
+    # participant resolution.
+    _event = data.get("event") if isinstance(data, dict) else None
+    if _event in ("start_session", "end_session"):
+        _sig_sid = data.get("session_id", "")
+        _psl = _get_pulse_logger()
+        if _event == "start_session":
+            logger.info(
+                "_process_message: received start_session signal from Unity "
+                "(session_id=%r) — PulseSessionLogger will open file when participant resolves",
+                _sig_sid,
+            )
+            # Note: we do NOT call _psl.start_session() here because the
+            # participant_id is not yet known at this point.  The actual
+            # start_session() call happens inside _resolve_and_link_participant()
+            # once the questionnaire participant is resolved.
+        elif _event == "end_session" and _psl is not None:
+            # Use the participant cache to resolve pid from session_id.
+            _sig_pid = web_api_client.get_cached_participant(_sig_sid)
+            if _sig_pid:
+                logger.info(
+                    "_process_message: received end_session signal from Unity "
+                    "(session_id=%r, participant=%r) — closing PulseSessionLogger file",
+                    _sig_sid, _sig_pid,
+                )
+                _psl.close_session(_sig_pid, extra={"trigger": "unity_signal"})
+            else:
+                logger.debug(
+                    "_process_message: received end_session signal for unknown session %r "
+                    "— no participant cached yet; PulseSessionLogger close will happen on disconnect",
+                    _sig_sid,
+                )
+        return  # Do not try to parse this as a TelemetryBatch
 
     try:
         batch = TelemetryBatch(**data)
@@ -322,6 +367,12 @@ async def _resolve_and_link_participant(sid: str, scenario_id: str, started_at: 
                 local_time=_fmt_iso(started_at),
                 extra={"scenario_id": scenario_id},
             )
+            # Start a dedicated PulseSessionLogger file for this participant/session.
+            _psl = _get_pulse_logger()
+            if _psl is not None:
+                _psl.start_session(
+                    pid, sid, extra={"scenario_id": scenario_id}
+                )
             logger.info(
                 "_resolve_and_link_participant: session_start written for session %r "
                 "(participant=%r, scenario=%r, attempt=%d)",
@@ -481,6 +532,7 @@ def _ingest_session_batch(sid: str, records: list[TelemetryRecord]) -> None:
             _now = datetime.now().astimezone()
             _created_at = _now.astimezone(timezone.utc).isoformat()
             _local_time = _now.strftime("%Y-%m-%d %H:%M:%S %Z")
+            _psl = _get_pulse_logger()
             for _hr_rec in _hr_records:
                 try:
                     _append_pulse_to_file(PARTICIPANTS_DIR, _cached_pid, {
@@ -497,6 +549,11 @@ def _ingest_session_batch(sid: str, records: list[TelemetryRecord]) -> None:
                         "(participant=%r, session=%s, path=%s/pulse.jsonl) — "
                         "API submission continues regardless",
                         _cached_pid, sid, PARTICIPANTS_DIR / _cached_pid,
+                    )
+                # Write to PulseSessionLogger dedicated file.
+                if _psl is not None:
+                    _psl.write_pulse(
+                        _cached_pid, sid, _hr_rec.unix_ms, int(_hr_rec.heart_rate)
                     )
 
         # ── 2. Submit latest pulse to questionnaire + external APIs ───────

@@ -77,6 +77,10 @@ namespace LiveAnalytics
             _wsClient.Initialise(config, _sessionId);
 
             Debug.Log($"[LiveAnalytics] TelemetryPublisher started – session {_sessionId}");
+
+            // Notify the analytics server that a new session is starting.
+            // A short delay gives the WebSocket connection time to fully open.
+            StartCoroutine(SendSessionSignalDelayed("start_session", 1.5f));
         }
 
         void Update()
@@ -107,8 +111,41 @@ namespace LiveAnalytics
 
         void OnDestroy()
         {
-            // Flush remaining records
+            // Flush remaining records then signal session end.
             FlushBuffer();
+            SendSessionSignalImmediate("end_session");
+        }
+
+        void OnApplicationQuit()
+        {
+            // Fires before OnDestroy on a clean application exit.  Sending here
+            // ensures the signal reaches the server even when OnDestroy is skipped.
+            FlushBuffer();
+            SendSessionSignalImmediate("end_session");
+        }
+
+        // ── session signals ──────────────────────────────────────────────
+
+        /// <summary>
+        /// Immediately send a session-signal JSON message over the WebSocket.
+        /// Used for end_session where we cannot wait for a coroutine.
+        /// </summary>
+        private void SendSessionSignalImmediate(string eventType)
+        {
+            if (_wsClient == null || !_wsClient.IsConnected) return;
+            var msg = $"{{\"event\":\"{eventType}\",\"session_id\":\"{_sessionId}\"}}";
+            _wsClient.Send(msg);
+            Debug.Log($"[LiveAnalytics] Sent session signal: {eventType} (session {_sessionId})");
+        }
+
+        /// <summary>
+        /// Wait <paramref name="delaySec"/> seconds then send a session-signal message.
+        /// Used for start_session so the WS handshake is complete before we send.
+        /// </summary>
+        private System.Collections.IEnumerator SendSessionSignalDelayed(string eventType, float delaySec)
+        {
+            yield return new UnityEngine.WaitForSeconds(delaySec);
+            SendSessionSignalImmediate(eventType);
         }
 
         // ── sampling helpers ─────────────────────────────────────────────

@@ -17,12 +17,14 @@ from fastapi import FastAPI
 from fastapi import Request
 
 from live_analytics.app.api_sessions import router as sessions_router
+from live_analytics.app.api_pulse_session import router as pulse_session_router
 from live_analytics.app.config import (
     DB_PATH,
     HTTP_HOST,
     HTTP_PORT,
     LOG_LEVEL,
     PARTICIPANTS_DIR,
+    PULSE_LOG_DIR,
     SESSIONS_DIR,
     ensure_dirs,
 )
@@ -30,6 +32,7 @@ from live_analytics.app.storage.raw_writer import RawWriter
 from live_analytics.app.storage.sqlite_store import init_db
 from live_analytics.app.ws_dashboard import dashboard_ws
 from live_analytics.app.ws_ingest import set_raw_writer, start_ingest_server, _evict_stale_sessions
+from live_analytics.app.pulse_session_logger import init_pulse_logger
 
 # ── Logging setup ─────────────────────────────────────────────────────
 logging.basicConfig(
@@ -47,6 +50,7 @@ async def lifespan(app: FastAPI):  # noqa: ARG001
     logger.info("  DB_PATH          = %s", DB_PATH)
     logger.info("  SESSIONS_DIR     = %s", SESSIONS_DIR)
     logger.info("  PARTICIPANTS_DIR = %s", PARTICIPANTS_DIR)
+    logger.info("  PULSE_LOG_DIR    = %s", PULSE_LOG_DIR)
     logger.info("  HTTP             = %s:%d", HTTP_HOST, HTTP_PORT)
     logger.info("  LOG_LEVEL        = %s", LOG_LEVEL)
 
@@ -76,6 +80,15 @@ async def lifespan(app: FastAPI):  # noqa: ARG001
         logger.critical(
             "Startup failed: could not create RawWriter for sessions dir '%s': %s",
             SESSIONS_DIR, exc,
+        )
+        raise
+
+    try:
+        init_pulse_logger(PULSE_LOG_DIR)
+    except Exception as exc:
+        logger.critical(
+            "Startup failed: could not initialise PulseSessionLogger at '%s': %s",
+            PULSE_LOG_DIR, exc,
         )
         raise
 
@@ -126,6 +139,7 @@ def _ingest_task_done(task: asyncio.Task) -> None:
 # ── FastAPI app ───────────────────────────────────────────────────────
 app = FastAPI(title="Live Analytics", version="0.1.0", lifespan=lifespan)
 app.include_router(sessions_router)
+app.include_router(pulse_session_router)
 app.add_api_websocket_route("/ws/dashboard", dashboard_ws)
 
 
