@@ -840,6 +840,266 @@ Full setup guide: [`docs/QUICKSTART.md`](docs/QUICKSTART.md)
 
 ---
 
-## License
+## How to implement — complete integration guide
+
+This section walks through every step required to wire the full system together: from a blank machine to a running VR cycling session with live pulse logging, scoring, questionnaire, and dashboard.
+
+---
+
+### Step 1 — Install the project
+
+**macOS (one-click):**
+```bash
+# Double-click in Finder, or run from terminal:
+open starters/INSTALL.command
+```
+
+**Windows (one-click):**
+Double-click `starters\INSTALL.bat`.
+
+**Manual (any platform):**
+```bash
+git clone https://github.com/jonasbuc/wahoo-ble-sniffer.git
+cd wahoo-ble-sniffer
+python3 -m venv .venv
+source .venv/bin/activate          # macOS / Linux
+# .venv\Scripts\activate           # Windows
+pip install -r requirements.txt
+pip install -e .
+python live_analytics/scripts/init_db.py
+```
+
+After this you will have:
+- `.venv/` — Python virtual environment with all dependencies
+- `live_analytics/data/live_analytics.db` — analytics SQLite DB
+- `live_analytics/questionnaire/data/questionnaire.db` — questionnaire SQLite DB
+
+---
+
+### Step 2 — Verify the environment
+
+```bash
+python starters/preflight.py
+```
+
+Expected output: all checks green. If any check fails, fix it before proceeding (the output tells you exactly what is missing).
+
+---
+
+### Step 3 — Start all services
+
+**macOS:** double-click `starters/START_ALL.command`, or from terminal:
+```bash
+python starters/launcher.py
+```
+
+**Windows:** double-click `starters\START_ALL.bat`.
+
+The launcher starts services in order and waits for each to respond before starting the next:
+
+| # | Service | Port | URL |
+|---|---|---|---|
+| 1 | Analytics API + WS ingest | 8080 / 8766 | http://127.0.0.1:8080 |
+| 2 | Questionnaire | 8090 | http://127.0.0.1:8090 |
+| 3 | System Check GUI | 8095 | http://127.0.0.1:8095 |
+| 4 | Dashboard | 8501 | http://127.0.0.1:8501 |
+
+Confirm everything is up:
+```bash
+curl http://127.0.0.1:8080/healthz
+# Expected: {"status":"ok","db_ok":true,...}
+```
+
+---
+
+### Step 4 — Start the BLE bridge (or mock)
+
+**Real Wahoo TICKR FIT + Arduino hardware:**
+```bash
+python bridge/bike_bridge.py
+# macOS one-click: starters/START_BRIDGE.command
+# Windows:         starters\START_BRIDGE.bat
+```
+
+**No hardware / simulated data:**
+```bash
+python bridge/mock_wahoo_bridge.py
+# macOS one-click: starters/START_MOCK_BRIDGE.command
+# Windows:         starters\START_MOCK_BRIDGE.bat
+```
+
+The bridge opens a WebSocket server on `ws://localhost:8765`. Unity must connect to this address via `WahooWsClient.cs`.
+
+---
+
+### Step 5 — Set up Unity
+
+1. Open your Unity project (Unity 2021+).
+2. Copy all scripts from `unity/LiveAnalytics/` into your Unity `Assets/Scripts/LiveAnalytics/` folder:
+   - `TelemetryPublisher.cs`
+   - `TelemetryBuffer.cs`
+   - `TelemetryConfig.cs`
+   - `TelemetryModels.cs`
+   - `LiveFeedbackClient.cs`
+3. Copy `unity/WahooWsClient.cs` into `Assets/Scripts/`.
+4. Attach `TelemetryPublisher` to any persistent `GameObject` in your scene (e.g. a `GameManager` object).
+5. Create a `TelemetryConfig` ScriptableObject:
+   - In the Unity menu: **Assets → Create → Live Analytics → TelemetryConfig**
+   - Set `ingestUrl` to `ws://127.0.0.1:8766`
+   - Set `scenarioId` to something meaningful, e.g. `"forest_01"`
+   - Set `gameplayHz` = `20`, `headposeHz` = `10`, `maxBatchSize` = `10`
+6. Assign the `TelemetryConfig` asset to the `config` field on `TelemetryPublisher` in the Inspector.
+7. Wire sensor data into `TelemetryPublisher`'s public fields from your own scripts:
+
+```csharp
+// Example: in your bike controller Update() loop
+telemetryPublisher.externalHeartRate   = wahooWsClient.HeartRate;
+telemetryPublisher.externalSpeed       = bikeSpeed;           // m/s
+telemetryPublisher.externalSteeringAngle = steeringAngle;    // degrees
+telemetryPublisher.externalBrakeFront  = brakeFront;         // 0–255
+telemetryPublisher.externalBrakeRear   = brakeRear;          // 0–255
+```
+
+8. Press **Play** in Unity. `TelemetryPublisher` will:
+   - Connect to `ws://127.0.0.1:8766`
+   - Send a `start_session` signal after 1.5 s
+   - Stream JSON `TelemetryBatch` messages at `gameplayHz`
+   - Send an `end_session` signal on `OnDestroy` / `OnApplicationQuit`
+
+---
+
+### Step 6 — Register a test participant
+
+Before or during a session, register the test person in the questionnaire so pulse data is correctly attributed.
+
+**Option A — Questionnaire web UI:**
+
+Open `http://127.0.0.1:8090` in a browser and register the participant through the UI.
+
+**Option B — API call:**
+
+```bash
+# Register participant TP_001
+curl -X POST http://127.0.0.1:8090/api/participants \
+  -H "Content-Type: application/json" \
+  -d '{"participant_id": "TP_001", "name": "Jonas"}'
+
+# Link the active Unity session to that participant
+# (replace SESSION_ID with the value from the analytics API or Unity logs)
+curl -X PUT http://127.0.0.1:8090/api/participants/TP_001/session \
+  -H "Content-Type: application/json" \
+  -d '{"session_id": "SESSION_ID"}'
+```
+
+Once linked, the analytics server will:
+- Write `SESSION_START` to `data/participants/TP_001/pulse.jsonl`
+- Open `logs/pulse/TP_001_<timestamp>_pulse_log.jsonl` via `PulseSessionLogger`
+- Tag all pulse samples and score snapshots with `participant_id = "TP_001"`
+
+---
+
+### Step 7 — Manage pulse sessions via API (optional)
+
+The `PulseSessionLogger` opens and closes dedicated pulse log files automatically when Unity connects/disconnects. You can also control it manually via HTTP:
+
+```bash
+# Open a pulse log file for TP_001
+curl -X POST http://127.0.0.1:8080/api/pulse-session/start \
+  -H "Content-Type: application/json" \
+  -d '{"test_person_id": "TP_001"}'
+
+# Check what sessions are currently logging
+curl http://127.0.0.1:8080/api/pulse-session/current
+
+# Close the log file when the session is done
+curl -X POST http://127.0.0.1:8080/api/pulse-session/end \
+  -H "Content-Type: application/json" \
+  -d '{"test_person_id": "TP_001"}'
+```
+
+Each pulse log file looks like this:
+```jsonl
+{"type": "session_start", "participant_id": "TP_001", "session_id": "1746000000000", "started_at": "2025-04-30T10:00:00+00:00", "scenario_id": "forest_01"}
+{"type": "pulse", "participant_id": "TP_001", "session_id": "1746000000000", "unix_ms": 1746000001000, "pulse": 82, "recorded_at": "2025-04-30T10:00:01+00:00"}
+{"type": "pulse", "participant_id": "TP_001", "session_id": "1746000000000", "unix_ms": 1746000001050, "pulse": 83, "recorded_at": "2025-04-30T10:00:01+00:00"}
+{"type": "session_end", "participant_id": "TP_001", "session_id": "1746000000000", "ended_at": "2025-04-30T10:45:00+00:00", "pulse_record_count": 540}
+```
+
+---
+
+### Step 8 — Monitor live data
+
+| What | Where |
+|---|---|
+| Live scores + charts | http://127.0.0.1:8501 (Streamlit dashboard) |
+| System health | http://127.0.0.1:8095 (System Check GUI) |
+| Questionnaire responses | http://127.0.0.1:8090 |
+| Latest telemetry (JSON) | `GET http://127.0.0.1:8080/api/live/latest` |
+| Session list (JSON) | `GET http://127.0.0.1:8080/api/sessions` |
+| Bridge data stream | `python bridge/wahoo_bridge_gui.py` (Tkinter monitor) |
+
+---
+
+### Step 9 — Run without Unity hardware (simulate a ride)
+
+With all services running:
+```bash
+python live_analytics/scripts/simulate_ride.py --duration 60 --hz 20
+```
+
+This streams 60 seconds of synthetic telemetry directly to the WS ingest port (`:8766`) and populates the dashboard in real time. Useful for testing the full pipeline without a VR headset or sensors.
+
+---
+
+### Step 10 — Run the test suite
+
+```bash
+# Full suite (1140 tests)
+pytest
+
+# Analytics pipeline only
+pytest live_analytics/tests/ -v
+
+# With coverage
+pytest --cov=live_analytics --cov=bridge --cov-report=term-missing -q
+```
+
+---
+
+### End-to-end flow summary
+
+```
+① Install & init DBs
+       │
+② Start all services (launcher.py)
+       │
+③ Start bridge (real or mock) → ws://localhost:8765
+       │
+④ Press Play in Unity
+       │  TelemetryPublisher connects to ws://localhost:8766
+       │  sends start_session signal after 1.5 s
+       │
+⑤ Register test participant in questionnaire (http://localhost:8090)
+       │  analytics server resolves participant_id and links it to the session
+       │  SESSION_START written to pulse.jsonl + PulseSessionLogger opens dedicated file
+       │
+⑥ Ride session in progress
+       │  HR + gameplay + headpose batches stream at 20 Hz
+       │  scores computed every batch → live dashboard updates
+       │  every HR sample written to pulse.jsonl AND logs/pulse/<id>_<ts>_pulse_log.jsonl
+       │
+⑦ Stop Unity (or press Stop in Editor)
+       │  TelemetryPublisher sends end_session signal
+       │  ws_ingest writes SESSION_END to pulse.jsonl
+       │  PulseSessionLogger writes session_end and closes file
+       │
+⑧ Review results
+       Dashboard → http://localhost:8501
+       Pulse log  → logs/pulse/<id>_<ts>_pulse_log.jsonl
+       Raw JSONL  → live_analytics/data/sessions/<session_id>.jsonl
+       SQLite     → live_analytics/data/live_analytics.db
+```
+
+---
 
 This project is provided as-is for personal / research use. Wahoo and TICKR are trademarks of Wahoo Fitness.
