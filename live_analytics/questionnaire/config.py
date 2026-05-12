@@ -27,6 +27,10 @@ PORT: int = int_env("QS_PORT", 8090)
 
 LOG_LEVEL: str = os.getenv("QS_LOG_LEVEL", "INFO")
 
+# URL of the analytics API — used to notify it when a session link changes so
+# it can clear its participant cache and resolve immediately.
+ANALYTICS_API_URL: str = os.getenv("QS_ANALYTICS_API_URL", "http://127.0.0.1:8080")
+
 
 def ensure_dirs() -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)

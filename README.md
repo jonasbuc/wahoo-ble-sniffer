@@ -932,7 +932,40 @@ The bridge opens a WebSocket server on `ws://localhost:8765`. Unity must connect
 
 ---
 
-### Step 5 — Set up Unity
+### Step 5 — Register a test participant (before the headset goes on)
+
+Register the test person and complete the pre-session questionnaire **before** the headset is put on. The analytics server will automatically link the participant to the session once Unity starts.
+
+**Option A — Questionnaire web UI:**
+
+Open `http://127.0.0.1:8090` in a browser and register the participant through the UI.
+
+**Option B — API call:**
+
+```bash
+# Register participant TP_001
+curl -X POST http://127.0.0.1:8090/api/participants \
+  -H "Content-Type: application/json" \
+  -d '{"participant_id": "TP_001", "name": "Jonas"}'
+```
+
+The participant will be linked automatically when Unity starts a session. Alternatively, you can link manually after the session has started:
+
+```bash
+# Link after session start (replace SESSION_ID with the value from the analytics API or Unity logs)
+curl -X PUT http://127.0.0.1:8090/api/participants/TP_001/session \
+  -H "Content-Type: application/json" \
+  -d '{"session_id": "SESSION_ID"}'
+```
+
+Once linked, the analytics server will:
+- Write `SESSION_START` to `data/participants/TP_001/pulse.jsonl`
+- Open `logs/pulse/TP_001_<timestamp>_pulse_log.jsonl` via `PulseSessionLogger`
+- Tag all pulse samples and score snapshots with `participant_id = "TP_001"`
+
+---
+
+### Step 6 — Set up Unity and start the session (put on headset)
 
 1. Open your Unity project (Unity 2021+).
 2. Copy all scripts from `unity/LiveAnalytics/` into your Unity `Assets/Scripts/LiveAnalytics/` folder:
@@ -960,41 +993,11 @@ telemetryPublisher.externalBrakeFront  = brakeFront;         // 0–255
 telemetryPublisher.externalBrakeRear   = brakeRear;          // 0–255
 ```
 
-8. Press **Play** in Unity. `TelemetryPublisher` will:
+8. Have the test person put on the headset, then press **Play** in Unity. `TelemetryPublisher` will:
    - Connect to `ws://127.0.0.1:8766`
    - Send a `start_session` signal after 1.5 s
    - Stream JSON `TelemetryBatch` messages at `gameplayHz`
    - Send an `end_session` signal on `OnDestroy` / `OnApplicationQuit`
-
----
-
-### Step 6 — Register a test participant
-
-Before or during a session, register the test person in the questionnaire so pulse data is correctly attributed.
-
-**Option A — Questionnaire web UI:**
-
-Open `http://127.0.0.1:8090` in a browser and register the participant through the UI.
-
-**Option B — API call:**
-
-```bash
-# Register participant TP_001
-curl -X POST http://127.0.0.1:8090/api/participants \
-  -H "Content-Type: application/json" \
-  -d '{"participant_id": "TP_001", "name": "Jonas"}'
-
-# Link the active Unity session to that participant
-# (replace SESSION_ID with the value from the analytics API or Unity logs)
-curl -X PUT http://127.0.0.1:8090/api/participants/TP_001/session \
-  -H "Content-Type: application/json" \
-  -d '{"session_id": "SESSION_ID"}'
-```
-
-Once linked, the analytics server will:
-- Write `SESSION_START` to `data/participants/TP_001/pulse.jsonl`
-- Open `logs/pulse/TP_001_<timestamp>_pulse_log.jsonl` via `PulseSessionLogger`
-- Tag all pulse samples and score snapshots with `participant_id = "TP_001"`
 
 ---
 
@@ -1075,11 +1078,13 @@ pytest --cov=live_analytics --cov=bridge --cov-report=term-missing -q
        │
 ③ Start bridge (real or mock) → ws://localhost:8765
        │
-④ Press Play in Unity
+④ Register test participant in questionnaire (http://localhost:8090)
+       │  fill in pre-session questionnaire answers before the headset is put on
+       │  analytics server will resolve participant_id automatically when the session starts
+       │
+⑤ Press Play in Unity (put on headset)
        │  TelemetryPublisher connects to ws://localhost:8766
        │  sends start_session signal after 1.5 s
-       │
-⑤ Register test participant in questionnaire (http://localhost:8090)
        │  analytics server resolves participant_id and links it to the session
        │  SESSION_START written to pulse.jsonl + PulseSessionLogger opens dedicated file
        │

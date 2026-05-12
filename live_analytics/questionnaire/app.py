@@ -9,17 +9,19 @@ Hosts:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
+import httpx
 import uvicorn
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from live_analytics.questionnaire.config import DB_PATH, HOST, LOG_LEVEL, PARTICIPANTS_DIR, PORT, ensure_dirs
+from live_analytics.questionnaire.config import ANALYTICS_API_URL, DB_PATH, HOST, LOG_LEVEL, PARTICIPANTS_DIR, PORT, ensure_dirs
 from live_analytics.questionnaire.db import (
     create_participant,
     delete_participant_data,
@@ -187,6 +189,29 @@ async def link_session_endpoint(participant_id: str, body: LinkSession) -> dict:
         raise HTTPException(404, "Participant not found")
     link_session(DB_PATH, participant_id, body.session_id)
     logger.info("Session linked: participant=%r ↔ session=%r", participant_id, body.session_id)
+
+    # Notify the analytics API so it clears its participant cache immediately.
+    # This allows _resolve_and_link_participant to pick up the link on the very
+    # next retry (within seconds) rather than waiting for the cooldown to expire.
+    # Fire-and-forget — a failure here must never block the questionnaire response.
+    async def _notify_analytics() -> None:
+        url = f"{ANALYTICS_API_URL}/api/sessions/{body.session_id}/participant"
+        try:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(3.0)) as client:
+                await client.put(url, json={"participant_id": participant_id})
+            logger.debug(
+                "link_session_endpoint: notified analytics API to link %r → %r",
+                body.session_id, participant_id,
+            )
+        except Exception as exc:  # noqa: BLE001
+            # Analytics API may not be running yet — this is non-fatal.
+            logger.debug(
+                "link_session_endpoint: could not notify analytics API (%s: %s) — "
+                "participant cache will be cleared on next retry cycle",
+                type(exc).__name__, exc,
+            )
+
+    asyncio.create_task(_notify_analytics())
     return {"ok": True}
 
 

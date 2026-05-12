@@ -165,7 +165,9 @@ async def _on_disconnect(session_ids: set[str]) -> None:
         if not pid:
             logger.warning(
                 "_on_disconnect: no participant linked to session %r "
-                "— session_end not written (was a participant registered before the session started?)",
+                "— session_end not written. "
+                "Register the participant in the questionnaire before putting on "
+                "the headset and link the session_id immediately after pressing Play.",
                 sid,
             )
             # Still update SQLite end_unix_ms so the session isn't left open.
@@ -324,14 +326,31 @@ async def _process_message(ws: ServerConnection, raw: str, connection_sessions: 
 async def _resolve_and_link_participant(sid: str, scenario_id: str, started_at: str) -> None:
     """Fetch the questionnaire participant for *sid* and store it in the analytics DB.
 
-    Called once per new session.  Retries up to *_RESOLVE_MAX_RETRIES* times with
-    *_RESOLVE_RETRY_DELAY_SEC* intervals so that athletes who register in the
-    questionnaire slightly after their trainer connects are still linked correctly.
+    Called once per new session.  The intended workflow is:
+      1. Operator registers the test participant in the questionnaire UI
+         (http://localhost:8090) *before* the headset goes on.
+      2. Unity starts → session_id is created.
+      3. Operator links the new session_id to the pre-registered participant
+         via the questionnaire UI or:
+           PUT :8090/api/participants/{id}/session  {"session_id": "..."}
+         This also notifies the analytics API to clear the participant cache
+         so resolution happens immediately.
+      4. This coroutine resolves the participant, writes SESSION_START, and
+         opens the PulseSessionLogger file.
+
+    Retry schedule (tiered):
+      - Attempts 1–12 : every 5 s  (covers ~60 s — normal linking window)
+      - Attempts 13–22: every 60 s (covers ~10 min — fallback for late linking)
+
     Failures are logged but never propagated so the ingest pipeline is not affected.
-    Also writes a session-start event to the participant's session.jsonl log.
     """
-    _RESOLVE_MAX_RETRIES = 20        # ≈ 10 minutes at 30-second intervals
-    _RESOLVE_RETRY_DELAY_SEC = 30.0
+    # Tiered delays: fast retries first so a pre-registered participant is
+    # linked within seconds; slow retries as a fallback.
+    _FAST_RETRIES = 12
+    _FAST_DELAY_SEC = 5.0
+    _SLOW_RETRIES = 10
+    _SLOW_DELAY_SEC = 60.0
+    _RESOLVE_MAX_RETRIES = _FAST_RETRIES + _SLOW_RETRIES
 
     for attempt in range(1, _RESOLVE_MAX_RETRIES + 1):
         pid = await web_api_client.resolve_participant(sid)
@@ -391,19 +410,21 @@ async def _resolve_and_link_participant(sid: str, scenario_id: str, started_at: 
             return
 
         if attempt < _RESOLVE_MAX_RETRIES:
+            delay = _FAST_DELAY_SEC if attempt <= _FAST_RETRIES else _SLOW_DELAY_SEC
             logger.debug(
                 "_resolve_and_link_participant: no participant yet for session %r "
                 "(attempt %d/%d) — retrying in %.0f s",
-                sid, attempt, _RESOLVE_MAX_RETRIES, _RESOLVE_RETRY_DELAY_SEC,
+                sid, attempt, _RESOLVE_MAX_RETRIES, delay,
             )
-            await asyncio.sleep(_RESOLVE_RETRY_DELAY_SEC)
+            await asyncio.sleep(delay)
         else:
             logger.warning(
                 "_resolve_and_link_participant: no participant found for session %r "
                 "(scenario=%r) after %d attempts — session not linked and "
                 "session_start not written to JSONL. "
-                "Register the participant in the questionnaire before starting a session "
-                "so that pulse and session logs are correctly attributed.",
+                "Make sure the participant is registered in the questionnaire "
+                "(http://localhost:8090) *before* the headset goes on, then link "
+                "the session_id to the participant immediately after pressing Play.",
                 sid, scenario_id, _RESOLVE_MAX_RETRIES,
             )
 
