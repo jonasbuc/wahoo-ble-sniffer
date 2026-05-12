@@ -163,12 +163,42 @@ def create_participant(
 ) -> dict:
     now = _now()
     conn = _connect(db_path)
+
+    # ── FIFO safety guard ─────────────────────────────────────────────
+    # If this participant_id already exists AND is already linked to a
+    # session, treat the call as a resume (update display_name/metadata
+    # only) rather than a fresh registration.  This prevents an operator
+    # accidentally re-submitting an in-use ID from injecting a second
+    # "unlinked" entry that would steal the next available session slot
+    # from a genuinely new participant waiting in the FIFO queue.
+    existing = get_participant(db_path, participant_id)
+    if existing and existing.get("session_id"):
+        # Already linked — safe to update cosmetic fields only.
+        conn.execute(
+            """UPDATE participants
+               SET display_name = ?, updated_at = ?, metadata = ?
+               WHERE participant_id = ?""",
+            (display_name or existing["display_name"],
+             now,
+             json.dumps(metadata or json.loads(existing.get("metadata") or "{}")),
+             participant_id),
+        )
+        conn.commit()
+        logger.info(
+            "create_participant: participant %r already linked to session %r — "
+            "updated cosmetic fields only (FIFO guard)",
+            participant_id, existing["session_id"],
+        )
+        return get_participant(db_path, participant_id)  # type: ignore[return-value]
+
+    # Fresh registration or resume of an unlinked participant.
     conn.execute(
         """INSERT INTO participants (participant_id, display_name, session_id, created_at, updated_at, metadata)
            VALUES (?, ?, ?, ?, ?, ?)
            ON CONFLICT(participant_id) DO UPDATE SET
                display_name = excluded.display_name,
-               session_id = CASE WHEN excluded.session_id != '' THEN excluded.session_id ELSE participants.session_id END,
+               session_id = CASE WHEN excluded.session_id != '' THEN excluded.session_id
+                                 ELSE participants.session_id END,
                updated_at = excluded.updated_at,
                metadata = excluded.metadata""",
         (participant_id, display_name, session_id, now, now, json.dumps(metadata or {})),

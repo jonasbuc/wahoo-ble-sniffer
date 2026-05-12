@@ -225,8 +225,9 @@
 
         <div class="card">
             <label for="inp-pid">Testperson-ID</label>
-            <div class="hint">F.eks. "TP-001" eller et andet unikt ID</div>
-            <input type="text" id="inp-pid" placeholder="TP-001" autofocus>
+            <div class="hint">Kun heltal — f.eks. 1, 2, 3 …</div>
+            <input type="number" id="inp-pid" placeholder="1" min="1" step="1"
+                   oninput="this.value=this.value.replace(/[^0-9]/g,'')" autofocus>
             <div class="mt-1">
                 <label for="inp-name">Navn (valgfrit)</label>
                 <input type="text" id="inp-name" placeholder="Fornavn">
@@ -352,8 +353,15 @@
     }
 
     async function startQuestionnaire() {
-        const pid = document.getElementById('inp-pid').value.trim();
-        if (!pid) { alert('Indtast et testperson-ID'); return; }
+        const raw = document.getElementById('inp-pid').value.trim();
+        // Enforce integer-only — strip anything that slipped through,
+        // then reject if empty or not a positive whole number.
+        const pid = raw.replace(/[^0-9]/g, '');
+        if (!pid || parseInt(pid, 10) < 1) {
+            alert('Testperson-ID skal være et positivt heltal (f.eks. 1, 2, 3)');
+            document.getElementById('inp-pid').focus();
+            return;
+        }
         const name = document.getElementById('inp-name').value.trim();
 
         setStatus('saving', 'Opretter / indlæser…');

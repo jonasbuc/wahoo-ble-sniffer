@@ -62,6 +62,10 @@ collector_out/
 # Analysis artifacts (removed)
 analysis/
 
+# .NET / dotnet build output (mock_dbsender test project)
+tests/mock_dbsender/bin/
+tests/mock_dbsender/obj/
+
 # Ignore UnityCompileCheck build artifacts
 # Live Analytics runtime data
 live_analytics/data/*.db

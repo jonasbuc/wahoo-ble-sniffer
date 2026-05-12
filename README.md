@@ -82,13 +82,17 @@ Arduino ────────UDP────┘                              
 │   ├── questionnaire/
 │   │   ├── app.py                    #   FastAPI questionnaire service (:8090)
 │   │   │                             #   GET /api/participants/by-session/{id}  ← NY
+│   │   │                             #   GET /api/participants/oldest-unlinked   ← NY (FIFO)
 │   │   ├── config.py                 #   Configuration via env vars (QS_*)
+│   │   │                             #   ANALYTICS_API_URL  ← NY
 │   │   ├── db.py                     #   SQLite CRUD
-│   │   │                             #   get_participant_by_session()  ← NY
+│   │   │                             #   get_oldest_unlinked_participant() ORDER BY ASC  ← NY (FIFO fix)
+│   │   │                             #   create_participant() FIFO guard  ← NY
 │   │   ├── questions.py              #   Pre/post question definitions
 │   │   ├── models.py                 #   Pydantic models
+│   │   │                             #   ParticipantCreate: integer-only validator  ← NY
 │   │   └── static/                   #   SPA web UI (served at /)
-│   ├── system_check/
+│   │       └── index.html            #   Testperson-ID input: type=number, integers only  ← NY│   ├── system_check/
 │   │   ├── app.py                    #   FastAPI system-check GUI (:8095)
 │   │   ├── __init__.py               #   Configuration via env vars (SC_*)
 │   │   ├── checks.py                 #   All health-check implementations
@@ -121,15 +125,22 @@ Arduino ────────UDP────┘                              
 │   ├── WahooWsClient.cs              #   WebSocket client (bridge consumer)
 │   ├── BikeMovementController.cs     #   Translates sensor data to bike movement
 │   ├── SpawnZoneTrigger.cs           #   Sends timestamped events on collider hit
+│   ├── DBSender.cs                   #   Pulse logger → CARLogs/pulse.txt  ← NY
+│   │                                 #   Line 1: participant_id (int, fetched from API)
+│   │                                 #   Remaining lines: unix_ms|bpm at 1 Hz
+│   │                                 #   Polls GET /api/sessions/{id} every 5 s until resolved
 │   ├── VrsLogging/                   #   VRSF binary session logging
 │   └── LiveAnalytics/                #   Telemetry publisher scripts
-│       ├── TelemetryPublisher.cs
+│       ├── TelemetryPublisher.cs     #   SessionId property (unix-ms string) used by DBSender
 │       ├── TelemetryBuffer.cs
 │       ├── TelemetryConfig.cs
 │       ├── TelemetryModels.cs
 │       └── LiveFeedbackClient.cs
 │
 ├── tests/                            # pytest – bridge, collector, parser, VRSF
+│   └── mock_dbsender/                # Standalone C# mock run for DBSender logic  ← NY
+│       ├── Program.cs                #   14 tests: file format, header rewrite, JSON extraction
+│       └── mock_dbsender.csproj
 ├── logs/                             # Service log files (auto-created by launcher)
 │   ├── *.log                         #   Rotated service stdout/stderr (analytics, questionnaire, …)
 │   └── pulse/                        #   Dedikeret puls-log pr. testperson/session  ← NY
@@ -468,10 +479,22 @@ Questionnaire service (:8090)
 
 Operatør-workflow for at koble en testperson til en session:
   1. POST /api/participants  →  opret testperson (f.eks. participant_id="7")
+     • Testperson-ID er et positivt heltal — valideret i UI, Pydantic-model og DB
+     • Gentagen indsendelse af et allerede-linket ID (operator-fejl) opdaterer kun
+       kosmetiske felter; session_id berøres IKKE (FIFO guard i db.py)
   2. PUT /api/participants/7/session  { "session_id": "..." }  (questionnaire API)
      ELLER
      PUT /api/sessions/.../participant  { "participant_id": "7" }  (analytics API)
   Herefter bruges TestPersonNumber=7 automatisk som UserId i alle eksterne DB-skrivninger.
+
+Unity DBSender.cs  [NY puls-log med deltager-ID]
+  • Skriver CARLogs/pulse.txt ved session-start (én fil pr. kørsel)
+  • Linje 1: participant_id (heltal) — hentes fra GET /api/sessions/{session_id}
+    og polles hvert 5/10/30 s, indtil questionnaire har linket en deltager
+  • Øvrige linjer: unix_ms|bpm (1 Hz)
+  • session_id læses fra TelemetryPublisher.SessionId (assign i Inspector)
+  • Hvis participant aldrig resolver: linje 1 forbliver "PENDING"
+  • Se docs/DBSENDER.md for import-script til pulse_data-tabellen
 
 System Check GUI (:8095)
   • probes all other services (HTTP health + WebSocket TCP check)
@@ -523,11 +546,11 @@ WebSocket ingest (port **8766**, separate `websockets` server):
 
 | Method | Path | Description |
 |---|---|---|
-| `POST` | `/api/participants` | Opret testperson |
+| `POST` | `/api/participants` | Opret testperson — `participant_id` **skal** være et positivt heltal (422 ellers) |
 | `GET` | `/api/participants` | Alle testpersoner |
 | `GET` | `/api/participants/{participant_id}` | Hent enkelt testperson |
 | `GET` | `/api/participants/by-session/{session_id}` | Hent testperson via analytics-session ID |
-| `GET` | `/api/participants/oldest-unlinked` | Hent ældste oprettede deltager uden session — FIFO-rækkefølge forhindrer at en ny P2 kobles til en session der allerede kører for P1 |
+| `GET` | `/api/participants/oldest-unlinked` | Hent ældste deltager uden session (FIFO — bruges af analytics auto-linker) |
 | `PUT` | `/api/participants/{participant_id}/session` | Kobl analytics session til testperson |
 | `DELETE` | `/api/participants/{participant_id}` | Slet testperson og alle svar |
 | `POST` | `/api/participants/{participant_id}/answers/{phase}` | Gem enkelt svar (pre/post) |
@@ -596,7 +619,12 @@ Test coverage:
 - **`tests/`** — BLE parsing, VRSF binary format, collector DB, Parquet export, mock integration, end-to-end flows, disconnections, GUI
 - **`live_analytics/tests/`** — analytics API endpoints, WS ingest, scoring pipeline, SQLite store, raw writer, participant logs (pulse.jsonl SESSION_START/END markers, alle HR-samples), `PulseSessionLogger` (31 tests: lifecycle, edge cases, multi-participant, API endpoints), configuration, crash diagnostics, fresh-clone bootstrap, regression tests
 - **`live_analytics/questionnaire/tests/`** — questionnaire API endpoints, DB CRUD, error handling
+  - integer-only `participant_id` validation (422 for non-integers, `"007"` → `"7"`)
+  - FIFO guard: re-registering a linked ID must not clear `session_id`
 - **`live_analytics/system_check/tests/`** — system check probes, app endpoints, VRSF log inspection
+- **`tests/mock_dbsender/`** — standalone C# mock run (14 tests, no Unity required):
+  - `dotnet run` from `tests/mock_dbsender/` — exercises file creation, PENDING header,
+    pulse line format (`unix_ms|bpm`), participant header rewrite, post-resolve format
 
 Coverage target: **≥ 88 %** (measured with `pytest --cov`). Run with:
 

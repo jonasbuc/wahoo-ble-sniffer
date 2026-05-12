@@ -13,14 +13,25 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class ParticipantCreate(BaseModel):
-    participant_id: str = Field(..., min_length=1, description="Unique test-person ID")
+    participant_id: str = Field(..., min_length=1, description="Unique test-person ID — must be a positive integer")
     display_name: str = ""
     session_id: str = ""
     metadata: dict = Field(default_factory=dict)
+
+    @field_validator("participant_id")
+    @classmethod
+    def must_be_positive_integer(cls, v: str) -> str:
+        stripped = v.strip()
+        if not stripped.isdigit() or int(stripped) < 1:
+            raise ValueError(
+                f"participant_id must be a positive integer (e.g. 1, 2, 42), got: {v!r}"
+            )
+        # Normalise: remove any leading zeros, return canonical form.
+        return str(int(stripped))
 
 
 class ParticipantOut(BaseModel):
