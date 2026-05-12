@@ -172,3 +172,55 @@ async def link_participant_to_session(session_id: str, body: _LinkParticipantBod
         session_id, body.participant_id,
     )
     return {"ok": True, "session_id": session_id, "participant_id": body.participant_id}
+
+
+@router.post("/api/sessions/trigger-relink")
+async def trigger_relink() -> dict:
+    """Re-run participant resolution for every active session that has no participant yet.
+
+    Called automatically by the questionnaire service whenever a new participant
+    is created — this covers the case where Unity was already running when the
+    test person registered.  For each unlinked active session the existing
+    ``_resolve_and_link_participant`` retry loop is still running, but this
+    endpoint also clears the cooldown cache and fires a fresh resolution task
+    so linking happens within seconds rather than waiting for the next retry.
+
+    Safe to call multiple times — duplicate tasks for the same session are
+    harmless (participant cache is checked on every attempt).
+    """
+    import asyncio
+    from live_analytics.app import ws_ingest
+    from datetime import datetime, timezone
+
+    # Find all sessions that are currently active (have an open sliding window)
+    # but have no participant resolved yet.
+    unlinked = [
+        sid for sid in ws_ingest._windows
+        if web_api_client.get_cached_participant(sid) is None
+    ]
+
+    if not unlinked:
+        logger.debug("trigger_relink: no active unlinked sessions")
+        return {"triggered": 0, "sessions": []}
+
+    loop = asyncio.get_running_loop()
+    triggered = []
+    for sid in unlinked:
+        # Clear cooldown so resolve_participant fires immediately.
+        web_api_client.clear_participant_cache(sid)
+        # Fire a fresh resolution task — uses the scenario / started_at from
+        # the most recent record for this session if available, otherwise falls
+        # back to sensible defaults.
+        last = ws_ingest.latest_records.get(sid)
+        scenario_id = (last.scenario_id if last and last.scenario_id else "") if last else ""
+        started_at = (
+            datetime.fromtimestamp(last.unix_ms / 1000, tz=timezone.utc).isoformat()
+            if last else datetime.now(tz=timezone.utc).isoformat()
+        )
+        loop.create_task(
+            ws_ingest._resolve_and_link_participant(sid, scenario_id, started_at)
+        )
+        triggered.append(sid)
+        logger.info("trigger_relink: fired fresh resolution task for session %r", sid)
+
+    return {"triggered": len(triggered), "sessions": triggered}

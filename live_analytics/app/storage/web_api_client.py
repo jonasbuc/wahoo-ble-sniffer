@@ -87,18 +87,22 @@ async def resolve_participant(session_id: str) -> str | None:
     or ``None`` when no participant has been linked to this session yet.
     Never raises — failures are logged as warnings.
 
+    Automatic linking
+    -----------------
+    When the ``by-session`` lookup returns 404 (no participant linked yet), this
+    function automatically calls ``GET /api/participants/oldest-unlinked`` to
+    find the oldest pre-registered participant that has no session yet (FIFO),
+    then calls ``PUT /api/participants/{id}/session`` to link them.  FIFO
+    ordering is critical: if P1 registered before P2, P1 must be linked to the
+    current session — not P2, which may have been created for the *next* session.
+
     Concurrent callers for the same *session_id* share one HTTP request via an
     asyncio.Event gate — no duplicate 404s or race conditions.
 
     404 cooldown
     ------------
-    When the questionnaire API returns 404 (session not yet linked to a
-    participant) we record a cooldown timestamp.  Callers within the
-    ``_RESOLVE_COOLDOWN_SEC`` window (default 5 s) receive ``None`` immediately
-    without firing a new HTTP request.  This prevents a 2 req/s HTTP storm for
-    sessions where the rider has not yet registered in the questionnaire.
-    The cooldown is cleared as soon as a participant is successfully linked so
-    the next pulse after registration picks up the participant_id instantly.
+    When both lookups return 404 (no pre-registered participant at all) we
+    record a cooldown so we don't hammer the API every 0.5 s.
     """
     if session_id in _participant_cache:
         return _participant_cache[session_id]
@@ -116,21 +120,62 @@ async def resolve_participant(session_id: str) -> str | None:
     event = asyncio.Event()
     _resolve_in_flight[session_id] = event
     try:
-        url = f"{_QS_BASE_URL}/api/participants/by-session/{session_id}"
         async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+            # ── Step 1: direct by-session lookup ─────────────────────
+            url = f"{_QS_BASE_URL}/api/participants/by-session/{session_id}"
             resp = await client.get(url)
             if resp.status_code == 404:
-                # Session not yet linked to a participant — normal during warm-up.
-                # Set a cooldown so we don't keep hitting the API every 0.5 s.
+                # Session not yet linked — try to auto-link from the latest
+                # pre-registered participant (registered before headset goes on).
+                logger.debug(
+                    "resolve_participant: session %r not yet linked — "
+                    "trying auto-link via oldest-unlinked participant (FIFO)",
+                    session_id,
+                )
+                try:
+                    ul_resp = await client.get(f"{_QS_BASE_URL}/api/participants/oldest-unlinked")
+                    if ul_resp.status_code == 200:
+                        unlinked = ul_resp.json()
+                        pid = unlinked.get("participant_id")
+                        if pid:
+                            # Auto-link: write session_id into the participant row.
+                            link_resp = await client.put(
+                                f"{_QS_BASE_URL}/api/participants/{pid}/session",
+                                json={"session_id": session_id},
+                            )
+                            if link_resp.status_code == 200:
+                                _resolve_cooldown_until.pop(session_id, None)
+                                _participant_cache[session_id] = pid
+                                logger.info(
+                                    "resolve_participant: auto-linked session %r → "
+                                    "participant %r (oldest-unlinked FIFO)",
+                                    session_id, pid,
+                                )
+                                return pid
+                            else:
+                                logger.warning(
+                                    "resolve_participant: auto-link PUT failed for "
+                                    "session %r participant %r: HTTP %d",
+                                    session_id, pid, link_resp.status_code,
+                                )
+                except Exception as exc:  # noqa: BLE001
+                    logger.debug(
+                        "resolve_participant: auto-link attempt failed for session %r: "
+                        "%s: %s",
+                        session_id, type(exc).__name__, exc,
+                    )
+
+                # No pre-registered participant found — apply cooldown.
                 _resolve_cooldown_until[session_id] = (
                     time.monotonic() + _RESOLVE_COOLDOWN_SEC
                 )
                 logger.debug(
-                    "resolve_participant: session %r not yet linked to a participant "
-                    "(cooldown %.0f s)",
+                    "resolve_participant: no unlinked participant found for session %r "
+                    "(cooldown %.0f s) — register in questionnaire before headset goes on",
                     session_id, _RESOLVE_COOLDOWN_SEC,
                 )
                 return None
+
             resp.raise_for_status()
             data = resp.json()
             pid = data.get("participant_id")
@@ -142,10 +187,8 @@ async def resolve_participant(session_id: str) -> str | None:
                     "resolve_participant: session %r → participant %r", session_id, pid
                 )
                 return pid
-            # API returned a valid 2xx response but participant_id is null/absent
-            # (e.g. the questionnaire row exists but the field was not populated).
+            # API returned a valid 2xx response but participant_id is null/absent.
             # Do NOT cache None — that would permanently block future resolution.
-            # Instead apply the standard cooldown so we don't hammer the service.
             _resolve_cooldown_until[session_id] = (
                 time.monotonic() + _RESOLVE_COOLDOWN_SEC
             )

@@ -500,6 +500,7 @@ All HTTP endpoints are served on port **8080**.
 | `GET` | `/api/sessions` | List all sessions (summary) |
 | `GET` | `/api/sessions/{session_id}` | Session detail + latest scores |
 | `PUT` | `/api/sessions/{session_id}/participant` | Kobl deltager til session — body: `{ "participant_id": "P001" }` |
+| `POST` | `/api/sessions/trigger-relink` | Re-kør participant resolution for alle aktive sessions uden deltager (kaldt automatisk ved ny deltager-registrering) |
 | `GET` | `/api/live/latest` | Latest live telemetry across all active sessions |
 | `WS` | `/ws/dashboard` | Push live score updates to dashboard clients |
 
@@ -526,6 +527,7 @@ WebSocket ingest (port **8766**, separate `websockets` server):
 | `GET` | `/api/participants` | Alle testpersoner |
 | `GET` | `/api/participants/{participant_id}` | Hent enkelt testperson |
 | `GET` | `/api/participants/by-session/{session_id}` | Hent testperson via analytics-session ID |
+| `GET` | `/api/participants/oldest-unlinked` | Hent ældste oprettede deltager uden session — FIFO-rækkefølge forhindrer at en ny P2 kobles til en session der allerede kører for P1 |
 | `PUT` | `/api/participants/{participant_id}/session` | Kobl analytics session til testperson |
 | `DELETE` | `/api/participants/{participant_id}` | Slet testperson og alle svar |
 | `POST` | `/api/participants/{participant_id}/answers/{phase}` | Gem enkelt svar (pre/post) |
@@ -934,7 +936,7 @@ The bridge opens a WebSocket server on `ws://localhost:8765`. Unity must connect
 
 ### Step 5 — Register a test participant (before the headset goes on)
 
-Register the test person and complete the pre-session questionnaire **before** the headset is put on. The analytics server will automatically link the participant to the session once Unity starts.
+Register the test person and complete the pre-session questionnaire **before** the headset is put on. Once Unity starts, the analytics server will automatically detect the pre-registered participant and link them to the new session — no manual linking step needed.
 
 **Option A — Questionnaire web UI:**
 
@@ -949,14 +951,8 @@ curl -X POST http://127.0.0.1:8090/api/participants \
   -d '{"participant_id": "TP_001", "name": "Jonas"}'
 ```
 
-The participant will be linked automatically when Unity starts a session. Alternatively, you can link manually after the session has started:
-
-```bash
-# Link after session start (replace SESSION_ID with the value from the analytics API or Unity logs)
-curl -X PUT http://127.0.0.1:8090/api/participants/TP_001/session \
-  -H "Content-Type: application/json" \
-  -d '{"session_id": "SESSION_ID"}'
-```
+**How auto-linking works:**
+When a new Unity session starts, the analytics server calls `GET /api/participants/oldest-unlinked` on the questionnaire service. This uses **FIFO ordering** — the first person to register gets the first running session. This prevents a newly created P2 from being accidentally linked to a session already mid-ride for P1.
 
 Once linked, the analytics server will:
 - Write `SESSION_START` to `data/participants/TP_001/pulse.jsonl`
@@ -1080,12 +1076,13 @@ pytest --cov=live_analytics --cov=bridge --cov-report=term-missing -q
        │
 ④ Register test participant in questionnaire (http://localhost:8090)
        │  fill in pre-session questionnaire answers before the headset is put on
-       │  analytics server will resolve participant_id automatically when the session starts
+       │  participant is stored with no session_id yet
        │
 ⑤ Press Play in Unity (put on headset)
        │  TelemetryPublisher connects to ws://localhost:8766
        │  sends start_session signal after 1.5 s
-       │  analytics server resolves participant_id and links it to the session
+       │  analytics server calls GET /api/participants/oldest-unlinked (FIFO)
+       │  auto-links session_id → participant_id (no manual step needed)
        │  SESSION_START written to pulse.jsonl + PulseSessionLogger opens dedicated file
        │
 ⑥ Ride session in progress

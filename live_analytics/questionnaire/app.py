@@ -26,6 +26,7 @@ from live_analytics.questionnaire.db import (
     create_participant,
     delete_participant_data,
     get_answers,
+    get_oldest_unlinked_participant,
     get_participant,
     get_participant_by_session,
     get_progress,
@@ -153,6 +154,31 @@ async def create_participant_endpoint(body: ParticipantCreate) -> dict:
         "Participant registered: id=%r display_name=%r session_id=%r",
         body.participant_id, body.display_name, body.session_id or "(none)",
     )
+
+    # If Unity is already running there may be active sessions with no participant
+    # yet.  Notify the analytics API so it immediately retries resolution for
+    # those sessions — the newly registered participant will be auto-linked
+    # within seconds via the oldest-unlinked (FIFO) mechanism.
+    # IMPORTANT: FIFO ordering ensures this new participant is only linked to a
+    # session that has no participant yet.  If all active sessions are already
+    # linked, trigger-relink is a no-op.
+    async def _trigger_relink() -> None:
+        try:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(3.0)) as client:
+                resp = await client.post(f"{ANALYTICS_API_URL}/api/sessions/trigger-relink")
+                logger.debug(
+                    "create_participant_endpoint: trigger-relink → HTTP %d  sessions=%s",
+                    resp.status_code,
+                    resp.json().get("sessions", []) if resp.status_code == 200 else "?",
+                )
+        except Exception as exc:  # noqa: BLE001
+            # Analytics API may not be running — non-fatal.
+            logger.debug(
+                "create_participant_endpoint: could not trigger relink (%s: %s)",
+                type(exc).__name__, exc,
+            )
+
+    asyncio.create_task(_trigger_relink())
     return result
 
 
@@ -171,6 +197,23 @@ async def get_participant_by_session_endpoint(session_id: str) -> dict:
     p = get_participant_by_session(DB_PATH, session_id)
     if not p:
         raise HTTPException(404, f"No participant linked to session {session_id!r}")
+    return p
+
+
+@app.get("/api/participants/oldest-unlinked")
+async def get_oldest_unlinked_endpoint() -> dict:
+    """Return the oldest registered participant that has no session linked yet (FIFO).
+
+    Used by the analytics server for automatic session ↔ participant linking:
+    FIFO ordering ensures that if multiple participants are pre-registered,
+    each is linked to sessions in the order they registered — preventing a
+    newly created P2 from being accidentally linked to a session already
+    mid-ride for P1.
+    Returns 404 when every registered participant is already linked (or none exist).
+    """
+    p = get_oldest_unlinked_participant(DB_PATH)
+    if not p:
+        raise HTTPException(404, "No unlinked participant found")
     return p
 
 

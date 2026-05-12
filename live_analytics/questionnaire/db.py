@@ -209,6 +209,32 @@ def link_session(db_path: Path | str, participant_id: str, session_id: str) -> N
     conn.commit()
 
 
+def get_oldest_unlinked_participant(db_path: Path | str) -> Optional[dict]:
+    """Return the **oldest** unlinked participant (FIFO order).
+
+    Used for automatic session linking: when a new Unity session starts, the
+    analytics server calls this to find the pre-registered participant and link
+    them automatically.
+
+    FIFO ordering (ORDER BY created_at ASC) is critical for correctness:
+    if multiple participants are registered in sequence, each should be linked
+    to sessions in the same order they registered — the first person who
+    registered gets the first running session, the second gets the next, etc.
+    Using the *most recent* unlinked participant would incorrectly link a newly
+    registered P2 to a session that is already mid-ride for P1 (if P1 had not
+    yet been resolved when P2 was created).
+
+    Returns ``None`` when all registered participants are already linked to a
+    session (or when no participants exist at all).
+    """
+    conn = _connect(db_path)
+    row = conn.execute(
+        "SELECT * FROM participants WHERE session_id = '' OR session_id IS NULL "
+        "ORDER BY created_at ASC LIMIT 1"
+    ).fetchone()
+    return dict(row) if row else None
+
+
 # ── Responses ─────────────────────────────────────────────────────────
 
 def save_answer(
