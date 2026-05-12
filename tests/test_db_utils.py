@@ -104,7 +104,7 @@ def _insert_headpose(conn, session_id=1, seq=0,
     conn.execute(
         "INSERT INTO headpose(session_id, recv_ts_ns, seq, unity_t, px,py,pz,qx,qy,qz,qw)"
         " VALUES(?,?,?,?,?,?,?,?,?,?,?)",
-        (session_id, 1_000_000_000, seq, 0.0, px, py, pz, qx, qy, qz, qw),
+        (session_id, 1_746_000_000_000_000_000, seq, 0.0, px, py, pz, qx, qy, qz, qw),
     )
     conn.commit()
 
@@ -114,7 +114,7 @@ def _insert_bike(conn, session_id=1, seq=0,
     conn.execute(
         "INSERT INTO bike(session_id, recv_ts_ns, seq, unity_t, speed, steering, brake_front, brake_rear)"
         " VALUES(?,?,?,?,?,?,?,?)",
-        (session_id, 1_000_000_000, seq, 0.0, speed, steering, bf, br),
+        (session_id, 1_746_000_000_000_000_000, seq, 0.0, speed, steering, bf, br),
     )
     conn.commit()
 
@@ -123,7 +123,7 @@ def _insert_hr(conn, session_id=1, seq=0, hr_bpm=75.0):
     conn.execute(
         "INSERT INTO hr(session_id, recv_ts_ns, seq, unity_t, hr_bpm)"
         " VALUES(?,?,?,?,?)",
-        (session_id, 1_000_000_000, seq, 0.0, hr_bpm),
+        (session_id, 1_746_000_000_000_000_000, seq, 0.0, hr_bpm),
     )
     conn.commit()
 
@@ -132,7 +132,7 @@ def _insert_event(conn, session_id=1, seq=0, js='{"evt":"lap","i":1}'):
     conn.execute(
         "INSERT INTO events(session_id, recv_ts_ns, seq, unity_t, json)"
         " VALUES(?,?,?,?,?)",
-        (session_id, 1_000_000_000, seq, 0.0, js),
+        (session_id, 1_746_000_000_000_000_000, seq, 0.0, js),
     )
     conn.commit()
 

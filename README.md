@@ -71,6 +71,8 @@ Arduino ────────UDP────┘                              
 │   │       │                         #   sessions.participant_id kolonne  ← NY
 │   │       │                         #   set_session_participant()  ← NY
 │   │       ├── raw_writer.py         #   Per-session JSONL raw telemetry
+│   │       ├── participant_logs.py   #   Per-deltager log-mappe + pulse.jsonl  ← NY
+│   │       │                         #   append_pulse_session_marker() — SESSION_START/END  ← NY
 │   │       └── web_api_client.py     #   Udgående HTTP-kald (puls → QS + ekstern DB)
 │   │                                 #   resolve_participant() + _participant_cache  ← NY
 │   ├── dashboard/
@@ -98,7 +100,12 @@ Arduino ────────UDP────┘                              
 │   │   └── run_dashboard.bat / .ps1  #   Windows helpers to start dashboard
 │   ├── data/                         #   Runtime data (auto-created)
 │   │   ├── live_analytics.db         #     SQLite analytics database (WAL mode)
-│   │   └── sessions/                 #     Per-session JSONL raw-event files
+│   │   ├── sessions/                 #     Per-session JSONL raw-event files
+│   │   └── participants/             #     Per-deltager logmapper (pulse.jsonl, session.jsonl)
+│   │       └── <participant_id>/     #     Oprettes automatisk ved registrering i questionnaire
+│   │           ├── info.json         #       Deltager-metadata (id, navn, created_at)
+│   │           ├── pulse.jsonl       #       Alle HR-samples + SESSION_START/END markører
+│   │           └── session.jsonl     #       Session start/slut events
 │   └── tests/                        # pytest – analytics pipeline
 │
 ├── bridge/                           # BLE bridge & data tools
@@ -392,6 +399,7 @@ All services are configured via **environment variables**. Every variable has a 
 | `live_analytics/data/` | `init_db.py` / `ensure_dirs()` at startup | Analytics data root |
 | `live_analytics/data/live_analytics.db` | `init_db.py` / first startup | SQLite analytics DB (WAL mode) |
 | `live_analytics/data/sessions/` | `ensure_dirs()` at startup | Per-session `<session_id>.jsonl` raw event files |
+| `live_analytics/data/participants/` | questionnaire API / `create_participant_log_dir()` | Per-deltager logmapper (auto-oprettet ved registrering) |
 | `live_analytics/questionnaire/data/` | `ensure_dirs()` at startup | Questionnaire data root |
 | `live_analytics/questionnaire/data/questionnaire.db` | `init_db.py` / first startup | SQLite questionnaire DB |
 | `logs/` | Launcher on first run | Service stdout/stderr log files (rotated at 2 MB, 3 backups) |
@@ -427,6 +435,18 @@ live_analytics/app/storage/web_api_client.py  [NY dual-write + participant-resol
   • resolve_participant(session_id): slår deltager op via questionnaire API og cacher
     resultatet — bruges som UserId i ekstern DB (fallback: EXTERNAL_USER_ID env var)
   • Fejl i én destination blokerer aldrig den anden
+
+live_analytics/app/storage/participant_logs.py  [NY per-deltager puls-log]
+  • Opretter live_analytics/data/participants/<participant_id>/ ved registrering
+  • pulse.jsonl: ALLE HR-samples (heart_rate > 0) skrives per batch — ikke kun den
+    sidst kendte. Records med heart_rate = 0 (headpose/relay) springes over.
+  • SESSION_START-markør skrives til pulse.jsonl, når participant resolver:
+      {"marker":"SESSION_START","session_id":"...","participant_id":"TP_001","scenario_id":"..."}
+  • SESSION_END-markør skrives til pulse.jsonl, når Unity disconnecter:
+      {"marker":"SESSION_END","session_id":"...","participant_id":"TP_001","record_count":600}
+  • Hver deltager (TP_001, TP_002 osv.) har sin egen afskærmede log — ingen
+    puls-data fra én deltager kan optræde i en andens fil
+  • session.jsonl: session_start / session_end events (adskilt fra pulse-data)
 
 Questionnaire service (:8090)
   • standalone FastAPI process med eget SQLite-DB
@@ -530,7 +550,7 @@ python -m live_analytics.system_check --json
 ## Testing
 
 ```bash
-# Run all 966 tests
+# Run all 1165 tests
 pytest
 
 # Quiet output
@@ -551,7 +571,7 @@ pytest live_analytics/tests/test_features.py -v
 
 Test coverage:
 - **`tests/`** — BLE parsing, VRSF binary format, collector DB, Parquet export, mock integration, end-to-end flows, disconnections, GUI
-- **`live_analytics/tests/`** — analytics API endpoints, WS ingest, scoring pipeline, SQLite store, raw writer, configuration, crash diagnostics, fresh-clone bootstrap, regression tests
+- **`live_analytics/tests/`** — analytics API endpoints, WS ingest, scoring pipeline, SQLite store, raw writer, participant logs (pulse.jsonl SESSION_START/END markers, alle HR-samples), configuration, crash diagnostics, fresh-clone bootstrap, regression tests
 - **`live_analytics/questionnaire/tests/`** — questionnaire API endpoints, DB CRUD, error handling
 - **`live_analytics/system_check/tests/`** — system check probes, app endpoints, VRSF log inspection
 
@@ -755,13 +775,21 @@ these exact steps on the Windows machine:
 | Analytics SQLite (WAL) | `live_analytics/data/live_analytics.db` | `init_db.py` / WS ingest |
 | — sessions.participant_id | kolonne i ovenstående DB | `ws_ingest` (auto-resolve) / `PUT /api/sessions/{id}/participant` |
 | Per-session raw JSONL | `live_analytics/data/sessions/<session_id>.jsonl` | WS ingest (first event) |
+| Per-deltager pulse log | `live_analytics/data/participants/<id>/pulse.jsonl` | `ws_ingest` → `participant_logs.append_pulse()` — **alle** HR-samples med SESSION_START/END markører |
+| Per-deltager session log | `live_analytics/data/participants/<id>/session.jsonl` | `ws_ingest` → `participant_logs.append_session_event()` |
+| Per-deltager info | `live_analytics/data/participants/<id>/info.json` | `questionnaire/app.py` ved oprettelse |
 | Questionnaire SQLite | `live_analytics/questionnaire/data/questionnaire.db` | `init_db.py` / questionnaire API |
 | — pulse_data tabel | del af questionnaire.db | `web_api_client.send_pulse()` via `/api/pulse` endpoint |
 | Ekstern SQLite (PulseData) | `10.200.130.98:5001` (ekstern server) | `web_api_client.send_pulse()` dual-write |
 | VRSF binary sessions | `Logs/` (Unity-controlled path) | Unity `VrsSessionLogger.cs` |
 | Collector SQLite / Parquet | `collector_out/` | `bridge/collector_tail.py` |
 
-> **Puls-flow:** puls skrives **ikke** til `live_analytics.db`. Den skrives udelukkende til `questionnaire.db` (via questionnaire API) og til den eksterne forsknings-DB (via `web_api_client`). `live_analytics.db`'s `sessions`-tabel gemmer kun `participant_id` som et fremmednøgle-link.
+> **Puls-flow:** puls skrives til **tre** destinationer:
+> 1. `participants/<id>/pulse.jsonl` — lokalt filsystem, alle samples, SESSION_START/END markører
+> 2. `questionnaire.db` via questionnaire API (én sample per batch)
+> 3. Ekstern forsknings-DB via `web_api_client` (én sample per batch)
+>
+> `live_analytics.db`'s `sessions`-tabel gemmer kun `participant_id` som et fremmednøgle-link.
 
 The analytics database is opened in **WAL mode** with a thread-safe connection pool, allowing concurrent reads from the dashboard while the ingest server is writing.
 

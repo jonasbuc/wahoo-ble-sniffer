@@ -44,6 +44,7 @@ from live_analytics.app.storage.raw_writer import RawWriter
 from live_analytics.app.storage import web_api_client
 from live_analytics.app.storage.participant_logs import (
     append_pulse as _append_pulse_to_file,
+    append_pulse_session_marker as _append_pulse_marker,
     append_session_event as _append_session_event,
 )
 from live_analytics.app.storage.sqlite_store import (
@@ -194,6 +195,18 @@ async def _on_disconnect(session_ids: set[str]) -> None:
             "local_time": local_time,
             "record_count": _record_counts.get(sid, 0),
         })
+        # ── Write SESSION_END marker to pulse log ─────────────────────
+        # After this marker, no more pulse data will be written for this session.
+        # The next participant's session will start with its own SESSION_START marker.
+        _append_pulse_marker(
+            PARTICIPANTS_DIR,
+            pid,
+            marker="SESSION_END",
+            session_id=sid,
+            timestamp=ended_at,
+            local_time=local_time,
+            extra={"record_count": _record_counts.get(sid, 0)},
+        )
         logger.info(
             "session_end written — session=%r participant=%r records=%d "
             "ended_at=%s SQLite.end_unix_ms updated",
@@ -298,6 +311,17 @@ async def _resolve_and_link_participant(sid: str, scenario_id: str, started_at: 
                 "started_at": started_at,
                 "local_time": _fmt_iso(started_at),
             })
+            # Write SESSION_START marker to the participant's pulse log so it is
+            # immediately clear which person's pulse data follows and from when.
+            _append_pulse_marker(
+                PARTICIPANTS_DIR,
+                pid,
+                marker="SESSION_START",
+                session_id=sid,
+                timestamp=started_at,
+                local_time=_fmt_iso(started_at),
+                extra={"scenario_id": scenario_id},
+            )
             logger.info(
                 "_resolve_and_link_participant: session_start written for session %r "
                 "(participant=%r, scenario=%r, attempt=%d)",
@@ -442,43 +466,44 @@ def _ingest_session_batch(sid: str, records: list[TelemetryRecord]) -> None:
     if gameplay_recs:
         latest_gameplay_records[sid] = gameplay_recs[-1]
 
-    # Persist heart-rate sample once per batch.
-    # Pick the last record in the batch that carries a valid (>0) HR reading.
-    # Writing once per batch (rather than once per record) keeps SQLite write
-    # amplification low — at 20 Hz / batch_size=10 this is ≈2 writes/sec.
-    _hr_rec = next(
-        (r for r in reversed(records) if r.heart_rate > 0),
-        None,
-    )
-    if _hr_rec is not None:
-        # ── 1. Write to local pulse.jsonl (filesystem only, no HTTP) ──────
-        # This is a pure local file operation.  It uses the in-memory
-        # participant cache (populated by _resolve_and_link_participant) so
-        # it NEVER makes an outbound HTTP call and NEVER depends on API/DB
-        # availability.  If the participant is not yet resolved, the cache
-        # returns None and the per-participant log is skipped for this batch.
+    # Persist heart-rate samples – write ALL records in the batch that carry a
+    # valid (>0) HR reading to the participant's pulse.jsonl so no measurement
+    # is lost.  The previous approach only kept the last HR per batch, which
+    # silently dropped 9 out of 10 readings at the default batch_size=10.
+    _hr_records = [r for r in records if r.heart_rate > 0]
+    if _hr_records:
+        # ── 1. Write ALL HR samples to local pulse.jsonl ──────────────────
+        # Pure local file operation — uses in-memory participant cache so
+        # NEVER makes an outbound HTTP call.  Skipped if participant not yet
+        # resolved (cache returns None).
         _cached_pid = web_api_client.get_cached_participant(sid)
         if _cached_pid:
             _now = datetime.now().astimezone()
-            try:
-                _append_pulse_to_file(PARTICIPANTS_DIR, _cached_pid, {
-                    "session_id": sid,
-                    "unix_ms": _hr_rec.unix_ms,
-                    "pulse": int(_hr_rec.heart_rate),
-                    "participant_id": _cached_pid,
-                    "created_at": _now.astimezone(timezone.utc).isoformat(),
-                    "local_time": _now.strftime("%Y-%m-%d %H:%M:%S %Z"),
-                })
-            except Exception:
-                logger.exception(
-                    "_ingest_session_batch: could not write pulse to local log file "
-                    "(participant=%r, session=%s, path=%s/pulse.jsonl) — "
-                    "API submission continues regardless",
-                    _cached_pid, sid, PARTICIPANTS_DIR / _cached_pid,
-                )
+            _created_at = _now.astimezone(timezone.utc).isoformat()
+            _local_time = _now.strftime("%Y-%m-%d %H:%M:%S %Z")
+            for _hr_rec in _hr_records:
+                try:
+                    _append_pulse_to_file(PARTICIPANTS_DIR, _cached_pid, {
+                        "session_id": sid,
+                        "unix_ms": _hr_rec.unix_ms,
+                        "pulse": int(_hr_rec.heart_rate),
+                        "participant_id": _cached_pid,
+                        "created_at": _created_at,
+                        "local_time": _local_time,
+                    })
+                except Exception:
+                    logger.exception(
+                        "_ingest_session_batch: could not write pulse to local log file "
+                        "(participant=%r, session=%s, path=%s/pulse.jsonl) — "
+                        "API submission continues regardless",
+                        _cached_pid, sid, PARTICIPANTS_DIR / _cached_pid,
+                    )
 
-        # ── 2. Submit pulse to questionnaire + external APIs (fire-and-forget) ──
-        # Outbound HTTP only.  A failure here never affects local file writes.
+        # ── 2. Submit latest pulse to questionnaire + external APIs ───────
+        # Only the last valid HR per batch is sent to the external APIs to
+        # avoid flooding them at full sample rate (20 Hz).  Local file
+        # persistence above captures all samples regardless.
+        _hr_rec = _hr_records[-1]
         try:
             loop = asyncio.get_running_loop()
             loop.create_task(

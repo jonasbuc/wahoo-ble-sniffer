@@ -123,6 +123,58 @@ def append_pulse(participants_dir: Path, participant_id: str, record: dict) -> N
     _append_jsonl(participants_dir / _sanitise(participant_id) / "pulse.jsonl", record)
 
 
+def append_pulse_session_marker(
+    participants_dir: Path,
+    participant_id: str,
+    marker: str,
+    session_id: str,
+    timestamp: str,
+    local_time: str = "",
+    extra: dict | None = None,
+) -> None:
+    """Write a SESSION_START or SESSION_END marker line to ``pulse.jsonl``.
+
+    These marker lines make it easy to see exactly which pulse samples belong
+    to which session and when that session ended — so no new pulse data can be
+    mistakenly attributed to the wrong person.
+
+    The marker is a valid JSON object (like all other lines in the file) with
+    a ``"marker"`` field set to ``"SESSION_START"`` or ``"SESSION_END"``.
+
+    Parameters
+    ----------
+    participants_dir:
+        Root directory containing per-participant subdirectories.
+    participant_id:
+        Identifier of the participant (e.g. ``"TP_001"``).
+    marker:
+        ``"SESSION_START"`` or ``"SESSION_END"``.
+    session_id:
+        The Unity session identifier (unix-ms string).
+    timestamp:
+        ISO-8601 UTC timestamp string.
+    local_time:
+        Optional human-readable local time string.
+    extra:
+        Optional extra fields merged into the marker record.
+    """
+    record: dict = {
+        "marker": marker,
+        "session_id": session_id,
+        "participant_id": participant_id,
+        "timestamp": timestamp,
+    }
+    if local_time:
+        record["local_time"] = local_time
+    if extra:
+        record.update(extra)
+    _append_jsonl(participants_dir / _sanitise(participant_id) / "pulse.jsonl", record)
+    logger.info(
+        "pulse.jsonl %s written — participant=%r session=%r",
+        marker, participant_id, session_id,
+    )
+
+
 def append_session_event(participants_dir: Path, participant_id: str, record: dict) -> None:
     """Append a session event to ``<participant_id>/session.jsonl``.
 

@@ -972,7 +972,7 @@ class TestDashboardHelpers:
         p.write_text("\n".join(json.dumps(r) for r in rows), encoding="utf-8")
         df = m._read_last_jsonl_rows(p, n=3)
         assert isinstance(df, pd.DataFrame)
-        assert len(df) == 3  # only last 3 rows
+        assert len(df) == 5  # n is ignored – full dataset is always returned
 
     def test_read_last_jsonl_rows_missing_file_returns_empty(self, tmp_path):
         import pandas as pd

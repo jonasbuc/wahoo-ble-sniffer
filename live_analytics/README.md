@@ -71,20 +71,28 @@ Unity VR Simulator
         ▼
   FastAPI Analytics Server (Python 3.11)
   ├── ws_ingest.py      – WebSocket ingest fra Unity
-  │     └── ved ny session: resolve_participant() → questionnaire API → gemmer participant_id
+  │     ├── ved ny session: resolve_participant() → questionnaire API → gemmer participant_id
+  │     ├── skriver SESSION_START-markør til pulse.jsonl ved participant-resolve
+  │     └── skriver SESSION_END-markør til pulse.jsonl ved Unity-disconnect
   ├── api_sessions.py   – REST API for session-data
   │     └── PUT /api/sessions/{id}/participant  – manuel deltager-kobling
   ├── ws_dashboard.py   – WebSocket push til dashboard
   ├── scoring/rules.py  – Rule-based stress & risk scoring
   ├── storage/
-  │   ├── sqlite_store.py – Session metadata, scores & participant_id (WAL mode)
-  │   ├── raw_writer.py   – Per-session JSONL raw telemetry
-  │   └── web_api_client.py – Udgående HTTP (puls → QS + ekstern DB)
+  │   ├── sqlite_store.py     – Session metadata, scores & participant_id (WAL mode)
+  │   ├── raw_writer.py       – Per-session JSONL raw telemetry
+  │   ├── participant_logs.py – Per-deltager logmapper + pulse.jsonl SESSION-markører
+  │   └── web_api_client.py   – Udgående HTTP (puls → QS + ekstern DB)
   │         ├── send_pulse() → dual-write: questionnaire.db + ekstern PulseData
   │         └── resolve_participant() → slår deltager op fra questionnaire API
   └── data/
       ├── live_analytics.db
-      └── sessions/{session_id}/telemetry.jsonl
+      ├── sessions/{session_id}/telemetry.jsonl
+      └── participants/
+          └── <participant_id>/
+              ├── info.json       – Metadata (id, navn, oprettet)
+              ├── pulse.jsonl     – ALLE HR-samples + SESSION_START/END markører
+              └── session.jsonl   – Session start/slut events
 
   Questionnaire Service (:8090)
   ├── questionnaire/app.py  – FastAPI + SPA

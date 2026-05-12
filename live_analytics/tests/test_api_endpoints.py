@@ -141,6 +141,7 @@ class TestLiveLatest:
 
         ws.latest_records["s1"] = rec
         ws.latest_scores["s1"] = scores
+        ws.latest_gameplay_records["s1"] = rec
 
         r = patched_app.get("/api/live/latest")
         assert r.status_code == 200
