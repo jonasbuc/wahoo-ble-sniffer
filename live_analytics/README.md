@@ -12,11 +12,14 @@ Alle installations-, opstarts- og konfigurationsinstruktioner er i rodets README
 ```
 live_analytics/
 ├── app/              FastAPI analytics-server (HTTP :8080 + WS ingest :8766)
+│   ├── pulse_session_logger.py   PulseSessionLogger – dedikeret puls-log pr. testperson/session
+│   └── api_pulse_session.py      POST /api/pulse-session/start|end, GET /current
 ├── dashboard/        Streamlit dashboard (:8501)
 ├── questionnaire/    Questionnaire-service (FastAPI :8090)
 ├── system_check/     System Check GUI (FastAPI :8095)
 ├── scripts/          Hjælpe-scripts (init_db.py, simulate_ride.py, …)
-├── data/             Runtime-data (auto-oprettet: live_analytics.db, sessions/)
+├── data/             Runtime-data (auto-oprettet: live_analytics.db, sessions/, participants/)
+├── logs/pulse/       Dedikerede puls-log JSONL-filer pr. testperson/session (auto-oprettet)
 └── tests/            pytest-tests for analytics-pipeline
 ```
 
@@ -38,6 +41,8 @@ live_analytics/
 | `LA_WS_INGEST_PORT` | `8766` |
 | `LA_DB_PATH` | `live_analytics/data/live_analytics.db` |
 | `LA_SESSIONS_DIR` | `live_analytics/data/sessions` |
+| `LA_PARTICIPANTS_DIR` | `live_analytics/data/participants` |
+| `LA_PULSE_LOG_DIR` | `logs/pulse` |
 | `LA_LOG_LEVEL` | `INFO` |
 | `QS_PORT` | `8090` |
 | `SC_PORT` | `8095` |
@@ -73,9 +78,18 @@ Unity VR Simulator
   ├── ws_ingest.py      – WebSocket ingest fra Unity
   │     ├── ved ny session: resolve_participant() → questionnaire API → gemmer participant_id
   │     ├── skriver SESSION_START-markør til pulse.jsonl ved participant-resolve
-  │     └── skriver SESSION_END-markør til pulse.jsonl ved Unity-disconnect
+  │     ├── skriver SESSION_END-markør til pulse.jsonl ved Unity-disconnect
+  │     ├── kalder PulseSessionLogger.start_session() / write_pulse() / close_session()
+  │     └── håndterer explicit {event: start_session|end_session} fra Unity C#
   ├── api_sessions.py   – REST API for session-data
   │     └── PUT /api/sessions/{id}/participant  – manuel deltager-kobling
+  ├── api_pulse_session.py  – Dedikeret puls-session API
+  │     ├── POST /api/pulse-session/start   – åbn ny puls-log-fil
+  │     ├── POST /api/pulse-session/end     – luk puls-log-fil
+  │     └── GET  /api/pulse-session/current – aktive sessions
+  ├── pulse_session_logger.py  – PulseSessionLogger-klassen
+  │     └── logs/pulse/<id>_<YYYYMMDD_HHMMSSffffff>_pulse_log.jsonl
+  │           session_start | pulse | session_end (JSONL)
   ├── ws_dashboard.py   – WebSocket push til dashboard
   ├── scoring/rules.py  – Rule-based stress & risk scoring
   ├── storage/
@@ -177,6 +191,10 @@ Dashboard: `http://127.0.0.1:8501`
 | PUT | `/api/sessions/{session_id}/participant` | Kobl testperson til session — body: `{ "participant_id": "P001" }` |
 | GET | `/api/live/latest` | Latest live state snapshot |
 | WS  | `/ws/dashboard` | Real-time dashboard feed |
+| POST | `/api/pulse-session/start` | Åbn ny puls-log-fil for en testperson |
+| POST | `/api/pulse-session/end` | Luk aktiv puls-log-fil (404 hvis ingen aktiv) |
+| GET  | `/api/pulse-session/current` | Alle aktive puls-sessions |
+| GET  | `/api/pulse-session/current/{id}` | Aktiv puls-session for én testperson |
 
 ### Questionnaire API (:8090)
 
@@ -203,6 +221,8 @@ Dashboard: `http://127.0.0.1:8501`
 | `LA_DASHBOARD_PORT` | `8501` | Streamlit port |
 | `LA_DATA_DIR` | `live_analytics/data` | Data directory |
 | `LA_DB_PATH` | `live_analytics/data/live_analytics.db` | SQLite DB path |
+| `LA_PARTICIPANTS_DIR` | `live_analytics/data/participants` | Per-deltager logmapper |
+| `LA_PULSE_LOG_DIR` | `logs/pulse` | Dedikerede puls-log JSONL-filer (PulseSessionLogger) |
 | `LA_LOG_LEVEL` | `INFO` | Python log level |
 | `LA_HR_BASELINE_BPM` | `70.0` | Resting HR for scoring |
 
