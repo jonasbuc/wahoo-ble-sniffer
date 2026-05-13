@@ -149,16 +149,16 @@ def test_create_participant_endpoint_creates_log_dir(tmp_path: Path) -> None:
          patch("live_analytics.questionnaire.app.PARTICIPANTS_DIR", pdir):
         from live_analytics.questionnaire.app import app
         client = TestClient(app)
-        resp = client.post("/api/participants", json={"participant_id": "T42", "display_name": "Testperson 42"})
+        resp = client.post("/api/participants", json={"participant_id": "42", "display_name": "Testperson 42"})
 
     assert resp.status_code == 200
-    assert (pdir / "T42").is_dir(), "Log directory must be created"
-    assert (pdir / "T42" / "info.json").is_file(), "info.json must exist"
-    assert (pdir / "T42" / "pulse.jsonl").is_file(), "pulse.jsonl must exist"
-    assert (pdir / "T42" / "session.jsonl").is_file(), "session.jsonl must exist"
+    assert (pdir / "42").is_dir(), "Log directory must be created"
+    assert (pdir / "42" / "info.json").is_file(), "info.json must exist"
+    assert (pdir / "42" / "pulse.jsonl").is_file(), "pulse.jsonl must exist"
+    assert (pdir / "42" / "session.jsonl").is_file(), "session.jsonl must exist"
 
-    info = json.loads((pdir / "T42" / "info.json").read_text())
-    assert info["participant_id"] == "T42"
+    info = json.loads((pdir / "42" / "info.json").read_text())
+    assert info["participant_id"] == "42"
     assert info["display_name"] == "Testperson 42"
 
 

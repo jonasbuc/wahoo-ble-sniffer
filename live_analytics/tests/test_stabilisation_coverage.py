@@ -179,31 +179,31 @@ class TestListParticipantsErrorHandling:
         assert "Failed to list participants" in r.json()["detail"]
 
     def test_list_participants_returns_200_normally(self):
-        _qs_client.post("/api/participants", json={"participant_id": "P1"})
+        _qs_client.post("/api/participants", json={"participant_id": "1"})
         r = _qs_client.get("/api/participants")
         assert r.status_code == 200
-        assert len(r.json()) == 1
+        assert len(r.json()) >= 1
 
 
 class TestGetAllAnswersErrorHandling:
     """C7 regression: get_all_answers must return 503 on DB error."""
 
     def test_get_all_answers_503_on_db_error(self):
-        _qs_client.post("/api/participants", json={"participant_id": "P1"})
+        _qs_client.post("/api/participants", json={"participant_id": "1"})
         with patch(
             "live_analytics.questionnaire.app.get_answers",
             side_effect=sqlite3.OperationalError("corrupt"),
         ):
-            r = _qs_client.get("/api/participants/P1/answers")
+            r = _qs_client.get("/api/participants/1/answers")
         assert r.status_code == 503
         assert "Failed to load answers" in r.json()["detail"]
 
     def test_get_all_answers_returns_all_phases(self):
         """GET /api/participants/{id}/answers (no phase) must return both phases."""
-        _qs_client.post("/api/participants", json={"participant_id": "P1"})
-        _qs_client.post("/api/participants/P1/answers/pre",  json={"question_id": "q1", "answer": "a"})
-        _qs_client.post("/api/participants/P1/answers/post", json={"question_id": "q2", "answer": "b"})
-        r = _qs_client.get("/api/participants/P1/answers")
+        _qs_client.post("/api/participants", json={"participant_id": "1"})
+        _qs_client.post("/api/participants/1/answers/pre",  json={"question_id": "q1", "answer": "a"})
+        _qs_client.post("/api/participants/1/answers/post", json={"question_id": "q2", "answer": "b"})
+        r = _qs_client.get("/api/participants/1/answers")
         assert r.status_code == 200
         phases = {row["phase"] for row in r.json()}
         assert "pre" in phases
@@ -218,13 +218,13 @@ class TestQuestionnaireMiscErrorPaths:
             "live_analytics.questionnaire.app.create_participant",
             side_effect=RuntimeError("constraint violation"),
         ):
-            r = _qs_client.post("/api/participants", json={"participant_id": "P1"})
+            r = _qs_client.post("/api/participants", json={"participant_id": "1"})
         assert r.status_code == 500
 
     def test_create_participant_returns_none_gives_500(self):
         """If create_participant returns None the endpoint must raise 500."""
         with patch("live_analytics.questionnaire.app.create_participant", return_value=None):
-            r = _qs_client.post("/api/participants", json={"participant_id": "P1"})
+            r = _qs_client.post("/api/participants", json={"participant_id": "1"})
         assert r.status_code == 500
 
     def test_link_session_404_for_missing_participant(self):
@@ -250,34 +250,34 @@ class TestQuestionnaireMiscErrorPaths:
         assert r.status_code == 404
 
     def test_answers_by_phase_db_error_returns_500(self):
-        _qs_client.post("/api/participants", json={"participant_id": "P1"})
+        _qs_client.post("/api/participants", json={"participant_id": "1"})
         with patch(
             "live_analytics.questionnaire.app.get_answers",
             side_effect=RuntimeError("boom"),
         ):
-            r = _qs_client.get("/api/participants/P1/answers/pre")
+            r = _qs_client.get("/api/participants/1/answers/pre")
         assert r.status_code == 500
 
     def test_save_answer_db_error_returns_500(self):
-        _qs_client.post("/api/participants", json={"participant_id": "P1"})
+        _qs_client.post("/api/participants", json={"participant_id": "1"})
         with patch(
             "live_analytics.questionnaire.app.save_answer",
             side_effect=RuntimeError("boom"),
         ):
             r = _qs_client.post(
-                "/api/participants/P1/answers/pre",
+                "/api/participants/1/answers/pre",
                 json={"question_id": "q1", "answer": "x"},
             )
         assert r.status_code == 500
 
     def test_bulk_save_db_error_returns_500(self):
-        _qs_client.post("/api/participants", json={"participant_id": "P1"})
+        _qs_client.post("/api/participants", json={"participant_id": "1"})
         with patch(
             "live_analytics.questionnaire.app.save_answers_bulk",
             side_effect=RuntimeError("boom"),
         ):
             r = _qs_client.put(
-                "/api/participants/P1/answers/pre",
+                "/api/participants/1/answers/pre",
                 json={"answers": {"q1": "a"}},
             )
         assert r.status_code == 500

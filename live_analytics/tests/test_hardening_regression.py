@@ -360,8 +360,13 @@ class TestResolveParticipantCooldown:
         assert r1 is None
         assert r2 is None
         assert r3 is None
-        assert http_call_count == 1, (
-            f"Expected 1 HTTP request (cooldown should suppress repeats), got {http_call_count}"
+        # The first resolve_participant call fires 2 HTTP requests:
+        #   1. GET by-session/{sid} → 404 (not linked yet)
+        #   2. GET oldest-unlinked  → 404 (no waiting participant)
+        # Calls 2 and 3 are suppressed by the cooldown — no additional HTTP calls.
+        assert http_call_count == 2, (
+            f"Expected 2 HTTP requests (by-session + oldest-unlinked on first 404, "
+            f"then cooldown should suppress repeats), got {http_call_count}"
         )
 
     def test_cooldown_cleared_on_successful_lookup(self) -> None:

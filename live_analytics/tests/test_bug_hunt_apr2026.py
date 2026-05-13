@@ -309,7 +309,7 @@ class TestCreateParticipantEndpoint:
         init_db(tmp_path / "qs_test.db")
         with TestClient(app) as c:
             with patch("live_analytics.questionnaire.app.create_participant", return_value=None):
-                r = c.post("/api/participants", json={"participant_id": "p1"})
+                r = c.post("/api/participants", json={"participant_id": "1"})
         close_pool()
         assert r.status_code == 500, (
             f"Expected 500 when create_participant returns None, got {r.status_code}"
@@ -322,11 +322,11 @@ class TestCreateParticipantEndpoint:
         from live_analytics.questionnaire.db import init_db, close_pool
         init_db(tmp_path / "qs_ok.db")
         with TestClient(app) as c:
-            r = c.post("/api/participants", json={"participant_id": "p2", "display_name": "Alice"})
+            r = c.post("/api/participants", json={"participant_id": "2", "display_name": "Alice"})
         close_pool()
         assert r.status_code == 200
         body = r.json()
-        assert body["participant_id"] == "p2"
+        assert body["participant_id"] == "2"
         assert body["display_name"] == "Alice"
 
     def test_returns_500_on_db_exception(self, tmp_path: Path) -> None:
@@ -338,7 +338,7 @@ class TestCreateParticipantEndpoint:
         with TestClient(app) as c:
             with patch("live_analytics.questionnaire.app.create_participant",
                        side_effect=sqlite3.OperationalError("disk full")):
-                r = c.post("/api/participants", json={"participant_id": "p3"})
+                r = c.post("/api/participants", json={"participant_id": "3"})
         close_pool()
         assert r.status_code == 500
 
