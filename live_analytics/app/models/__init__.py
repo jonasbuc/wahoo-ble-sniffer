@@ -113,6 +113,7 @@ class SessionDetail(SessionSummary):
     """Full session detail returned by the API."""
 
     latest_scores: Optional[ScoringResult] = None
+    participant_id: str = ""
 
 
 class LiveLatest(BaseModel):

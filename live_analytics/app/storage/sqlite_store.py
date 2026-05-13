@@ -298,7 +298,7 @@ def get_session(db_path: Path | str, session_id: str) -> Optional[SessionDetail]
     conn = _connect(db_path)
     r = conn.execute(
         "SELECT session_id, start_unix_ms, end_unix_ms, scenario_id, "
-        "record_count, latest_scores FROM sessions WHERE session_id = ?",
+        "record_count, latest_scores, participant_id FROM sessions WHERE session_id = ?",
         (session_id,),
     ).fetchone()
     if r is None:
@@ -319,6 +319,7 @@ def get_session(db_path: Path | str, session_id: str) -> Optional[SessionDetail]
             scenario_id=r["scenario_id"] or "",
             record_count=r["record_count"] or 0,
             latest_scores=ScoringResult(**scores_raw) if scores_raw else None,
+            participant_id=r["participant_id"] or "",
         )
     except Exception as exc:
         logger.error(

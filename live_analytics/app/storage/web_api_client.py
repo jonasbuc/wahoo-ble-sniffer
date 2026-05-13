@@ -228,6 +228,36 @@ def clear_participant_cache(session_id: str | None = None) -> None:
         _resolve_cooldown_until.clear()
 
 
+async def clear_participant_session_link(participant_id: str) -> None:
+    """Unlink *participant_id* from their current session in the questionnaire DB.
+
+    Called when a session ends so the participant re-enters the FIFO unlinked
+    pool and is auto-linked to the next Unity session without any manual step.
+    Fire-and-forget — failures are logged but never raised.
+    """
+    url = f"{_QS_BASE_URL}/api/participants/{participant_id}/session"
+    try:
+        async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+            resp = await client.delete(url)
+            if resp.status_code == 200:
+                logger.info(
+                    "clear_participant_session_link: participant %r unlinked — "
+                    "available for next session",
+                    participant_id,
+                )
+            else:
+                logger.warning(
+                    "clear_participant_session_link: DELETE %s returned HTTP %d",
+                    url, resp.status_code,
+                )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "clear_participant_session_link: could not reach questionnaire API "
+            "for participant %r: %s: %s",
+            participant_id, type(exc).__name__, exc,
+        )
+
+
 def get_cached_participant(session_id: str) -> str | None:
     """Return the participant_id for *session_id* from the in-memory cache.
 

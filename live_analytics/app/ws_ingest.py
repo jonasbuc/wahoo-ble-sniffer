@@ -221,6 +221,11 @@ async def _on_disconnect(session_ids: set[str]) -> None:
             "ended_at=%s SQLite.end_unix_ms updated",
             sid, pid, _record_counts.get(sid, 0), local_time,
         )
+        # ── Unlink participant so they auto-link to the next session ──
+        # Clearing the questionnaire session_id returns the participant to
+        # the FIFO unlinked pool.  The next Unity session will be linked
+        # automatically without any manual step.
+        await web_api_client.clear_participant_session_link(pid)
 
 
 async def _process_message(ws: ServerConnection, raw: str, connection_sessions: set[str] | None = None) -> None:

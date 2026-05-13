@@ -239,6 +239,21 @@ def link_session(db_path: Path | str, participant_id: str, session_id: str) -> N
     conn.commit()
 
 
+def unlink_session(db_path: Path | str, participant_id: str) -> None:
+    """Clear the session link for a participant so they become available for the next session.
+
+    Called automatically by the analytics server when a session ends cleanly,
+    so the participant is returned to the FIFO unlinked pool and will be
+    auto-linked when Unity starts the next session.
+    """
+    conn = _connect(db_path)
+    conn.execute(
+        "UPDATE participants SET session_id = '', updated_at = ? WHERE participant_id = ?",
+        (_now(), participant_id),
+    )
+    conn.commit()
+
+
 def get_oldest_unlinked_participant(db_path: Path | str) -> Optional[dict]:
     """Return the **oldest** unlinked participant (FIFO order).
 

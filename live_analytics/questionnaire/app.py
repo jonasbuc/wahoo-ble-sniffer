@@ -37,6 +37,7 @@ from live_analytics.questionnaire.db import (
     list_participants,
     save_answer,
     save_answers_bulk,
+    unlink_session,
 )
 from live_analytics.questionnaire.models import AnswerSave, AnswersBulkSave, LinkSession, ParticipantCreate, PulseDataCreate, PulseDataOut
 from live_analytics.questionnaire.questions import QUESTIONNAIRES
@@ -256,6 +257,21 @@ async def link_session_endpoint(participant_id: str, body: LinkSession) -> dict:
 
     asyncio.create_task(_notify_analytics())
     return {"ok": True}
+
+
+@app.delete("/api/participants/{participant_id}/session")
+async def unlink_session_endpoint(participant_id: str) -> dict:
+    """Clear the session link for a participant, returning them to the unlinked pool.
+
+    Called automatically by the analytics server when a session ends so the
+    participant is available for auto-linking to the next Unity session.
+    """
+    p = get_participant(DB_PATH, participant_id)
+    if not p:
+        raise HTTPException(404, "Participant not found")
+    unlink_session(DB_PATH, participant_id)
+    logger.info("Session unlinked: participant=%r", participant_id)
+    return {"ok": True, "participant_id": participant_id}
 
 
 @app.delete("/api/participants/{participant_id}")
