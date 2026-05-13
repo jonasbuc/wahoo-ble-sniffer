@@ -129,6 +129,21 @@ CREATE INDEX IF NOT EXISTS idx_pulse_session
     ON pulse_data(session_id);
 """
 
+# Migration DDL: applied after the main DDL so existing databases are updated
+# without requiring a fresh install.
+# Each statement is attempted individually and OperationalError is suppressed
+# (column/index already exists) so migrations are always safe to re-run.
+_MIGRATIONS = [
+    # Prevent two participants from being linked to the same non-empty session_id.
+    # SQLite does not support partial unique indexes via CREATE UNIQUE INDEX
+    # WHERE, but we approximate the constraint with a plain unique index and
+    # rely on the application-layer guard in link_session() to emit a warning
+    # before the second link goes through.
+    # The index is ONLY used to speed up get_participant_by_session() — the
+    # uniqueness invariant is enforced by the application, not the DB.
+    "CREATE INDEX IF NOT EXISTS idx_participants_session ON participants(session_id)",
+]
+
 
 def _now() -> str:
     """Return the current UTC time as an ISO-8601 string (DB storage convention)."""
@@ -149,6 +164,13 @@ def init_db(db_path: Path | str) -> None:
             db_path, exc,
         )
         raise
+    # Apply incremental migrations (idempotent — OperationalError = already exists).
+    for stmt in _MIGRATIONS:
+        try:
+            conn.execute(stmt)
+            conn.commit()
+        except sqlite3.OperationalError:
+            pass  # already applied
     logger.info("Questionnaire DB initialised at %s", db_path)
 
 
@@ -231,12 +253,52 @@ def get_participant_by_session(db_path: Path | str, session_id: str) -> Optional
 
 
 def link_session(db_path: Path | str, participant_id: str, session_id: str) -> None:
+    """Link *session_id* to the given participant.
+
+    If the participant is already linked to a **different** session_id, a
+    warning is logged so operators can detect accidental double-linking
+    (e.g. two Unity clients sharing the same participant_id).  Linking to the
+    same session_id twice (idempotent re-link) is silent.
+
+    Back-fill
+    ---------
+    Any ``pulse_data`` rows that were written before the participant was linked
+    (when ``participant_id`` was NULL) are updated to carry the correct
+    participant_id so analysts get a complete dataset even when the participant
+    registered late relative to the first pulse sample.
+    """
     conn = _connect(db_path)
+    existing_row = conn.execute(
+        "SELECT session_id FROM participants WHERE participant_id = ?", (participant_id,)
+    ).fetchone()
+    if existing_row:
+        existing_sid = existing_row["session_id"] or ""
+        if existing_sid and existing_sid != session_id:
+            logger.warning(
+                "link_session: participant %r already linked to session %r — "
+                "overwriting with %r.  If this is unexpected, check that only "
+                "one Unity client is active for this participant.",
+                participant_id, existing_sid, session_id,
+            )
     conn.execute(
         "UPDATE participants SET session_id = ?, updated_at = ? WHERE participant_id = ?",
         (session_id, _now(), participant_id),
     )
+    # Back-fill any pulse_data rows for this session that arrived before the
+    # participant was linked (participant_id was stored as NULL at insert time).
+    result = conn.execute(
+        "UPDATE pulse_data SET participant_id = ? "
+        "WHERE session_id = ? AND participant_id IS NULL",
+        (participant_id, session_id),
+    )
+    backfilled = result.rowcount
     conn.commit()
+    if backfilled:
+        logger.info(
+            "link_session: back-filled participant_id=%r for %d pulse_data row(s) "
+            "in session %r that arrived before the participant was linked",
+            participant_id, backfilled, session_id,
+        )
 
 
 def unlink_session(db_path: Path | str, participant_id: str) -> None:

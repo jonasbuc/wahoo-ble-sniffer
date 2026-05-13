@@ -205,7 +205,23 @@ async def trigger_relink() -> dict:
 
     loop = asyncio.get_running_loop()
     triggered = []
+    skipped = []
     for sid in unlinked:
+        # ── Skip sessions whose resolution task is already running ────
+        # _resolve_and_link_participant uses _resolve_running to block
+        # duplicate concurrent tasks.  If we fired a new task here it
+        # would immediately return (duplicate-guard), but we would still
+        # clear the participant cache — disrupting the running task's
+        # cooldown state.  Detect this upfront and skip entirely.
+        if sid in ws_ingest._resolve_running:
+            skipped.append(sid)
+            logger.debug(
+                "trigger_relink: session %r already has a running resolution task — "
+                "skipping (will resolve on its own retry schedule)",
+                sid,
+            )
+            continue
+
         # Clear cooldown so resolve_participant fires immediately.
         web_api_client.clear_participant_cache(sid)
         # Fire a fresh resolution task — uses the scenario / started_at from
@@ -223,4 +239,9 @@ async def trigger_relink() -> dict:
         triggered.append(sid)
         logger.info("trigger_relink: fired fresh resolution task for session %r", sid)
 
+    if skipped:
+        logger.info(
+            "trigger_relink: skipped %d session(s) with resolution already in flight: %s",
+            len(skipped), skipped,
+        )
     return {"triggered": len(triggered), "sessions": triggered}

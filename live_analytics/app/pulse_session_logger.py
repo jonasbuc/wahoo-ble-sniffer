@@ -126,6 +126,24 @@ class PulseSessionLogger:
             )
             return
 
+        # ── Idempotency guard: same participant + same session_id ─────
+        # _resolve_and_link_participant may be called twice for the same
+        # session (e.g. a trigger_relink fires while the original retry
+        # loop is between iterations).  The _resolve_running guard in
+        # ws_ingest prevents duplicate tasks, but defensive handling here
+        # ensures that even if start_session is somehow called twice, the
+        # second call is a clean no-op rather than auto-closing and
+        # re-opening the log file (which would produce a spurious
+        # session_end + session_start pair in the JSONL).
+        existing = self._sessions.get(participant_id)
+        if existing is not None and existing.session_id == session_id:
+            logger.debug(
+                "PulseSessionLogger.start_session: session %r already open for "
+                "participant %r — idempotent call, ignoring",
+                session_id, participant_id,
+            )
+            return
+
         # Auto-close any stale open session for this participant.
         if participant_id in self._sessions:
             logger.warning(

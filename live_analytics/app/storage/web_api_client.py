@@ -159,7 +159,7 @@ async def resolve_participant(session_id: str) -> str | None:
                                     session_id, pid, link_resp.status_code,
                                 )
                 except Exception as exc:  # noqa: BLE001
-                    logger.debug(
+                    logger.warning(
                         "resolve_participant: auto-link attempt failed for session %r: "
                         "%s: %s",
                         session_id, type(exc).__name__, exc,
@@ -217,23 +217,35 @@ async def resolve_participant(session_id: str) -> str | None:
 def clear_participant_cache(session_id: str | None = None) -> None:
     """Remove a session (or all sessions) from the participant cache.
 
-    Also clears the 404 cooldown so the next pulse triggers a fresh lookup
-    immediately — use this after linking a participant to a session.
+    Also clears the 404 cooldown and the UserId-zero warning gate so the
+    next pulse triggers a fresh lookup immediately — use this after linking
+    a participant to a session OR after a session ends.
     """
     if session_id:
         _participant_cache.pop(session_id, None)
         _resolve_cooldown_until.pop(session_id, None)
+        _warned_userid_zero.discard(session_id)
     else:
         _participant_cache.clear()
         _resolve_cooldown_until.clear()
+        _warned_userid_zero.clear()
 
 
-async def clear_participant_session_link(participant_id: str) -> None:
+async def clear_participant_session_link(participant_id: str, session_id: str | None = None) -> None:
     """Unlink *participant_id* from their current session in the questionnaire DB.
 
     Called when a session ends so the participant re-enters the FIFO unlinked
     pool and is auto-linked to the next Unity session without any manual step.
     Fire-and-forget — failures are logged but never raised.
+
+    Parameters
+    ----------
+    participant_id:
+        The questionnaire participant to unlink.
+    session_id:
+        If provided, also clears the analytics in-memory cache for that
+        session (``_participant_cache``, cooldown, and ``_warned_userid_zero``)
+        so the next session can resolve a fresh participant immediately.
     """
     url = f"{_QS_BASE_URL}/api/participants/{participant_id}/session"
     try:
@@ -245,6 +257,10 @@ async def clear_participant_session_link(participant_id: str) -> None:
                     "available for next session",
                     participant_id,
                 )
+                # Also flush in-memory session state so stale participant_id
+                # is never returned for this session again.
+                if session_id:
+                    clear_participant_cache(session_id)
             else:
                 logger.warning(
                     "clear_participant_session_link: DELETE %s returned HTTP %d",

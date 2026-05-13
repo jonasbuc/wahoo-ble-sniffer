@@ -97,6 +97,17 @@ _raw_writer: RawWriter | None = None
 # Lower values increase DB write frequency; 20 matches the default Unity batch size.
 _SCORE_PERSIST_EVERY = 20
 
+# ── Per-session participant-resolution lock ───────────────────────────
+# Prevents trigger_relink from launching a duplicate _resolve_and_link_participant
+# task while the original retry loop is still running.  Without this guard,
+# two concurrent tasks that both resolve the same participant would each write
+# a session_start event to JSONL and call PulseSessionLogger.start_session()
+# — producing duplicate markers in every participant log file.
+#
+# asyncio is single-threaded: .add() and .discard() inside coroutines on the
+# same event-loop thread are inherently race-free without locks.
+_resolve_running: set[str] = set()
+
 
 def set_raw_writer(writer: RawWriter) -> None:
     global _raw_writer
@@ -155,6 +166,22 @@ async def _on_disconnect(session_ids: set[str]) -> None:
                 "(evicted before disconnect?) — session_end not written",
                 sid,
             )
+            # Safety-net: if a participant was already resolved (cached) for
+            # this session, make sure they are unlinked so they can be
+            # auto-linked to the next session.  This handles the race where
+            # _evict_stale_sessions already ran (clearing _participant_cache
+            # and calling unlink), so get_cached_participant returns None and
+            # this call is a cheap no-op.  It also handles the case where
+            # all ingest batches failed (so latest_records was never set) but
+            # the resolve task had already linked the participant.
+            _safety_pid = web_api_client.get_cached_participant(sid)
+            if _safety_pid:
+                logger.info(
+                    "_on_disconnect: safety-net unlink — participant %r was linked "
+                    "to session %r but no records received; unlinking so they re-enter FIFO pool",
+                    _safety_pid, sid,
+                )
+                await web_api_client.clear_participant_session_link(_safety_pid, session_id=sid)
             continue
 
         pid = web_api_client._participant_cache.get(sid)
@@ -225,7 +252,10 @@ async def _on_disconnect(session_ids: set[str]) -> None:
         # Clearing the questionnaire session_id returns the participant to
         # the FIFO unlinked pool.  The next Unity session will be linked
         # automatically without any manual step.
-        await web_api_client.clear_participant_session_link(pid)
+        # Pass sid so the analytics in-memory cache is also cleared,
+        # preventing stale participant_id from being returned for future
+        # sessions that happen to reuse this sid.
+        await web_api_client.clear_participant_session_link(pid, session_id=sid)
 
 
 async def _process_message(ws: ServerConnection, raw: str, connection_sessions: set[str] | None = None) -> None:
@@ -348,7 +378,31 @@ async def _resolve_and_link_participant(sid: str, scenario_id: str, started_at: 
       - Attempts 13–22: every 60 s (covers ~10 min — fallback for late linking)
 
     Failures are logged but never propagated so the ingest pipeline is not affected.
+
+    Duplicate-task guard
+    --------------------
+    ``trigger_relink`` may fire an additional task for the same *sid* while the
+    original retry loop is still running.  The ``_resolve_running`` set prevents
+    both tasks from each writing session_start events or calling
+    ``PulseSessionLogger.start_session()`` more than once.
     """
+    # ── Duplicate-task guard ──────────────────────────────────────────
+    if sid in _resolve_running:
+        logger.debug(
+            "_resolve_and_link_participant: task already running for session %r — "
+            "skipping duplicate (triggered by trigger_relink or rapid reconnect)",
+            sid,
+        )
+        return
+    _resolve_running.add(sid)
+    try:
+        await _do_resolve_and_link_participant(sid, scenario_id, started_at)
+    finally:
+        _resolve_running.discard(sid)
+
+
+async def _do_resolve_and_link_participant(sid: str, scenario_id: str, started_at: str) -> None:
+    """Inner implementation — do not call directly; use _resolve_and_link_participant."""
     # Tiered delays: fast retries first so a pre-registered participant is
     # linked within seconds; slow retries as a fallback.
     _FAST_RETRIES = 12
@@ -723,8 +777,12 @@ async def _evict_stale_sessions() -> None:
             last_rec = latest_records.pop(sid, None)
             latest_gameplay_records.pop(sid, None)
             latest_hr.pop(sid, None)
-            # Read participant BEFORE evicting the cache entry.
-            pid = web_api_client._participant_cache.pop(sid, None)
+            # Read participant BEFORE clearing the cache entry.
+            pid = web_api_client._participant_cache.get(sid)
+            # clear_participant_cache cleans _participant_cache, cooldown, and
+            # _warned_userid_zero in one call — avoid popping _participant_cache
+            # directly which would leave those other dicts stale.
+            web_api_client.clear_participant_cache(sid)
 
             # ── Update SQLite end_unix_ms ─────────────────────────────
             # Use current wall-clock time as the authoritative end time.
@@ -761,6 +819,15 @@ async def _evict_stale_sessions() -> None:
                     "Evicting session %r: no participant linked — session_end not written to JSONL",
                     sid,
                 )
+
+            # ── Unlink participant from questionnaire DB ───────────────
+            # After eviction the participant would stay marked as linked to
+            # this (now-dead) session_id in the questionnaire DB forever —
+            # they would never re-enter the FIFO unlinked pool.
+            # Calling clear_participant_session_link returns them to the pool
+            # so they can be auto-linked when the next Unity session starts.
+            if pid:
+                await web_api_client.clear_participant_session_link(pid, session_id=sid)
 
         logger.info(
             "Evicted in-memory state for %d stale session(s) "
