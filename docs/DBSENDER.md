@@ -160,6 +160,30 @@ On the `DBSender` GameObject in the scene:
 | **Wahoo Ws Client** | The `WahooWsClient` component in the scene |
 | **Telemetry Publisher** | The `TelemetryPublisher` component in the scene |
 | **Analytics Api Url** | `http://127.0.0.1:8080` (default, change if port differs) |
+| **External Api Url** | External research API URL (see below) — leave empty to disable |
+
+### External API URLs
+
+DBSender forwards each HR sample live to the external research database at 1 Hz
+once `participant_id` has been resolved.  Two endpoints are available — set
+whichever machine is running the research API:
+
+| Machine | URL |
+|---|---|
+| RPI | `https://10.200.130.36:5001/api/cardatasqlite` |
+| Laptop | `https://10.200.130.98:5001/api/car/logbikedata` |
+
+The request body is:
+```json
+{ "UserId": 42, "Pulse": 74 }
+```
+
+- `UserId` = `participant_id` cast to integer
+- `Pulse` = current BPM
+
+The API uses a self-signed TLS certificate — DBSender bypasses certificate
+validation with `AcceptAllCertificates` (standard for local research networks).
+Errors are logged as warnings and **never block** the local `pulse.txt` logger.
 
 ---
 
