@@ -36,7 +36,7 @@ if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
 from live_analytics.app.utils.time_utils import fmt_now as _fmt_now  # noqa: E402
-from live_analytics.app.utils.time_utils import now_utc_iso as _now_utc_iso  # noqa: E402
+from live_analytics.app.utils.time_utils import now_cph_iso as _now_cph_iso  # noqa: E402
 logger = logging.getLogger("questionnaire.db")
 
 # ── Connection pool ───────────────────────────────────────────────────
@@ -146,8 +146,8 @@ _MIGRATIONS = [
 
 
 def _now() -> str:
-    """Return the current UTC time as an ISO-8601 string (DB storage convention)."""
-    return _now_utc_iso()
+    """Return the current Danish time as an ISO-8601 string (DB storage convention)."""
+    return _now_cph_iso()
 
 
 # ── Init ──────────────────────────────────────────────────────────────

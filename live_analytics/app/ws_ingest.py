@@ -56,7 +56,7 @@ from live_analytics.app.storage.sqlite_store import (
     update_latest_scores,
     upsert_session,
 )
-from live_analytics.app.utils.time_utils import fmt_iso as _fmt_iso
+from live_analytics.app.utils.time_utils import fmt_iso as _fmt_iso, TZ as _TZ, unix_ms_to_cph_iso as _unix_ms_to_cph_iso
 
 logger = logging.getLogger("live_analytics.ws_ingest")
 
@@ -150,8 +150,8 @@ async def _on_disconnect(session_ids: set[str]) -> None:
     if not session_ids:
         return
     # Capture both UTC and local time once for all sessions in this disconnect.
-    _now = datetime.now().astimezone()
-    ended_at = _now.astimezone(timezone.utc).isoformat()
+    _now = datetime.now(_TZ)
+    ended_at = _now.isoformat()
     local_time = _now.strftime("%Y-%m-%d %H:%M:%S %Z")
     end_unix_ms = int(_now.timestamp() * 1000)
 
@@ -530,9 +530,7 @@ def _ingest_session_batch(sid: str, records: list[TelemetryRecord]) -> None:
         # this session (pulse, scores, etc.) without blocking the ingest pipeline.
         try:
             loop = asyncio.get_running_loop()
-            _started_at = datetime.fromtimestamp(
-                first_rec.unix_ms / 1000, tz=timezone.utc
-            ).isoformat()
+            _started_at = _unix_ms_to_cph_iso(first_rec.unix_ms)
             loop.create_task(_resolve_and_link_participant(
                 sid, first_rec.scenario_id or "", _started_at
             ))
@@ -609,8 +607,8 @@ def _ingest_session_batch(sid: str, records: list[TelemetryRecord]) -> None:
         # resolved (cache returns None).
         _cached_pid = web_api_client.get_cached_participant(sid)
         if _cached_pid:
-            _now = datetime.now().astimezone()
-            _created_at = _now.astimezone(timezone.utc).isoformat()
+            _now = datetime.now(_TZ)
+            _created_at = _now.isoformat()
             _local_time = _now.strftime("%Y-%m-%d %H:%M:%S %Z")
             _psl = _get_pulse_logger()
             for _hr_rec in _hr_records:
@@ -786,7 +784,7 @@ async def _evict_stale_sessions() -> None:
 
             # ── Update SQLite end_unix_ms ─────────────────────────────
             # Use current wall-clock time as the authoritative end time.
-            _evict_now = datetime.now().astimezone()
+            _evict_now = datetime.now(_TZ)
             _evict_end_unix_ms = int(_evict_now.timestamp() * 1000)
             try:
                 end_session(DB_PATH, sid, _evict_end_unix_ms)
@@ -804,13 +802,11 @@ async def _evict_stale_sessions() -> None:
                     "participant_id": pid,
                     # ended_at = current wall-clock (the eviction moment, not
                     # the last telemetry time which could be 4 h ago).
-                    "ended_at": _evict_now.astimezone(timezone.utc).isoformat(),
+                    "ended_at": _evict_now.isoformat(),
                     "local_time": _evict_now.strftime("%Y-%m-%d %H:%M:%S %Z"),
                     # last_record_at = actual last telemetry timestamp so
                     # analysts can see when the rider truly stopped transmitting.
-                    "last_record_at": datetime.fromtimestamp(
-                        last_rec.unix_ms / 1000, tz=timezone.utc
-                    ).isoformat(),
+                    "last_record_at": _unix_ms_to_cph_iso(last_rec.unix_ms),
                     "record_count": final_record_count,
                     "reason": "idle_eviction",
                 })

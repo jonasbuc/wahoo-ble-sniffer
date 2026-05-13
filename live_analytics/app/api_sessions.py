@@ -191,6 +191,7 @@ async def trigger_relink() -> dict:
     import asyncio
     from live_analytics.app import ws_ingest
     from datetime import datetime, timezone
+    from live_analytics.app.utils.time_utils import now_cph_iso, unix_ms_to_cph_iso
 
     # Find all sessions that are currently active (have an open sliding window)
     # but have no participant resolved yet.
@@ -230,8 +231,8 @@ async def trigger_relink() -> dict:
         last = ws_ingest.latest_records.get(sid)
         scenario_id = (last.scenario_id if last and last.scenario_id else "") if last else ""
         started_at = (
-            datetime.fromtimestamp(last.unix_ms / 1000, tz=timezone.utc).isoformat()
-            if last else datetime.now(tz=timezone.utc).isoformat()
+            unix_ms_to_cph_iso(last.unix_ms)
+            if last else now_cph_iso()
         )
         loop.create_task(
             ws_ingest._resolve_and_link_participant(sid, scenario_id, started_at)

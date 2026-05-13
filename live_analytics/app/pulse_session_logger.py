@@ -42,6 +42,9 @@ import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
+
+_TZ = ZoneInfo("Europe/Copenhagen")
 
 logger = logging.getLogger("live_analytics.pulse_session_logger")
 
@@ -155,8 +158,8 @@ class PulseSessionLogger:
             )
             self._close_internal(participant_id, reason="auto_close_on_new_start")
 
-        now = datetime.now().astimezone()
-        started_at = now.astimezone(timezone.utc).isoformat()
+        now = datetime.now(_TZ)
+        started_at = now.isoformat()
         local_time = now.strftime("%Y-%m-%d %H:%M:%S %Z")
         ts_str = now.strftime("%Y%m%d_%H%M%S_%f")
 
@@ -213,14 +216,14 @@ class PulseSessionLogger:
             )
             return
 
-        now = datetime.now().astimezone()
+        now = datetime.now(_TZ)
         record: dict[str, Any] = {
             "type": "pulse",
             "participant_id": participant_id,
             "session_id": session_id,
             "unix_ms": unix_ms,
             "pulse": pulse,
-            "recorded_at": now.astimezone(timezone.utc).isoformat(),
+            "recorded_at": now.isoformat(),
         }
         if extra:
             record.update(extra)
@@ -279,8 +282,8 @@ class PulseSessionLogger:
         if session is None:
             return
 
-        now = datetime.now().astimezone()
-        ended_at = now.astimezone(timezone.utc).isoformat()
+        now = datetime.now(_TZ)
+        ended_at = now.isoformat()
         local_time = now.strftime("%Y-%m-%d %H:%M:%S %Z")
 
         record: dict[str, Any] = {
