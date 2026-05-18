@@ -9,6 +9,7 @@
 using System;
 using System.IO;
 using System.Net;
+using System.Net.Http;
 using System.Text;
 using System.Threading;
 using System.Collections.Generic;
@@ -71,7 +72,7 @@ class DBSenderCore {
 
     private void WriteLoop() {
         while (_running) {
-            if (_queue.TryDequeue(out string line)) {
+            if (_queue.TryDequeue(out string? line) && line != null) {
                 using (StreamWriter w = new StreamWriter(PulseLog, append: true))
                     w.WriteLine(line);
             } else {
@@ -82,7 +83,7 @@ class DBSenderCore {
 
     // ── JSON helper (copied verbatim from DBSender.cs) ───────────────────────
 
-    public static string ExtractJsonString(string json, string key) {
+    public static string? ExtractJsonString(string json, string key) {
         string search = $"\"{key}\"";
         int ki = json.IndexOf(search);
         if (ki < 0) return null;
@@ -149,7 +150,7 @@ class MockHttpServer : IDisposable {
     }
 
     private void Handle(HttpListenerContext ctx) {
-        string path   = ctx.Request.Url.AbsolutePath;
+        string path   = ctx.Request.Url?.AbsolutePath ?? "/";
         string method = ctx.Request.HttpMethod;
         string body   = "";
 
@@ -164,7 +165,7 @@ class MockHttpServer : IDisposable {
         // POST /api/participants  →  register participant
         if (method == "POST" && path == "/api/participants") {
             QuestionnaireCalls++;
-            string pid = ExtractField(body, "participant_id");
+            string? pid = ExtractField(body, "participant_id");
             if (pid != null) {
                 if (!Participants.ContainsKey(pid)) Participants[pid] = null;
                 resp = $"{{\"participant_id\":{pid},\"session_id\":null}}";
@@ -206,8 +207,8 @@ class MockHttpServer : IDisposable {
 
         // POST /api/car/logbikedata  →  receive live pulse
         else if (method == "POST" && (path == "/api/car/logbikedata" || path == "/api/cardatasqlite")) {
-            string uStr = ExtractField(body, "UserId");
-            string pStr = ExtractField(body, "Pulse");
+            string? uStr = ExtractField(body, "UserId");
+            string? pStr = ExtractField(body, "Pulse");
             if (int.TryParse(uStr, out int uid) && int.TryParse(pStr, out int pulse))
                 ExternalPostsReceived.Add((uid, pulse));
             resp = "{\"ok\":true}";
@@ -339,27 +340,23 @@ class Program {
 
         // Start mock servers on loopback (choose ports unlikely to clash)
         using var srv = new MockHttpServer("http://127.0.0.1:19080/");
+        using var http = new HttpClient();
 
         // 1. Researcher registers participant in questionnaire UI (before headset goes on)
         {
-            var req = System.Net.WebRequest.Create("http://127.0.0.1:19080/api/participants");
-            req.Method = "POST";
-            req.ContentType = "application/json";
-            byte[] b = Encoding.UTF8.GetBytes($"{{\"participant_id\":{participantId},\"display_name\":\"Jonas\"}}");
-            req.ContentLength = b.Length;
-            using (var s = req.GetRequestStream()) s.Write(b, 0, b.Length);
-            using var res = (HttpWebResponse)req.GetResponse();
+            var content = new StringContent(
+                $"{{\"participant_id\":{participantId},\"display_name\":\"Jonas\"}}",
+                Encoding.UTF8, "application/json");
+            var res = http.PostAsync("http://127.0.0.1:19080/api/participants", content).GetAwaiter().GetResult();
             Assert(res.StatusCode == HttpStatusCode.OK, "T7.1 — POST /api/participants returns 200");
             Assert(srv.Participants.ContainsKey(participantId), "T7.2 — participant stored in mock server");
         }
 
         // 2. Verify questionnaire has an oldest-unlinked entry (as analytics FIFO would see it)
         {
-            var req = System.Net.WebRequest.Create("http://127.0.0.1:19080/api/participants/oldest-unlinked");
-            using var res = (HttpWebResponse)req.GetResponse();
-            using var sr  = new StreamReader(res.GetResponseStream(), Encoding.UTF8);
-            string body   = sr.ReadToEnd();
-            string pid    = DBSenderCore.ExtractJsonString(body, "participant_id");
+            var res  = http.GetAsync("http://127.0.0.1:19080/api/participants/oldest-unlinked").GetAwaiter().GetResult();
+            string body = res.Content.ReadAsStringAsync().GetAwaiter().GetResult();
+            string? pid = DBSenderCore.ExtractJsonString(body, "participant_id");
             Assert(res.StatusCode == HttpStatusCode.OK, "T7.3 — GET /api/participants/oldest-unlinked returns 200");
             Assert(pid == participantId, $"T7.4 — oldest-unlinked participant_id = {participantId} (got \"{pid}\")");
         }
@@ -369,11 +366,9 @@ class Program {
 
         // 4. DBSenderCore polls GET /api/sessions/{id} and gets participant_id back
         {
-            var req = System.Net.WebRequest.Create($"http://127.0.0.1:19080/api/sessions/{sessionId}");
-            using var res = (HttpWebResponse)req.GetResponse();
-            using var sr  = new StreamReader(res.GetResponseStream(), Encoding.UTF8);
-            string body   = sr.ReadToEnd();
-            string pid    = DBSenderCore.ExtractJsonString(body, "participant_id");
+            var res  = http.GetAsync($"http://127.0.0.1:19080/api/sessions/{sessionId}").GetAwaiter().GetResult();
+            string body = res.Content.ReadAsStringAsync().GetAwaiter().GetResult();
+            string? pid = DBSenderCore.ExtractJsonString(body, "participant_id");
             Assert(res.StatusCode == HttpStatusCode.OK, "T7.5 — GET /api/sessions/{id} returns 200");
             Assert(pid == participantId, $"T7.6 — session response contains participant_id = {participantId} (got \"{pid}\")");
         }
