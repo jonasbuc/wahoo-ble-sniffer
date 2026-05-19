@@ -127,9 +127,10 @@ class WahooBridgeServer:
 
     Attributes
     ----------
-    clients     : set of open WebSocket connections
-    _ble_hr     : most-recently-received BLE heart-rate value (None until first read)
-    _ble_task   : asyncio Task for the BLE connect/reconnect loop
+    clients          : set of open WebSocket connections
+    _ble_connected   : True while a live HR notification subscription is active
+    _hr_queue        : Queue of ``(timestamp, hr)`` tuples from the BLE callback thread
+    _ble_task        : asyncio Task for the BLE connect/reconnect loop
     """
 
     def __init__(
@@ -141,7 +142,7 @@ class WahooBridgeServer:
         udp_host: str = "127.0.0.1",
         udp_port: int = 5005,
         ble_address: Optional[str] = None,
-        keepalive_interval: float = 15.0,
+        keepalive_interval: float = 10.0,
         base_backoff: float = 1.0,
         max_backoff: float = 30.0,
         scan_timeout: float = 12.0,
@@ -520,11 +521,11 @@ class WahooBridgeServer:
           3. Connects via BleakClient and subscribes to the HR measurement
              characteristic (UUID ``0x2A37``).
           4. Performs periodic battery-level reads as a keepalive to prevent
-             the BLE link from timing out on macOS.
+             the BLE link from timing out on Windows and macOS.
           5. On disconnect, applies exponential backoff and retries from step 1.
 
-        ``self._ble_hr`` is updated by the ``hr_handler`` notification callback
-        and read by ``broadcast_loop`` to build outgoing frames.
+        ``hr_handler`` enqueues ``(timestamp, hr)`` tuples onto ``_hr_queue``
+        which ``broadcast_loop`` drains on the event-loop thread.
         """
         if not HAVE_BLEAK:
             LOG.info("Bleak not available; live BLE mode disabled")
@@ -742,130 +743,302 @@ class WahooBridgeServer:
                     BAT_UUID = "00002a19-0000-1000-8000-00805f9b34fb"
 
                     if HR_UUID in char_uuids:
+                        # ── Save _real_put BEFORE try so finally can always restore ──────
+                        # BUG FIXED: previously defined inside try — if start_notify raised
+                        # before the assignment, the finally block hit NameError.
+                        _real_put = self._hr_queue.put_nowait
+                        # Two-cell list updated by _timestamped_put on the event-loop thread:
+                        #   [0] = wall timestamp of last HR notification (float)
+                        #   [1] = total HR notifications received this session (int)
+                        _last_notif_cell: list = [0.0, 0]
+                        _subscribed_at = time.time()
+
+                        # ── Keepalive / liveness config (computed once per session) ──────
+                        # DESIGN: Three distinct link states we must distinguish:
+                        #
+                        #   HEALTHY      — transport connected + HR notifications flowing
+                        #   DEGRADED     — transport connected + notifications absent
+                        #   DISCONNECTED — transport gone (handled by loop exit + reconnect)
+                        #
+                        # A successful battery read ONLY proves the transport is alive (ATT
+                        # traffic exchanged).  It does NOT prove the HR subscription is
+                        # alive.  We track both axes separately.
+                        keepalive_interval = self.keepalive_interval
+                        if keepalive_interval > 12.0:
+                            LOG.warning(
+                                "keepalive_interval=%.1f s is likely too slow for Windows: "
+                                "BLE supervision timeouts are typically 4–10 s.  "
+                                "Use --keepalive-interval 8 or lower to ensure ATT traffic "
+                                "keeps the link alive when HR notifications stop.",
+                                keepalive_interval,
+                            )
+                        # Stale threshold: one full keepalive_interval of silence = stale.
+                        # FIXED: was max(10.0, 2.5 × interval) = 37.5 s at default 15 s,
+                        # which masked long notification gaps that should have warned early.
+                        stale_threshold = max(5.0, keepalive_interval)
+
+                        # After this many consecutive keepalive cycles that succeed
+                        # (transport alive) but find zero new HR notifications, force a full
+                        # reconnect.  This recovers the case where the subscription silently
+                        # died while the BLE transport-level link remained open — a scenario
+                        # that keepalive battery reads alone will never detect.
+                        STALE_FORCE_RECONNECT_CYCLES = 3
+
+                        # Prefer battery char for keepalive reads; fall back to HR char if
+                        # battery was not discovered (e.g. service discovery incomplete).
+                        # IMPORTANT: a read to a notify-only HR char may return a GATT
+                        # "read not permitted" error, but the ATT Read Request itself still
+                        # counts as link traffic and resets the OS supervision timeout.
+                        keepalive_uuid = BAT_UUID if BAT_UUID in char_uuids else HR_UUID
+                        _using_hr_fallback = keepalive_uuid == HR_UUID
+
                         try:
                             await client.start_notify(HR_UUID, hr_handler)
                             LOG.info(
                                 "Subscribed to HR notifications on %s",
                                 getattr(target, "address", target),
                             )
-                            # Mark as live-connected, broadcast status to Unity clients,
-                            # and reset attempt counter so backoff starts fresh on the
-                            # *next* disconnection.
+                            if _using_hr_fallback:
+                                LOG.info(
+                                    "Battery characteristic not found on %s — "
+                                    "using HR char (0x2A37) as keepalive traffic fallback "
+                                    "(GATT 'read not permitted' responses are expected)",
+                                    getattr(target, "address", target),
+                                )
+
+                            # Mark as live-connected, broadcast to Unity, reset attempt
+                            # counter so backoff starts fresh on the *next* disconnection.
                             self._ble_connected = True
                             attempt = 0
-                            asyncio.create_task(self.broadcast_json({
-                                "event": "ble_status",
-                                "status": "connected",
-                                "device": getattr(target, "address", str(target)),
-                                "name": getattr(target, "name", None),
-                                "timestamp": time.time(),
-                            }))
+                            try:
+                                asyncio.create_task(self.broadcast_json({
+                                    "event": "ble_status",
+                                    "status": "connected",
+                                    "device": getattr(target, "address", str(target)),
+                                    "name": getattr(target, "name", None),
+                                    "timestamp": time.time(),
+                                }))
+                            except RuntimeError:
+                                pass  # loop shutting down
 
-                            # ── Keepalive + stale-notification monitor ────────
-                            # The loop does two jobs:
-                            #  1. Periodic battery reads to keep the ATT link alive
-                            #     on macOS (which drops silent BLE links after ~30 s).
-                            #  2. Stale-notification warning: if the TICKR stops
-                            #     sending HR updates (e.g. chest strap loses skin
-                            #     contact, device goes to sleep) while the BLE
-                            #     connection itself looks healthy, log a WARNING so
-                            #     operators know data has stopped flowing.
-                            keepalive_interval = self.keepalive_interval
-                            stale_threshold = max(10.0, 2.5 * keepalive_interval)
-                            last_keep = 0.0
-                            _subscribed_at = time.time()
-                            # Track the last notification wall time locally in this
-                            # connection session.  hr_handler posts to the Queue via
-                            # call_soon_threadsafe; we use a mutable list as a
-                            # single-element "cell" so _enqueue can update it from
-                            # the event-loop thread without a shared instance attribute.
-                            _last_notif_cell: list = [0.0]   # [last_notif_wall_time]
-                            _orig_enqueue = None  # patched below after hr_handler defined
-
-                            # Monkey-patch hr_handler's _enqueue to also update the cell.
-                            # We do this by wrapping the Queue put with an additional
-                            # time.time() write — all on the event-loop thread because
-                            # call_soon_threadsafe guarantees that.
-                            _real_put = self._hr_queue.put_nowait
-
+                            # ── Monkey-patch queue to record last notification wall time ──
+                            # Wraps put_nowait so every enqueue also updates _last_notif_cell.
+                            # Runs on the event-loop thread (call_soon_threadsafe guarantees).
                             def _timestamped_put(item):
-                                _last_notif_cell[0] = item[0]  # item = (ts, hr)
+                                _last_notif_cell[0] = item[0]   # wall timestamp
+                                _last_notif_cell[1] += 1        # notification count
                                 _real_put(item)
 
                             self._hr_queue.put_nowait = _timestamped_put  # type: ignore[method-assign]
 
                             _stale_warned = False
                             _keepalive_fail_streak = 0
+                            _stale_keepalive_cycles = 0  # keepalive-ok-but-still-stale cycles
+                            _force_reconnect = False      # set True to exit loop intentionally
+                            silence = 0.0                 # defensive init before first loop tick
 
-                            while client.is_connected and not disconnected_event.is_set():
+                            # FIXED: initialise last_keep to NOW so the first keepalive fires
+                            # after exactly one full interval, not immediately on tick 1
+                            # (old bug: last_keep = 0.0 caused immediate first-tick fire).
+                            _loop = asyncio.get_running_loop()
+                            last_keep = _loop.time()
+
+                            while (
+                                client.is_connected
+                                and not disconnected_event.is_set()
+                                and not _force_reconnect
+                            ):
                                 await asyncio.sleep(1.0)
-                                now_ts = asyncio.get_running_loop().time()
+                                now_ts = _loop.time()
                                 now_wall = time.time()
+                                _session_notif_count = _last_notif_cell[1]
 
-                                # ── Stale-notification detection ──────────────
+                                # ── Stale-notification detection ──────────────────────────
                                 last_notif = _last_notif_cell[0]
-                                silence = (now_wall - last_notif) if last_notif > 0 else (now_wall - _subscribed_at)
+                                silence = (
+                                    (now_wall - last_notif)
+                                    if last_notif > 0
+                                    else (now_wall - _subscribed_at)
+                                )
 
                                 if silence > stale_threshold and not _stale_warned:
                                     LOG.warning(
-                                        "No HR notification received for %.0f s from %s "
-                                        "— device may have lost sensor contact or gone out "
-                                        "of range (BLE link still open)",
+                                        "[BLE DEGRADED] No HR notification for %.0f s from %s "
+                                        "(session: %d notifications so far). "
+                                        "BLE transport still alive. "
+                                        "Possible causes: strap lost skin contact, device in "
+                                        "power-save, or OS silently dropped the subscription.",
                                         silence,
                                         getattr(target, "address", target),
+                                        _session_notif_count,
                                     )
                                     _stale_warned = True
+                                    try:
+                                        asyncio.create_task(self.broadcast_json({
+                                            "event": "ble_status",
+                                            "status": "degraded",
+                                            "device": getattr(target, "address", str(target)),
+                                            "reason": "no_hr_notifications",
+                                            "silence_s": round(silence, 1),
+                                            "timestamp": now_wall,
+                                        }))
+                                    except RuntimeError:
+                                        pass
+
                                 elif silence <= stale_threshold and _stale_warned:
                                     LOG.info(
-                                        "HR notifications resumed from %s after %.0f s gap",
+                                        "[BLE RECOVERED] HR notifications resumed from %s "
+                                        "after %.0f s gap (session total: %d)",
                                         getattr(target, "address", target),
                                         silence,
+                                        _session_notif_count,
                                     )
                                     _stale_warned = False
-
-                                # ── Battery keepalive ─────────────────────────
-                                if BAT_UUID in char_uuids and (now_ts - last_keep) >= keepalive_interval:
+                                    _stale_keepalive_cycles = 0
                                     try:
-                                        _ = await client.read_gatt_char(BAT_UUID)
-                                        LOG.debug("Performed keepalive battery read on %s",
-                                                  getattr(target, "address", target))
+                                        asyncio.create_task(self.broadcast_json({
+                                            "event": "ble_status",
+                                            "status": "connected",
+                                            "device": getattr(target, "address", str(target)),
+                                            "timestamp": now_wall,
+                                        }))
+                                    except RuntimeError:
+                                        pass
+
+                                # ── Keepalive / transport-liveness read ───────────────────
+                                if (now_ts - last_keep) >= keepalive_interval:
+                                    try:
+                                        _ = await client.read_gatt_char(keepalive_uuid)
                                         _keepalive_fail_streak = 0
+
+                                        if _stale_warned:
+                                            # Transport proven alive; notifications still absent.
+                                            # This is the "keepalive masks dead subscription"
+                                            # case that a battery read alone cannot detect.
+                                            _stale_keepalive_cycles += 1
+                                            LOG.warning(
+                                                "[BLE KEEPALIVE-ONLY] %s read OK on %s "
+                                                "but still no HR notifications "
+                                                "(silence=%.0f s, stale cycle %d/%d). "
+                                                "ATT transport alive; HR subscription appears dead.",
+                                                "Battery" if not _using_hr_fallback else "HR-char",
+                                                getattr(target, "address", target),
+                                                silence,
+                                                _stale_keepalive_cycles,
+                                                STALE_FORCE_RECONNECT_CYCLES,
+                                            )
+                                            if _stale_keepalive_cycles >= STALE_FORCE_RECONNECT_CYCLES:
+                                                LOG.warning(
+                                                    "[BLE FORCE-RECONNECT] %d consecutive "
+                                                    "keepalive cycles with no HR notifications "
+                                                    "from %s (silence=%.0f s). "
+                                                    "Forcing full reconnect to restore subscription.",
+                                                    _stale_keepalive_cycles,
+                                                    getattr(target, "address", target),
+                                                    silence,
+                                                )
+                                                try:
+                                                    asyncio.create_task(self.broadcast_json({
+                                                        "event": "ble_status",
+                                                        "status": "reconnecting_stale",
+                                                        "device": getattr(target, "address", str(target)),
+                                                        "silence_s": round(silence, 1),
+                                                        "keepalive_cycles": _stale_keepalive_cycles,
+                                                        "timestamp": now_wall,
+                                                    }))
+                                                except RuntimeError:
+                                                    pass
+                                                _force_reconnect = True
+                                        else:
+                                            LOG.debug(
+                                                "[BLE HEALTHY] Keepalive %s OK on %s "
+                                                "(silence=%.1f s ≤ threshold=%.1f s, "
+                                                "session notifications: %d)",
+                                                "battery" if not _using_hr_fallback else "HR-char",
+                                                getattr(target, "address", target),
+                                                silence, stale_threshold,
+                                                _session_notif_count,
+                                            )
+
                                     except Exception as exc:
                                         _keepalive_fail_streak += 1
-                                        if _keepalive_fail_streak >= 3:
+                                        # Using HR-char fallback: a GATT "read not permitted"
+                                        # error is expected for notify-only chars.  The ATT
+                                        # exchange itself still resets the supervision timeout
+                                        # — do not count it as a hard transport failure.
+                                        exc_str = str(exc).lower()
+                                        is_gatt_refuse = _using_hr_fallback and (
+                                            "not permitted" in exc_str
+                                            or "read not supported" in exc_str
+                                            or "insufficient" in exc_str
+                                        )
+                                        if is_gatt_refuse:
+                                            LOG.debug(
+                                                "Keepalive HR-char read returned expected GATT "
+                                                "error on %s (link IS alive): %s",
+                                                getattr(target, "address", target), exc,
+                                            )
+                                            _keepalive_fail_streak = 0  # not a transport failure
+                                        elif _keepalive_fail_streak >= 3:
                                             LOG.warning(
-                                                "Keepalive battery read failed %d time(s) "
-                                                "on %s: %s: %s — BLE link may be degraded",
+                                                "[BLE KEEPALIVE-FAILED] %s read failed %d "
+                                                "times on %s: %s: %s — forcing reconnect "
+                                                "(link likely dead).",
+                                                "Battery" if not _using_hr_fallback else "HR-char",
                                                 _keepalive_fail_streak,
                                                 getattr(target, "address", target),
                                                 type(exc).__name__, exc,
                                             )
+                                            _force_reconnect = True
                                         else:
                                             LOG.debug(
-                                                "Keepalive read failed (streak=%d, ignored)",
+                                                "Keepalive read failed (streak=%d/3): %s: %s",
                                                 _keepalive_fail_streak,
+                                                type(exc).__name__, exc,
                                             )
                                     last_keep = now_ts
 
-                            if disconnected_event.is_set():
+                            # ── Explain why the keepalive loop exited ─────────────────────
+                            _session_notif_count = _last_notif_cell[1]
+                            if _force_reconnect and _stale_keepalive_cycles >= STALE_FORCE_RECONNECT_CYCLES:
                                 LOG.warning(
-                                    "BLE device %s disconnected (detected via callback)",
+                                    "BLE keepalive loop exited: forced reconnect after "
+                                    "%d stale cycles from %s (silence=%.0f s, "
+                                    "session: %d notifications)",
+                                    _stale_keepalive_cycles,
                                     getattr(target, "address", target),
+                                    silence,
+                                    _session_notif_count,
+                                )
+                            elif _force_reconnect:
+                                LOG.warning(
+                                    "BLE keepalive loop exited: forced reconnect after "
+                                    "%d keepalive failure(s) on %s",
+                                    _keepalive_fail_streak,
+                                    getattr(target, "address", target),
+                                )
+                            elif disconnected_event.is_set():
+                                LOG.warning(
+                                    "BLE device %s disconnected (detected via callback). "
+                                    "Session: %d HR notifications received.",
+                                    getattr(target, "address", target),
+                                    _session_notif_count,
                                 )
                             else:
                                 LOG.warning(
-                                    "BLE device %s disconnected (detected via is_connected polling)",
+                                    "BLE device %s disconnected (detected via is_connected "
+                                    "polling). Session: %d HR notifications received.",
                                     getattr(target, "address", target),
+                                    _session_notif_count,
                                 )
                         finally:
-                            # ── State reset on disconnect ─────────────────────
-                            # Restore the real put_nowait so no stale wrapper
-                            # references the closed session's _last_notif_cell.
+                            # ── State reset on disconnect ─────────────────────────────────
+                            # _real_put is defined BEFORE the try block, so this restore is
+                            # always safe even if start_notify raised before the patch ran.
                             self._hr_queue.put_nowait = _real_put  # type: ignore[method-assign]
 
                             # Drain any queued readings from the dead session so
-                            # broadcast_loop does not send old data to the first
-                            # client that connects after reconnect.
+                            # broadcast_loop does not send old data after reconnect.
                             drained = 0
                             while not self._hr_queue.empty():
                                 try:
@@ -882,12 +1055,15 @@ class WahooBridgeServer:
                             self._ble_connected = False
 
                             # Notify Unity clients that the sensor feed has dropped.
-                            asyncio.create_task(self.broadcast_json({
-                                "event": "ble_status",
-                                "status": "disconnected",
-                                "device": getattr(target, "address", str(target)),
-                                "timestamp": time.time(),
-                            }))
+                            try:
+                                asyncio.create_task(self.broadcast_json({
+                                    "event": "ble_status",
+                                    "status": "disconnected",
+                                    "device": getattr(target, "address", str(target)),
+                                    "timestamp": time.time(),
+                                }))
+                            except RuntimeError:
+                                pass  # event loop shutting down — not critical
 
                             try:
                                 await client.stop_notify(HR_UUID)
@@ -1035,8 +1211,13 @@ def parse_args():
     p.add_argument(
         "--keepalive-interval",
         type=float,
-        default=15.0,
-        help="Interval (seconds) between keepalive battery reads to prevent supervision timeouts",
+        default=10.0,
+        help=(
+            "Interval (seconds) between keepalive ATT reads (battery characteristic). "
+            "Default: 10 s.  Windows BLE supervision timeouts are typically 4–10 s, "
+            "so values above 12 will log a WARNING. Lower to 8 or less if the TICKR "
+            "drops silently when the strap loses skin contact."
+        ),
     )
     p.add_argument(
         "--base-backoff",
@@ -1103,6 +1284,8 @@ def main():
     LOG.info("  udp      = %s:%d", "127.0.0.1", 5005)
     if args.ble_address:
         LOG.info("  ble addr = %s", args.ble_address)
+    LOG.info("  keepalive = %.0f s%s", args.keepalive_interval,
+             "  ← WARNING: may be too slow for Windows supervision timeout" if args.keepalive_interval > 12 else "")
     if args.max_reconnect_attempts:
         LOG.info("  max reconnect = %d attempts", args.max_reconnect_attempts)
     LOG.info(

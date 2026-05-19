@@ -187,7 +187,7 @@ class TestParseArgs:
 
     def test_keepalive_interval_default(self):
         args = self._parse([])
-        assert args.keepalive_interval == 15.0
+        assert args.keepalive_interval == 10.0
 
     def test_base_backoff_default(self):
         args = self._parse([])

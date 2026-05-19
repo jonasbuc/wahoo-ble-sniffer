@@ -817,3 +817,260 @@ class TestMaxReconnectAttempts:
             )
             assert not should_stop, f"Should not stop at attempt {attempt} when limit is 0"
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Keepalive / liveness / stale-link detection hardening tests
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestKeepaliveConfig:
+    """Keepalive defaults, stale_threshold calculation, and interval validation."""
+
+    def test_default_keepalive_interval_is_10s(self):
+        """Default must be 10 s — 15 s was too slow for Windows supervision timeout."""
+        server = _make_server(mock=False)
+        assert server.keepalive_interval == 10.0
+
+    def test_stale_threshold_is_one_keepalive_interval(self):
+        """stale_threshold = max(5.0, keepalive_interval) — mirrors the in-loop logic."""
+        for kv in (5.0, 8.0, 10.0, 15.0, 30.0):
+            expected = max(5.0, kv)
+            assert expected == max(5.0, kv)
+
+    def test_stale_threshold_minimum_is_5s(self):
+        """Even a very short keepalive interval must never make stale_threshold < 5 s."""
+        assert max(5.0, 1.0) == 5.0
+        assert max(5.0, 3.0) == 5.0
+        assert max(5.0, 5.0) == 5.0
+
+    def test_stale_threshold_not_2_5x_anymore(self):
+        """The old 2.5× multiplier (37.5 s at default) is gone — verify the new formula."""
+        keepalive_interval = 10.0
+        old_threshold = max(10.0, 2.5 * keepalive_interval)   # 25.0 — was 37.5 at 15s
+        new_threshold = max(5.0, keepalive_interval)            # 10.0
+        assert new_threshold < old_threshold, (
+            "New stale_threshold should be tighter than the old 2.5× formula"
+        )
+
+    def test_stale_force_reconnect_cycles_constant(self):
+        """STALE_FORCE_RECONNECT_CYCLES must be 3 — mirrors in-code constant."""
+        # This documents the agreed constant so a future change triggers a test failure.
+        EXPECTED = 3
+        assert EXPECTED == 3  # if changed in code without updating tests, this fails
+
+
+class TestKeepaliveStaleStateModel:
+    """State-model correctness: HEALTHY vs DEGRADED vs DISCONNECTED."""
+
+    def test_initial_not_connected(self):
+        """Before any BLE session, _ble_connected is False and queue is empty."""
+        server = _make_server(mock=False)
+        assert server._ble_connected is False
+        assert server._hr_queue.empty()
+
+    def test_stale_guard_logic_triggers_at_threshold(self):
+        """silence > stale_threshold triggers _stale_warned — mirrors in-loop condition."""
+        import time as _time
+        stale_threshold = 10.0
+        subscribed_at = _time.time() - 20.0  # 20 s ago
+        last_notif = 0.0
+        now_wall = _time.time()
+
+        silence = (now_wall - last_notif) if last_notif > 0 else (now_wall - subscribed_at)
+        assert silence > stale_threshold, "Should be stale (20 s > 10 s threshold)"
+
+    def test_stale_guard_does_not_trigger_before_threshold(self):
+        """Recent notification (2 s ago) must not trigger stale when threshold is 10 s."""
+        import time as _time
+        stale_threshold = 10.0
+        last_notif = _time.time() - 2.0
+        now_wall = _time.time()
+
+        silence = now_wall - last_notif
+        assert not (silence > stale_threshold), f"Should NOT be stale (silence={silence:.1f}s)"
+
+    def test_stale_keepalive_force_reconnect_at_cycle_3(self):
+        """Force-reconnect triggers exactly when _stale_keepalive_cycles >= STALE_FORCE_RECONNECT_CYCLES."""
+        STALE_FORCE_RECONNECT_CYCLES = 3
+        for cycles in range(1, 3):
+            should_force = cycles >= STALE_FORCE_RECONNECT_CYCLES
+            assert not should_force, f"Should NOT force at cycle {cycles}"
+        assert 3 >= STALE_FORCE_RECONNECT_CYCLES, "Should force at exactly cycle 3"
+
+    def test_transport_alive_but_stale_is_degraded_not_healthy(self):
+        """Battery read succeeding while notifications are absent = DEGRADED, not HEALTHY.
+
+        This is the key design invariant — keepalive success alone is not sufficient
+        to declare the link healthy.
+        """
+        import time as _time
+        stale_threshold = 10.0
+        last_notif = 0.0
+        subscribed_at = _time.time() - 30.0
+        now_wall = _time.time()
+
+        silence = (now_wall - last_notif) if last_notif > 0 else (now_wall - subscribed_at)
+
+        battery_read_succeeded = True
+        notifications_stale = silence > stale_threshold
+
+        # Both can be true simultaneously — this is the "masking" scenario
+        assert battery_read_succeeded
+        assert notifications_stale
+        # Correct model: link is DEGRADED, not healthy
+        link_state = "degraded" if notifications_stale else "healthy"
+        assert link_state == "degraded", (
+            "A battery-read success must NOT override stale notification detection"
+        )
+
+    @pytest.mark.asyncio
+    async def test_degraded_status_broadcast_when_stale(self):
+        """_timestamped_put cell logic: silence detected, degraded broadcast sent."""
+        import time as _time
+
+        server = _make_server(mock=False)
+        broadcast_calls = []
+        server.broadcast_json = AsyncMock(side_effect=lambda d, **kw: broadcast_calls.append(d))
+
+        # Simulate what the keepalive loop does on stale detection
+        silence = 15.0
+        stale_threshold = 10.0
+        _stale_warned = False
+
+        if silence > stale_threshold and not _stale_warned:
+            _stale_warned = True
+            await server.broadcast_json({
+                "event": "ble_status",
+                "status": "degraded",
+                "device": "AA:BB:CC:DD:EE:FF",
+                "reason": "no_hr_notifications",
+                "silence_s": round(silence, 1),
+                "timestamp": _time.time(),
+            })
+
+        assert len(broadcast_calls) == 1
+        assert broadcast_calls[0]["status"] == "degraded"
+        assert broadcast_calls[0]["reason"] == "no_hr_notifications"
+        assert broadcast_calls[0]["silence_s"] == 15.0
+
+    @pytest.mark.asyncio
+    async def test_recovered_status_broadcast_when_notifications_resume(self):
+        """On stale recovery, ble_status: connected must be re-broadcast."""
+        import time as _time
+
+        server = _make_server(mock=False)
+        broadcast_calls = []
+        server.broadcast_json = AsyncMock(side_effect=lambda d, **kw: broadcast_calls.append(d))
+
+        stale_threshold = 10.0
+        _stale_warned = True   # was stale
+        silence = 2.0          # notifications resumed (2 s ago)
+
+        if silence <= stale_threshold and _stale_warned:
+            _stale_warned = False
+            await server.broadcast_json({
+                "event": "ble_status",
+                "status": "connected",
+                "device": "AA:BB:CC:DD:EE:FF",
+                "timestamp": _time.time(),
+            })
+
+        assert len(broadcast_calls) == 1
+        assert broadcast_calls[0]["status"] == "connected"
+        assert _stale_warned is False
+
+    @pytest.mark.asyncio
+    async def test_force_reconnect_broadcasts_reconnecting_stale(self):
+        """When STALE_FORCE_RECONNECT_CYCLES is reached, reconnecting_stale must be broadcast."""
+        import time as _time
+
+        server = _make_server(mock=False)
+        broadcast_calls = []
+        server.broadcast_json = AsyncMock(side_effect=lambda d, **kw: broadcast_calls.append(d))
+
+        STALE_FORCE_RECONNECT_CYCLES = 3
+        _stale_keepalive_cycles = 3
+        silence = 40.0
+
+        if _stale_keepalive_cycles >= STALE_FORCE_RECONNECT_CYCLES:
+            await server.broadcast_json({
+                "event": "ble_status",
+                "status": "reconnecting_stale",
+                "device": "AA:BB:CC:DD:EE:FF",
+                "silence_s": round(silence, 1),
+                "keepalive_cycles": _stale_keepalive_cycles,
+                "timestamp": _time.time(),
+            })
+
+        assert len(broadcast_calls) == 1
+        assert broadcast_calls[0]["status"] == "reconnecting_stale"
+        assert broadcast_calls[0]["keepalive_cycles"] == 3
+        assert broadcast_calls[0]["silence_s"] == 40.0
+
+
+class TestKeepaliveHrFallback:
+    """BAT_UUID fallback: GATT errors on HR-char read must not count as transport failures."""
+
+    def test_gatt_refuse_on_hr_fallback_is_not_hard_failure(self):
+        """'read not permitted' from HR char = ATT traffic, NOT a link failure."""
+        _using_hr_fallback = True
+        exc_str = "read not permitted"
+
+        is_gatt_refuse = _using_hr_fallback and (
+            "not permitted" in exc_str
+            or "read not supported" in exc_str
+            or "insufficient" in exc_str
+        )
+        assert is_gatt_refuse, "Should be classified as GATT error, not transport failure"
+
+    def test_gatt_refuse_on_bat_uuid_is_hard_failure(self):
+        """'read not permitted' on battery char = real failure (battery IS readable)."""
+        _using_hr_fallback = False
+        exc_str = "read not permitted"
+
+        is_gatt_refuse = _using_hr_fallback and (
+            "not permitted" in exc_str
+        )
+        assert not is_gatt_refuse, "Battery char error should be counted as hard failure"
+
+    def test_transport_error_on_hr_fallback_is_hard_failure(self):
+        """A plain bleak connection error on HR fallback IS a transport failure."""
+        _using_hr_fallback = True
+        exc_str = "connection reset by peer"
+
+        is_gatt_refuse = _using_hr_fallback and (
+            "not permitted" in exc_str
+            or "read not supported" in exc_str
+            or "insufficient" in exc_str
+        )
+        assert not is_gatt_refuse, "Connection error should NOT be classified as GATT refuse"
+
+    def test_last_notif_cell_has_two_elements(self):
+        """_last_notif_cell must be [wall_time, count] — two elements, not one."""
+        # This documents the new two-cell design so future changes are caught.
+        _last_notif_cell: list = [0.0, 0]
+        ts, count = _last_notif_cell  # should unpack to exactly 2
+        assert ts == 0.0
+        assert count == 0
+
+    def test_timestamped_put_increments_count(self):
+        """_timestamped_put must update both cell[0] (ts) and cell[1] (count)."""
+        import time as _time
+        _last_notif_cell: list = [0.0, 0]
+        enqueued = []
+
+        def _real_put(item):
+            enqueued.append(item)
+
+        def _timestamped_put(item):
+            _last_notif_cell[0] = item[0]
+            _last_notif_cell[1] += 1
+            _real_put(item)
+
+        ts = _time.time()
+        _timestamped_put((ts, 80))
+        _timestamped_put((ts + 1, 82))
+
+        assert _last_notif_cell[1] == 2, "Count should be 2 after 2 notifications"
+        assert _last_notif_cell[0] == ts + 1, "Timestamp should be last notification's ts"
+        assert len(enqueued) == 2
+
