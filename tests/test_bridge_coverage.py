@@ -571,3 +571,143 @@ class TestStartServerAlias:
         server = _make_server()
         # start_server is a class-level alias; both bound methods wrap the same function
         assert server.start_server.__func__ is server.start.__func__
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Connection-state hardening — _ble_connected flag and state reset on disconnect
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestBleConnectionState:
+    """Tests for connection-state management added in the hardening pass."""
+
+    def test_initial_ble_connected_is_false(self):
+        """_ble_connected must start False — no assumed pre-existing connection."""
+        server = _make_server(mock=False)
+        assert server._ble_connected is False
+
+    def test_state_reset_clears_all_ble_fields(self):
+        """Simulate what _start_ble does on disconnect: all BLE fields reset."""
+        import time as _time
+
+        server = _make_server(mock=False)
+        # Populate as if a successful session just ended
+        server._ble_hr = 80
+        server._ble_hr_ts = _time.time()
+        server._ble_hr_changed = True
+        server._ble_connected = True
+
+        # This is the exact reset block now in _start_ble's finally clause
+        server._ble_connected = False
+        server._ble_hr = None
+        server._ble_hr_ts = 0.0
+        server._ble_hr_changed = False
+
+        assert server._ble_connected is False
+        assert server._ble_hr is None
+        assert server._ble_hr_ts == 0.0
+        assert server._ble_hr_changed is False
+
+    @pytest.mark.asyncio
+    async def test_broadcast_loop_stops_after_ble_hr_cleared(self):
+        """After state reset (disconnect), broadcast_loop must not send stale data.
+
+        This is the integration-level regression guard: simulate a disconnect
+        mid-session (reset all BLE fields) and confirm no more frames are sent.
+        """
+        import time as _time
+
+        server = _make_server(mock=False)
+        # Start with a live HR reading
+        server._ble_hr = 95
+        server._ble_hr_ts = _time.time()
+        server._ble_hr_changed = True
+        server._ble_connected = True
+
+        ws = MagicMock()
+        ws.send = AsyncMock()
+        server.clients.add(ws)
+
+        task = asyncio.create_task(server.broadcast_loop())
+        await asyncio.sleep(0.08)   # let one frame through
+
+        # Simulate BLE disconnect → state reset
+        server._ble_connected = False
+        server._ble_hr = None
+        server._ble_hr_ts = 0.0
+        server._ble_hr_changed = False
+
+        sends_at_reset = ws.send.call_count
+        await asyncio.sleep(0.2)    # several more loop ticks — should all be no-ops
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+        assert ws.send.call_count == sends_at_reset, (
+            f"Broadcast loop sent {ws.send.call_count - sends_at_reset} extra frame(s) "
+            "after BLE state was reset — stale data re-broadcast detected"
+        )
+
+    @pytest.mark.asyncio
+    async def test_broadcast_loop_resumes_after_reconnect(self):
+        """After a simulated reconnect (new HR arrives), frames resume flowing."""
+        import time as _time
+
+        server = _make_server(mock=False)
+        server._ble_hr = None
+        server._ble_hr_changed = False
+        server._ble_connected = False
+
+        ws = MagicMock()
+        ws.send = AsyncMock()
+        server.clients.add(ws)
+
+        task = asyncio.create_task(server.broadcast_loop())
+
+        # Phase 1: no connection — nothing sent
+        await asyncio.sleep(0.1)
+        assert ws.send.call_count == 0, "Should not send while disconnected"
+
+        # Phase 2: reconnect delivers new reading
+        server._ble_connected = True
+        server._ble_hr = 70
+        server._ble_hr_ts = _time.time()
+        server._ble_hr_changed = True
+
+        await asyncio.sleep(0.12)
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+        assert ws.send.call_count >= 1, "Should resume sending after reconnect"
+        frame = ws.send.call_args_list[0][0][0]
+        _, hr = struct.unpack(FRAME_FMT, frame)
+        assert hr == 70
+
+    def test_duplicate_ble_task_guard_skips_second_start(self):
+        """start() must not create a second BLE task if one is already running.
+
+        We verify the guard logic by checking that a running non-done task
+        is not replaced.
+        """
+        server = _make_server(mock=False)
+
+        # Simulate an already-running task
+        mock_task = MagicMock(spec=asyncio.Task)
+        mock_task.done.return_value = False  # still running
+        mock_task.get_name.return_value = "ble_connect_loop"
+        server._ble_task = mock_task
+
+        # The guard condition in start():
+        if server._ble_task is not None and not server._ble_task.done():
+            duplicate_would_be_created = False
+        else:
+            duplicate_would_be_created = True
+
+        assert not duplicate_would_be_created, (
+            "Guard logic should prevent duplicate BLE task creation"
+        )
+

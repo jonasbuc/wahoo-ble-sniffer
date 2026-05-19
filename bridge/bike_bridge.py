@@ -161,6 +161,7 @@ class WahooBridgeServer:
         self._ble_hr: Optional[int] = None
         self._ble_hr_ts: float = 0.0      # wall-clock time of the last BLE notification
         self._ble_hr_changed: bool = False # True when a new BLE value has not been sent yet
+        self._ble_connected: bool = False  # True only while a live subscription is active
         self._ble_task: Optional[asyncio.Task] = None
         # Reconnect backoff parameters for the BLE connect loop
         self.keepalive_interval = keepalive_interval  # seconds between battery reads
@@ -326,12 +327,23 @@ class WahooBridgeServer:
             self.host,
             self.port,
         )
-        # Start BLE task when bleak is available
-        if HAVE_BLEAK:
-            try:
-                self._ble_task = asyncio.create_task(self._start_ble())
-            except Exception:
-                LOG.exception("Failed to start BLE task")
+        # Start BLE task when bleak is available, guarding against duplicate tasks.
+        # If start() is ever called twice, a second task must not be created while
+        # the first is still running — both would scan and subscribe concurrently,
+        # leading to duplicate callbacks and double-writes to _ble_hr.
+        if HAVE_BLEAK and not self.mock:
+            if self._ble_task is not None and not self._ble_task.done():
+                LOG.warning(
+                    "BLE task already running (task=%s); skipping duplicate start",
+                    self._ble_task.get_name(),
+                )
+            else:
+                try:
+                    self._ble_task = asyncio.create_task(
+                        self._start_ble(), name="ble_connect_loop"
+                    )
+                except Exception:
+                    LOG.exception("Failed to start BLE task")
 
         async with websockets.serve(self.register, self.host, self.port):
             # Start UDP listener for trigger events (Arduino/Unity)
@@ -563,7 +575,10 @@ class WahooBridgeServer:
                                 break
 
                 if target is None:
-                    LOG.info("No TICKR device found during scan; will retry")
+                    LOG.warning(
+                        "No TICKR device found during scan (attempt %d); will retry after backoff",
+                        attempt,
+                    )
                     raise RuntimeError("no_tickr_found")
 
                 LOG.info(
@@ -596,8 +611,12 @@ class WahooBridgeServer:
                         elif hasattr(client, "disconnected_callback"):
                             # bleak ≥ 0.20 style — assign attribute directly
                             client.disconnected_callback = _on_disc
-                    except Exception:
-                        LOG.debug("Could not register disconnected callback")
+                    except Exception as exc:
+                        LOG.warning(
+                            "Could not register BLE disconnected callback on %s: %s: %s"
+                            " — disconnect detection will rely on is_connected polling only",
+                            getattr(target, "address", target), type(exc).__name__, exc,
+                        )
 
                     def hr_handler(sender, data: bytes):
                         """Parse a raw HR notification and update self._ble_hr.
@@ -652,57 +671,174 @@ class WahooBridgeServer:
                     LOG.debug("Discovered characteristic UUIDs on %s: %s",
                               getattr(target, "address", target), char_uuids)
 
+                    if not char_uuids:
+                        LOG.warning(
+                            "Service discovery returned no characteristics on %s "
+                            "— bleak API mismatch or device not ready; will retry",
+                            getattr(target, "address", target),
+                        )
+
                     # battery characteristic for periodic keepalive reads
                     BAT_UUID = "00002a19-0000-1000-8000-00805f9b34fb"
 
                     if HR_UUID in char_uuids:
                         try:
                             await client.start_notify(HR_UUID, hr_handler)
-                            LOG.info("Subscribed to HR notifications on %s", getattr(target, "address", target))
-                            # Reset attempt counter so backoff starts fresh on next disconnection
+                            LOG.info(
+                                "Subscribed to HR notifications on %s",
+                                getattr(target, "address", target),
+                            )
+                            # Mark as live-connected and reset attempt counter so
+                            # backoff starts fresh on the *next* disconnection.
+                            self._ble_connected = True
                             attempt = 0
 
-                            # Stay in this loop while the device is connected.
-                            # The loop also performs periodic battery reads (keepalive) to
-                            # prevent macOS from dropping the BLE link after ~30 s of
-                            # silence on the ATT channel.
-                            # Use self.keepalive_interval (from --keepalive-interval arg).
+                            # ── Keepalive + stale-notification monitor ────────
+                            # The loop does two jobs:
+                            #  1. Periodic battery reads to keep the ATT link alive
+                            #     on macOS (which drops silent BLE links after ~30 s).
+                            #  2. Stale-notification warning: if the TICKR stops
+                            #     sending HR updates (e.g. chest strap loses skin
+                            #     contact, device goes to sleep) while the BLE
+                            #     connection itself looks healthy, log a WARNING so
+                            #     operators know data has stopped flowing.
                             keepalive_interval = self.keepalive_interval
+                            stale_threshold = max(10.0, 2.5 * keepalive_interval)
                             last_keep = 0.0
+                            _subscribed_at = time.time()
+                            _stale_warned = False
+                            _keepalive_fail_streak = 0
+
                             while client.is_connected and not disconnected_event.is_set():
+                                await asyncio.sleep(1.0)
                                 now_ts = asyncio.get_running_loop().time()
+                                now_wall = time.time()
+
+                                # ── Stale-notification detection ──────────────
+                                # Use _ble_hr_ts as the last-notification wall time.
+                                # Only warn once per silent period; reset when data resumes.
+                                last_notif = self._ble_hr_ts
+                                if last_notif > 0:
+                                    silence = now_wall - last_notif
+                                else:
+                                    silence = now_wall - _subscribed_at
+
+                                if silence > stale_threshold and not _stale_warned:
+                                    LOG.warning(
+                                        "No HR notification received for %.0f s from %s "
+                                        "— device may have lost sensor contact or gone out "
+                                        "of range (BLE link still open)",
+                                        silence,
+                                        getattr(target, "address", target),
+                                    )
+                                    _stale_warned = True
+                                elif silence <= stale_threshold and _stale_warned:
+                                    LOG.info(
+                                        "HR notifications resumed from %s after %.0f s gap",
+                                        getattr(target, "address", target),
+                                        silence,
+                                    )
+                                    _stale_warned = False
+
+                                # ── Battery keepalive ─────────────────────────
                                 if BAT_UUID in char_uuids and (now_ts - last_keep) >= keepalive_interval:
                                     try:
-                                        # Battery level read (result is discarded — we only
-                                        # care about keeping the ATT connection alive)
                                         _ = await client.read_gatt_char(BAT_UUID)
-                                        LOG.debug("Performed keepalive battery read")
-                                    except Exception:
-                                        LOG.debug("Keepalive read failed (ignored)")
+                                        LOG.debug("Performed keepalive battery read on %s",
+                                                  getattr(target, "address", target))
+                                        _keepalive_fail_streak = 0
+                                    except Exception as exc:
+                                        _keepalive_fail_streak += 1
+                                        if _keepalive_fail_streak >= 3:
+                                            LOG.warning(
+                                                "Keepalive battery read failed %d time(s) "
+                                                "on %s: %s: %s — BLE link may be degraded",
+                                                _keepalive_fail_streak,
+                                                getattr(target, "address", target),
+                                                type(exc).__name__, exc,
+                                            )
+                                        else:
+                                            LOG.debug(
+                                                "Keepalive read failed (streak=%d, ignored)",
+                                                _keepalive_fail_streak,
+                                            )
                                     last_keep = now_ts
 
-                                await asyncio.sleep(1.0)
-
                             if disconnected_event.is_set():
-                                LOG.info("Detected disconnection via callback for %s", getattr(target, "address", target))
+                                LOG.warning(
+                                    "BLE device %s disconnected (detected via callback)",
+                                    getattr(target, "address", target),
+                                )
+                            else:
+                                LOG.warning(
+                                    "BLE device %s disconnected (detected via is_connected polling)",
+                                    getattr(target, "address", target),
+                                )
                         finally:
+                            # ── State reset on disconnect ─────────────────────
+                            # Clear all live-HR state so broadcast_loop stops
+                            # sending and Unity clients see the feed go silent
+                            # rather than receiving infinitely stale data from
+                            # the previous connection session.
+                            if self._ble_hr is not None:
+                                LOG.warning(
+                                    "Clearing stale HR state after BLE disconnect "
+                                    "(last value: %d bpm from %s) — no more frames "
+                                    "will be sent until reconnect delivers new data",
+                                    self._ble_hr,
+                                    getattr(target, "address", target),
+                                )
+                            self._ble_connected = False
+                            self._ble_hr = None
+                            self._ble_hr_ts = 0.0
+                            self._ble_hr_changed = False
+
                             try:
                                 await client.stop_notify(HR_UUID)
-                                LOG.info("Stopped HR notifications on %s", getattr(target, "address", target))
+                                LOG.info(
+                                    "Stopped HR notifications on %s",
+                                    getattr(target, "address", target),
+                                )
                             except Exception:
-                                LOG.debug("Exception while stopping notify on %s", getattr(target, "address", target))
+                                LOG.debug(
+                                    "Exception while stopping notify on %s",
+                                    getattr(target, "address", target),
+                                )
                     else:
-                        LOG.info("Target device does not expose HR characteristic; disconnecting")
+                        LOG.warning(
+                            "HR characteristic (%s) not found on %s "
+                            "(discovered %d characteristic(s): %s) "
+                            "— device may not support HR notifications or "
+                            "service discovery failed; will retry",
+                            HR_UUID,
+                            getattr(target, "address", target),
+                            len(char_uuids),
+                            char_uuids[:5] or "none",
+                        )
 
             except asyncio.CancelledError:
                 LOG.info("BLE task cancelled")
                 break
+            except RuntimeError as exc:
+                # Known expected condition: device not found during scan.
+                # Handled with a plain log already; avoid printing a full traceback
+                # for an anticipated operational state.
+                if str(exc) == "no_tickr_found":
+                    pass  # already logged at WARNING before raise
+                else:
+                    LOG.exception(
+                        "BLE runtime error (attempt %d); will retry: %s", attempt, exc
+                    )
             except Exception:
-                LOG.exception("BLE connection loop error; will retry")
+                LOG.exception("BLE connection loop error (attempt %d); will retry", attempt)
 
             # Exponential backoff: delay = min(max_backoff, base * 2^(attempt-1))
             backoff = min(self.max_backoff, self.base_backoff * (2 ** max(0, attempt - 1)))
-            LOG.info("Retrying BLE connect in %.1f seconds", backoff)
+            LOG.warning(
+                "BLE reconnect attempt %d — retrying in %.1f s "
+                "(base=%.1fs, max=%.1fs)",
+                attempt, backoff, self.base_backoff, self.max_backoff,
+            )
             try:
                 await asyncio.sleep(backoff)
             except asyncio.CancelledError:
