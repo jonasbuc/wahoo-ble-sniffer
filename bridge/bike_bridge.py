@@ -257,9 +257,27 @@ class WahooBridgeServer:
                         if self._ble_hr is None or not self._ble_hr_changed:
                             await asyncio.sleep(0.05)
                             continue
-                        # Use the timestamp of the actual BLE notification, not now()
-                        message = struct.pack("di", self._ble_hr_ts, int(self._ble_hr))
-                        self._ble_hr_changed = False   # mark as consumed
+                        # Snapshot both fields into locals *before* clearing the flag.
+                        #
+                        # hr_handler may run on the BLE callback thread concurrently
+                        # with this coroutine (CPython GIL does not prevent interleaving
+                        # between individual LOAD_ATTR bytecodes).  Reading
+                        # self._ble_hr_ts and self._ble_hr as two separate attribute
+                        # loads risks pairing a timestamp from notification N with an
+                        # HR value from notification N+1, producing an inconsistent
+                        # frame.  Taking local snapshots first binds both fields to the
+                        # same notification.
+                        #
+                        # Clearing the flag *after* the snapshot means: if hr_handler
+                        # fires between the snapshot and the clear it will write new
+                        # values into self._ble_hr / self._ble_hr_ts and set
+                        # _ble_hr_changed = True again, so the newer notification is
+                        # picked up on the very next loop iteration rather than being
+                        # silently discarded.
+                        _hr = int(self._ble_hr)
+                        _ts = self._ble_hr_ts
+                        self._ble_hr_changed = False   # clear after snapshot
+                        message = struct.pack("di", _ts, _hr)
 
                     if message is not None:
                         # Send to every client; on any error remove the offending client

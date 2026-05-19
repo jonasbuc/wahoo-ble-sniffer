@@ -366,6 +366,156 @@ class TestBroadcastLoopLiveMode:
         _ts, hr = struct.unpack(FRAME_FMT, last_call_arg)
         assert hr == 78
 
+    @pytest.mark.asyncio
+    async def test_live_mode_no_send_when_flag_false_but_hr_set(self):
+        """_ble_hr has a value but _ble_hr_changed is False → no frames sent.
+
+        This is the key regression guard for the new optimisation: stale HR
+        values must not be re-broadcast simply because they exist in memory.
+        """
+        server = _make_server(mock=False)
+        server._ble_hr = 72          # value IS present
+        server._ble_hr_ts = __import__("time").time()
+        server._ble_hr_changed = False  # but no new notification has arrived
+
+        ws = MagicMock()
+        ws.send = AsyncMock()
+        server.clients.add(ws)
+
+        task = asyncio.create_task(server.broadcast_loop())
+        await asyncio.sleep(0.2)
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+        ws.send.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_live_mode_flag_cleared_after_send(self):
+        """_ble_hr_changed must be False after the broadcast loop sends a frame."""
+        server = _make_server(mock=False)
+        server._ble_hr = 90
+        server._ble_hr_ts = __import__("time").time()
+        server._ble_hr_changed = True
+
+        ws = MagicMock()
+        ws.send = AsyncMock()
+        server.clients.add(ws)
+
+        task = asyncio.create_task(server.broadcast_loop())
+        # Allow one full send cycle (50 ms cadence + margin)
+        await asyncio.sleep(0.12)
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+        ws.send.assert_called()
+        assert server._ble_hr_changed is False, (
+            "_ble_hr_changed should be reset to False after the frame is sent"
+        )
+
+    @pytest.mark.asyncio
+    async def test_live_mode_two_sequential_notifications(self):
+        """Two BLE notifications → exactly two frames sent (no extras, no drops)."""
+        import time as _time
+
+        server = _make_server(mock=False)
+        server._ble_hr = None
+        server._ble_hr_changed = False
+
+        ws = MagicMock()
+        ws.send = AsyncMock()
+        server.clients.add(ws)
+
+        task = asyncio.create_task(server.broadcast_loop())
+
+        # First BLE notification
+        await asyncio.sleep(0.02)
+        server._ble_hr = 65
+        server._ble_hr_ts = _time.time()
+        server._ble_hr_changed = True
+        await asyncio.sleep(0.12)   # let the loop consume it
+
+        # Confirm flag was consumed before sending second notification
+        assert server._ble_hr_changed is False
+
+        # Second BLE notification
+        server._ble_hr = 66
+        server._ble_hr_ts = _time.time()
+        server._ble_hr_changed = True
+        await asyncio.sleep(0.12)   # let the loop consume it
+
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+        assert ws.send.call_count == 2, (
+            f"Expected exactly 2 sends for 2 notifications, got {ws.send.call_count}"
+        )
+        hrs = [struct.unpack(FRAME_FMT, call[0][0])[1] for call in ws.send.call_args_list]
+        assert hrs == [65, 66]
+
+    @pytest.mark.asyncio
+    async def test_live_mode_no_duplicate_send_after_flag_consumed(self):
+        """After the flag is consumed, the same HR value is not re-broadcast."""
+        server = _make_server(mock=False)
+        server._ble_hr = 88
+        server._ble_hr_ts = __import__("time").time()
+        server._ble_hr_changed = True
+
+        ws = MagicMock()
+        ws.send = AsyncMock()
+        server.clients.add(ws)
+
+        task = asyncio.create_task(server.broadcast_loop())
+        # Allow enough time for several loop ticks (5×50 ms = 250 ms)
+        await asyncio.sleep(0.3)
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+        # Even though the loop ran ~6 times, only ONE frame should have been sent
+        assert ws.send.call_count == 1, (
+            f"Stale HR value re-broadcast: expected 1 send, got {ws.send.call_count}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_mock_mode_sends_regardless_of_ble_hr_changed(self):
+        """Mock mode must NOT be gated by _ble_hr_changed (regression guard)."""
+        server = _make_server(mock=True)
+        server._ble_hr_changed = False   # explicitly False — must not suppress mock sends
+
+        ws = MagicMock()
+        ws.send = AsyncMock()
+        server.clients.add(ws)
+
+        task = asyncio.create_task(server.broadcast_loop())
+        await asyncio.sleep(0.2)
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+        # Mock mode runs at ~20 Hz; in 200 ms we expect at least 3 frames
+        assert ws.send.call_count >= 3, (
+            f"Mock mode should send freely; got only {ws.send.call_count} sends"
+        )
+        # Verify each frame is a valid 12-byte binary packet
+        for call in ws.send.call_args_list:
+            frame = call[0][0]
+            assert len(frame) == FRAME_SIZE
+            _ts, hr = struct.unpack(FRAME_FMT, frame)
+            assert 40 <= hr <= 220, f"Mock HR {hr} out of plausible range"
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # start() — UDP bind failure is non-fatal
