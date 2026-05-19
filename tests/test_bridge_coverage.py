@@ -337,9 +337,10 @@ class TestBroadcastLoopLiveMode:
 
     @pytest.mark.asyncio
     async def test_live_mode_sends_once_ble_hr_set(self):
-        """Frames are sent once _ble_hr has a value."""
+        """Frames are sent once _ble_hr has a value and _ble_hr_changed is True."""
         server = _make_server(mock=False)
         server._ble_hr = None
+        server._ble_hr_changed = False
 
         ws = MagicMock()
         ws.send = AsyncMock()
@@ -347,8 +348,10 @@ class TestBroadcastLoopLiveMode:
 
         task = asyncio.create_task(server.broadcast_loop())
         await asyncio.sleep(0.05)
-        # Now provide a HR reading
+        # Simulate a BLE notification arriving
         server._ble_hr = 78
+        server._ble_hr_ts = __import__("time").time()
+        server._ble_hr_changed = True
         await asyncio.sleep(0.15)
         task.cancel()
         try:
