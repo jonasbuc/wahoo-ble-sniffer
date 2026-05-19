@@ -146,6 +146,7 @@ class WahooBridgeServer:
         max_backoff: float = 30.0,
         scan_timeout: float = 12.0,
         spawn_interval: Optional[float] = None,
+        max_reconnect_attempts: int = 0,
     ):
         self.host = host
         self.port = port
@@ -157,18 +158,24 @@ class WahooBridgeServer:
         self.clients: Set[Any] = set() # Active WebSocket connections
         self.running = False
         self.mockgen = MockCyclingData()   # Simulated data generator (used in mock mode)
-        # BLE state (populated by _start_ble() once a TICKR is connected)
-        self._ble_hr: Optional[int] = None
-        self._ble_hr_ts: float = 0.0      # wall-clock time of the last BLE notification
-        self._ble_hr_changed: bool = False # True when a new BLE value has not been sent yet
+        # ── BLE state ────────────────────────────────────────────────────────
+        # hr_handler (a bleak callback that may run on a worker thread) places
+        # (timestamp, hr) tuples onto this Queue using
+        # loop.call_soon_threadsafe(queue.put_nowait, ...).
+        # broadcast_loop drains the Queue on the event-loop thread — no shared
+        # mutable fields, no flag races.
+        self._hr_queue: asyncio.Queue = asyncio.Queue(maxsize=32)
         self._ble_connected: bool = False  # True only while a live subscription is active
         self._ble_task: Optional[asyncio.Task] = None
-        # Reconnect backoff parameters for the BLE connect loop
+        # ── Reconnect policy ─────────────────────────────────────────────────
         self.keepalive_interval = keepalive_interval  # seconds between battery reads
         self.base_backoff = base_backoff               # initial backoff (seconds)
         self.max_backoff = max_backoff                 # cap on backoff (seconds)
         self.scan_timeout = scan_timeout               # BLE scan timeout (seconds)
-        self.spawn_interval = spawn_interval           # seconds between auto spawn events (None = disabled)
+        self.spawn_interval = spawn_interval           # seconds between auto spawn events
+        # max_reconnect_attempts: 0 = retry forever (default).
+        # Set > 0 to cap total consecutive failures before giving up.
+        self.max_reconnect_attempts = max_reconnect_attempts
 
     async def register(self, ws: Any):
         """Handle a single WebSocket client for its entire lifetime.
@@ -199,6 +206,14 @@ class WahooBridgeServer:
             async for message in ws:
                 try:
                     if isinstance(message, str):
+                        # Guard against oversized payloads from rogue/buggy clients.
+                        # 4 096 bytes is far more than any legitimate event JSON needs.
+                        if len(message) > 4096:
+                            LOG.warning(
+                                "Dropping oversized message from %s (%d bytes > 4096 limit)",
+                                ws.remote_address, len(message),
+                            )
+                            continue
                         try:
                             data = json.loads(message)
                         except Exception:
@@ -232,16 +247,17 @@ class WahooBridgeServer:
         **Mock mode** — generates a fresh simulated frame every tick at ~20 Hz
         so the Unity client sees smooth, varied data during development.
 
-        **Live mode** — sends a frame *only when the Wahoo TICKR delivers a new
-        BLE notification* (~1 Hz).  The timestamp packed into the frame is the
-        moment the BLE notification arrived, not the current wall-clock time,
-        so downstream consumers get an accurate sample time even if there is a
-        small asyncio scheduling delay.
+        **Live mode** — consumes ``(timestamp, hr)`` tuples from ``_hr_queue``,
+        which is filled by ``hr_handler`` via ``loop.call_soon_threadsafe``.
+        This means:
 
-        This means in live mode Unity receives ~1 message/second (12 bytes/s)
-        instead of 20 identical duplicates/second (240 bytes/s).  If no new HR
-        value has arrived the loop simply sleeps and tries again — it never
-        sends stale data.
+        * No shared mutable state between the BLE callback thread and the
+          event-loop thread — the Queue is the only crossing point, so the
+          flag-race class of bug is eliminated entirely.
+        * Frames are sent only when the Wahoo TICKR delivers a real BLE
+          notification (~1 Hz), never from stale cached values.
+        * Multiple fast notifications are not lost — each one is enqueued
+          individually and consumed in order.
         """
         LOG.info("Starting broadcast loop on ws://%s:%d", self.host, self.port)
         self.running = True
@@ -254,31 +270,13 @@ class WahooBridgeServer:
                         # Mock mode: generate a fresh simulated frame every tick (~20 Hz)
                         message = self.mockgen.get_binary_frame()
                     else:
-                        # Live mode: only send when the BLE callback delivered a new value
-                        if self._ble_hr is None or not self._ble_hr_changed:
-                            await asyncio.sleep(0.05)
-                            continue
-                        # Snapshot both fields into locals *before* clearing the flag.
-                        #
-                        # hr_handler may run on the BLE callback thread concurrently
-                        # with this coroutine (CPython GIL does not prevent interleaving
-                        # between individual LOAD_ATTR bytecodes).  Reading
-                        # self._ble_hr_ts and self._ble_hr as two separate attribute
-                        # loads risks pairing a timestamp from notification N with an
-                        # HR value from notification N+1, producing an inconsistent
-                        # frame.  Taking local snapshots first binds both fields to the
-                        # same notification.
-                        #
-                        # Clearing the flag *after* the snapshot means: if hr_handler
-                        # fires between the snapshot and the clear it will write new
-                        # values into self._ble_hr / self._ble_hr_ts and set
-                        # _ble_hr_changed = True again, so the newer notification is
-                        # picked up on the very next loop iteration rather than being
-                        # silently discarded.
-                        _hr = int(self._ble_hr)
-                        _ts = self._ble_hr_ts
-                        self._ble_hr_changed = False   # clear after snapshot
-                        message = struct.pack("di", _ts, _hr)
+                        # Live mode: drain one item from the Queue if available.
+                        # get_nowait() never blocks; returns None path via exception.
+                        try:
+                            ts, hr = self._hr_queue.get_nowait()
+                            message = struct.pack("di", ts, hr)
+                        except asyncio.QueueEmpty:
+                            message = None
 
                     if message is not None:
                         # Send to every client; on any error remove the offending client
@@ -447,6 +445,15 @@ class WahooBridgeServer:
 
         def datagram_received(self, data: bytes, addr: Tuple[str, int]):
             """Called by asyncio when a UDP datagram arrives."""
+            # Reject oversized datagrams — a legitimate Arduino trigger message
+            # is at most a few dozen bytes.  Anything > 1024 bytes is either a
+            # misconfigured sender or a malicious flood; drop it immediately.
+            if len(data) > 1024:
+                LOG.warning(
+                    "Dropping oversized UDP datagram from %s:%d (%d bytes > 1024 limit)",
+                    addr[0], addr[1], len(data),
+                )
+                return
             try:
                 text = data.decode("utf-8", errors="ignore").strip()
             except Exception:
@@ -619,11 +626,23 @@ class WahooBridgeServer:
                         )
 
                     def hr_handler(sender, data: bytes):
-                        """Parse a raw HR notification and update self._ble_hr.
+                        """Parse a raw HR notification and enqueue it for broadcast_loop.
 
                         HR Measurement byte layout (Bluetooth spec §3.106):
                           Byte 0 bit 0: 0 → HR is uint8 at byte 1
                                         1 → HR is uint16 LE at bytes 1-2
+
+                        This callback may be invoked on a bleak worker thread.
+                        We therefore NEVER write to shared server state directly.
+                        Instead we schedule a put_nowait onto ``_hr_queue`` via
+                        ``call_soon_threadsafe`` so the enqueue happens on the
+                        event-loop thread, which is the only thread that may
+                        safely mutate asyncio data structures.
+
+                        Range validation: values outside 20–250 bpm are rejected
+                        before reaching the queue.  Physiologically impossible
+                        readings (e.g. corrupted packet giving hr=0 or hr=65535)
+                        would otherwise appear verbatim in Unity and the DB.
                         """
                         try:
                             flags = data[0]
@@ -632,10 +651,51 @@ class WahooBridgeServer:
                                 hr = data[1]           # 1-byte HR value
                             else:
                                 hr = int.from_bytes(data[1:3], "little")  # 2-byte HR value
-                            self._ble_hr = int(hr)
-                            self._ble_hr_ts = time.time()   # record notification arrival time
-                            self._ble_hr_changed = True      # signal broadcast_loop
-                            LOG.debug("BLE HR update: %d", hr)
+
+                            # ── Range validation ─────────────────────────────
+                            # Reject physiologically impossible values before they
+                            # reach the queue, the wire, or any database.
+                            # Normal resting: 40–100 bpm.  Elite exercise: up to ~220.
+                            # We allow 20–250 to leave headroom for unusual edge cases.
+                            if not (20 <= hr <= 250):
+                                LOG.warning(
+                                    "BLE HR value %d bpm out of valid range [20–250] "
+                                    "from %s — packet discarded",
+                                    hr,
+                                    getattr(sender, "uuid", "<unknown>"),
+                                )
+                                return
+
+                            LOG.debug("BLE HR update: %d bpm", hr)
+
+                            # ── Thread-safe enqueue ──────────────────────────
+                            # call_soon_threadsafe guarantees the put_nowait runs
+                            # on the event-loop thread even if hr_handler was called
+                            # from a background thread (which bleak sometimes does).
+                            # If the queue is full (>32 items, i.e. loop is behind)
+                            # we drop the oldest item first so the queue never blocks
+                            # and broadcast_loop always sees fresh data.
+                            ts = time.time()
+                            try:
+                                loop = asyncio.get_event_loop()
+                            except RuntimeError:
+                                return  # no event loop — bridge is shutting down
+
+                            def _enqueue():
+                                if self._hr_queue.full():
+                                    try:
+                                        self._hr_queue.get_nowait()   # drop oldest
+                                        LOG.debug(
+                                            "HR queue full — dropped oldest item to make room"
+                                        )
+                                    except asyncio.QueueEmpty:
+                                        pass
+                                try:
+                                    self._hr_queue.put_nowait((ts, int(hr)))
+                                except asyncio.QueueFull:
+                                    pass  # extremely unlikely after the drain above
+
+                            loop.call_soon_threadsafe(_enqueue)
                         except Exception as exc:
                             LOG.debug(
                                 "Failed to parse HR notification (len=%d): %s: %s",
@@ -688,10 +748,18 @@ class WahooBridgeServer:
                                 "Subscribed to HR notifications on %s",
                                 getattr(target, "address", target),
                             )
-                            # Mark as live-connected and reset attempt counter so
-                            # backoff starts fresh on the *next* disconnection.
+                            # Mark as live-connected, broadcast status to Unity clients,
+                            # and reset attempt counter so backoff starts fresh on the
+                            # *next* disconnection.
                             self._ble_connected = True
                             attempt = 0
+                            asyncio.create_task(self.broadcast_json({
+                                "event": "ble_status",
+                                "status": "connected",
+                                "device": getattr(target, "address", str(target)),
+                                "name": getattr(target, "name", None),
+                                "timestamp": time.time(),
+                            }))
 
                             # ── Keepalive + stale-notification monitor ────────
                             # The loop does two jobs:
@@ -706,6 +774,26 @@ class WahooBridgeServer:
                             stale_threshold = max(10.0, 2.5 * keepalive_interval)
                             last_keep = 0.0
                             _subscribed_at = time.time()
+                            # Track the last notification wall time locally in this
+                            # connection session.  hr_handler posts to the Queue via
+                            # call_soon_threadsafe; we use a mutable list as a
+                            # single-element "cell" so _enqueue can update it from
+                            # the event-loop thread without a shared instance attribute.
+                            _last_notif_cell: list = [0.0]   # [last_notif_wall_time]
+                            _orig_enqueue = None  # patched below after hr_handler defined
+
+                            # Monkey-patch hr_handler's _enqueue to also update the cell.
+                            # We do this by wrapping the Queue put with an additional
+                            # time.time() write — all on the event-loop thread because
+                            # call_soon_threadsafe guarantees that.
+                            _real_put = self._hr_queue.put_nowait
+
+                            def _timestamped_put(item):
+                                _last_notif_cell[0] = item[0]  # item = (ts, hr)
+                                _real_put(item)
+
+                            self._hr_queue.put_nowait = _timestamped_put  # type: ignore[method-assign]
+
                             _stale_warned = False
                             _keepalive_fail_streak = 0
 
@@ -715,13 +803,8 @@ class WahooBridgeServer:
                                 now_wall = time.time()
 
                                 # ── Stale-notification detection ──────────────
-                                # Use _ble_hr_ts as the last-notification wall time.
-                                # Only warn once per silent period; reset when data resumes.
-                                last_notif = self._ble_hr_ts
-                                if last_notif > 0:
-                                    silence = now_wall - last_notif
-                                else:
-                                    silence = now_wall - _subscribed_at
+                                last_notif = _last_notif_cell[0]
+                                silence = (now_wall - last_notif) if last_notif > 0 else (now_wall - _subscribed_at)
 
                                 if silence > stale_threshold and not _stale_warned:
                                     LOG.warning(
@@ -776,22 +859,35 @@ class WahooBridgeServer:
                                 )
                         finally:
                             # ── State reset on disconnect ─────────────────────
-                            # Clear all live-HR state so broadcast_loop stops
-                            # sending and Unity clients see the feed go silent
-                            # rather than receiving infinitely stale data from
-                            # the previous connection session.
-                            if self._ble_hr is not None:
-                                LOG.warning(
-                                    "Clearing stale HR state after BLE disconnect "
-                                    "(last value: %d bpm from %s) — no more frames "
-                                    "will be sent until reconnect delivers new data",
-                                    self._ble_hr,
-                                    getattr(target, "address", target),
+                            # Restore the real put_nowait so no stale wrapper
+                            # references the closed session's _last_notif_cell.
+                            self._hr_queue.put_nowait = _real_put  # type: ignore[method-assign]
+
+                            # Drain any queued readings from the dead session so
+                            # broadcast_loop does not send old data to the first
+                            # client that connects after reconnect.
+                            drained = 0
+                            while not self._hr_queue.empty():
+                                try:
+                                    self._hr_queue.get_nowait()
+                                    drained += 1
+                                except asyncio.QueueEmpty:
+                                    break
+                            if drained:
+                                LOG.debug(
+                                    "Drained %d stale HR item(s) from queue after disconnect",
+                                    drained,
                                 )
+
                             self._ble_connected = False
-                            self._ble_hr = None
-                            self._ble_hr_ts = 0.0
-                            self._ble_hr_changed = False
+
+                            # Notify Unity clients that the sensor feed has dropped.
+                            asyncio.create_task(self.broadcast_json({
+                                "event": "ble_status",
+                                "status": "disconnected",
+                                "device": getattr(target, "address", str(target)),
+                                "timestamp": time.time(),
+                            }))
 
                             try:
                                 await client.stop_notify(HR_UUID)
@@ -832,6 +928,27 @@ class WahooBridgeServer:
             except Exception:
                 LOG.exception("BLE connection loop error (attempt %d); will retry", attempt)
 
+            # ── Max-retry hard stop ───────────────────────────────────────────
+            # If max_reconnect_attempts > 0 and we have exhausted them, give up
+            # rather than looping silently forever in a broken state.
+            # The CRITICAL log makes it impossible to miss in any monitoring tool.
+            if self.max_reconnect_attempts > 0 and attempt >= self.max_reconnect_attempts:
+                LOG.critical(
+                    "BLE: gave up after %d consecutive failed attempt(s) "
+                    "(max_reconnect_attempts=%d). "
+                    "The bridge will continue running in degraded mode — "
+                    "WebSocket clients will receive no live HR data. "
+                    "Restart the bridge or fix the hardware to recover.",
+                    attempt, self.max_reconnect_attempts,
+                )
+                asyncio.create_task(self.broadcast_json({
+                    "event": "ble_status",
+                    "status": "failed",
+                    "attempts": attempt,
+                    "timestamp": time.time(),
+                }))
+                break
+
             # Exponential backoff: delay = min(max_backoff, base * 2^(attempt-1))
             backoff = min(self.max_backoff, self.base_backoff * (2 ** max(0, attempt - 1)))
             LOG.warning(
@@ -839,6 +956,14 @@ class WahooBridgeServer:
                 "(base=%.1fs, max=%.1fs)",
                 attempt, backoff, self.base_backoff, self.max_backoff,
             )
+            # Broadcast a "scanning" status so Unity can show a reconnecting indicator
+            asyncio.create_task(self.broadcast_json({
+                "event": "ble_status",
+                "status": "scanning",
+                "attempt": attempt,
+                "retry_in": backoff,
+                "timestamp": time.time(),
+            }))
             try:
                 await asyncio.sleep(backoff)
             except asyncio.CancelledError:
@@ -948,6 +1073,17 @@ def parse_args():
         metavar="SECONDS",
         help="Emit a JSON spawn event every N seconds (useful for testing)",
     )
+    p.add_argument(
+        "--max-reconnect-attempts",
+        type=int,
+        default=0,
+        metavar="N",
+        help=(
+            "Maximum number of consecutive BLE reconnect attempts before giving up "
+            "(0 = retry forever, the default). When the limit is reached the bridge "
+            "logs CRITICAL and enters degraded mode — no live HR data."
+        ),
+    )
     return p.parse_args()
 
 
@@ -967,6 +1103,8 @@ def main():
     LOG.info("  udp      = %s:%d", "127.0.0.1", 5005)
     if args.ble_address:
         LOG.info("  ble addr = %s", args.ble_address)
+    if args.max_reconnect_attempts:
+        LOG.info("  max reconnect = %d attempts", args.max_reconnect_attempts)
     LOG.info(
         "──────────────────────────────────────────────────────────────────────────"
     )
@@ -982,6 +1120,7 @@ def main():
         max_backoff=args.max_backoff,
         scan_timeout=args.scan_timeout,
         spawn_interval=args.spawn_interval,
+        max_reconnect_attempts=args.max_reconnect_attempts,
     )
     try:
         asyncio.run(server.start())

@@ -95,9 +95,9 @@ class TestServerInitAttributes:
         assert isinstance(s.clients, set)
         assert len(s.clients) == 0
 
-    def test_ble_hr_starts_none(self):
+    def test_hr_queue_starts_empty(self):
         s = _make_server()
-        assert s._ble_hr is None
+        assert s._hr_queue.empty()
 
     def test_ble_task_starts_none(self):
         s = _make_server()
@@ -229,16 +229,10 @@ class TestFrameProtocol:
             _ts, hr = struct.unpack(FRAME_FMT, frame)
             assert 30 <= hr <= 220, f"HR out of plausible range: {hr}"
 
-    def test_live_mode_frame_packs_ble_hr(self):
-        """When _ble_hr is set the broadcast frame must encode it correctly."""
-        server = _make_server(mock=False)
-        server._ble_hr = 155
-
-        frame = struct.pack(
-            FRAME_FMT,
-            time.time(),
-            int(server._ble_hr),
-        )
+    def test_live_mode_frame_packs_hr_value(self):
+        """A value from the queue must encode correctly into the broadcast frame."""
+        hr_value = 155
+        frame = struct.pack(FRAME_FMT, time.time(), hr_value)
         assert len(frame) == FRAME_SIZE
         _ts, hr = struct.unpack(FRAME_FMT, frame)
         assert hr == 155

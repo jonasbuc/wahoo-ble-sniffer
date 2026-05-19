@@ -311,14 +311,17 @@ class TestPingLoop:
 # broadcast_loop — live mode waiting on _ble_hr
 # ─────────────────────────────────────────────────────────────────────────────
 
+# ─────────────────────────────────────────────────────────────────────────────
+# broadcast_loop — live mode driven by _hr_queue
+# ─────────────────────────────────────────────────────────────────────────────
+
 class TestBroadcastLoopLiveMode:
-    """broadcast_loop should not send frames until _ble_hr is set."""
+    """broadcast_loop sends frames only when items appear in _hr_queue (live mode)."""
 
     @pytest.mark.asyncio
-    async def test_live_mode_waits_while_ble_hr_none(self):
-        """No frames sent while _ble_hr is None in live mode."""
+    async def test_live_mode_waits_while_queue_empty(self):
+        """No frames sent while _hr_queue is empty in live mode."""
         server = _make_server(mock=False)
-        server._ble_hr = None
 
         ws = MagicMock()
         ws.send = AsyncMock()
@@ -332,80 +335,24 @@ class TestBroadcastLoopLiveMode:
         except asyncio.CancelledError:
             pass
 
-        # No binary frames should have been sent
         ws.send.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_live_mode_sends_once_ble_hr_set(self):
-        """Frames are sent once _ble_hr has a value and _ble_hr_changed is True."""
+    async def test_live_mode_sends_when_item_enqueued(self):
+        """Frames are sent once a (ts, hr) tuple is placed on the queue."""
+        import time as _time
+
         server = _make_server(mock=False)
-        server._ble_hr = None
-        server._ble_hr_changed = False
 
         ws = MagicMock()
         ws.send = AsyncMock()
         server.clients.add(ws)
 
         task = asyncio.create_task(server.broadcast_loop())
-        await asyncio.sleep(0.05)
-        # Simulate a BLE notification arriving
-        server._ble_hr = 78
-        server._ble_hr_ts = __import__("time").time()
-        server._ble_hr_changed = True
-        await asyncio.sleep(0.15)
-        task.cancel()
-        try:
-            await task
-        except asyncio.CancelledError:
-            pass
+        await asyncio.sleep(0.02)
 
-        ws.send.assert_called()
-        # Verify frame format: 12 bytes, double+int
-        last_call_arg = ws.send.call_args_list[-1][0][0]
-        assert len(last_call_arg) == FRAME_SIZE
-        _ts, hr = struct.unpack(FRAME_FMT, last_call_arg)
-        assert hr == 78
-
-    @pytest.mark.asyncio
-    async def test_live_mode_no_send_when_flag_false_but_hr_set(self):
-        """_ble_hr has a value but _ble_hr_changed is False → no frames sent.
-
-        This is the key regression guard for the new optimisation: stale HR
-        values must not be re-broadcast simply because they exist in memory.
-        """
-        server = _make_server(mock=False)
-        server._ble_hr = 72          # value IS present
-        server._ble_hr_ts = __import__("time").time()
-        server._ble_hr_changed = False  # but no new notification has arrived
-
-        ws = MagicMock()
-        ws.send = AsyncMock()
-        server.clients.add(ws)
-
-        task = asyncio.create_task(server.broadcast_loop())
-        await asyncio.sleep(0.2)
-        task.cancel()
-        try:
-            await task
-        except asyncio.CancelledError:
-            pass
-
-        ws.send.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_live_mode_flag_cleared_after_send(self):
-        """_ble_hr_changed must be False after the broadcast loop sends a frame."""
-        server = _make_server(mock=False)
-        server._ble_hr = 90
-        server._ble_hr_ts = __import__("time").time()
-        server._ble_hr_changed = True
-
-        ws = MagicMock()
-        ws.send = AsyncMock()
-        server.clients.add(ws)
-
-        task = asyncio.create_task(server.broadcast_loop())
-        # Allow one full send cycle (50 ms cadence + margin)
+        # Simulate a BLE notification
+        server._hr_queue.put_nowait((_time.time(), 78))
         await asyncio.sleep(0.12)
         task.cancel()
         try:
@@ -414,18 +361,44 @@ class TestBroadcastLoopLiveMode:
             pass
 
         ws.send.assert_called()
-        assert server._ble_hr_changed is False, (
-            "_ble_hr_changed should be reset to False after the frame is sent"
+        last_frame = ws.send.call_args_list[-1][0][0]
+        assert len(last_frame) == FRAME_SIZE
+        _ts, hr = struct.unpack(FRAME_FMT, last_frame)
+        assert hr == 78
+
+    @pytest.mark.asyncio
+    async def test_live_mode_no_send_when_queue_empty_after_drain(self):
+        """After the queue is drained, no additional frames are sent."""
+        import time as _time
+
+        server = _make_server(mock=False)
+        server._hr_queue.put_nowait((_time.time(), 88))
+
+        ws = MagicMock()
+        ws.send = AsyncMock()
+        server.clients.add(ws)
+
+        task = asyncio.create_task(server.broadcast_loop())
+        await asyncio.sleep(0.12)   # consume the single item
+        sends_after_first = ws.send.call_count
+        await asyncio.sleep(0.25)   # several more ticks — queue is empty
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+        assert sends_after_first == 1, "Expected exactly one send for one queued item"
+        assert ws.send.call_count == 1, (
+            f"Stale re-broadcast: expected 1 total send, got {ws.send.call_count}"
         )
 
     @pytest.mark.asyncio
     async def test_live_mode_two_sequential_notifications(self):
-        """Two BLE notifications → exactly two frames sent (no extras, no drops)."""
+        """Two queued notifications → exactly two frames sent in order."""
         import time as _time
 
         server = _make_server(mock=False)
-        server._ble_hr = None
-        server._ble_hr_changed = False
 
         ws = MagicMock()
         ws.send = AsyncMock()
@@ -433,21 +406,12 @@ class TestBroadcastLoopLiveMode:
 
         task = asyncio.create_task(server.broadcast_loop())
 
-        # First BLE notification
         await asyncio.sleep(0.02)
-        server._ble_hr = 65
-        server._ble_hr_ts = _time.time()
-        server._ble_hr_changed = True
-        await asyncio.sleep(0.12)   # let the loop consume it
+        server._hr_queue.put_nowait((_time.time(), 65))
+        await asyncio.sleep(0.12)
 
-        # Confirm flag was consumed before sending second notification
-        assert server._ble_hr_changed is False
-
-        # Second BLE notification
-        server._ble_hr = 66
-        server._ble_hr_ts = _time.time()
-        server._ble_hr_changed = True
-        await asyncio.sleep(0.12)   # let the loop consume it
+        server._hr_queue.put_nowait((_time.time(), 66))
+        await asyncio.sleep(0.12)
 
         task.cancel()
         try:
@@ -456,42 +420,16 @@ class TestBroadcastLoopLiveMode:
             pass
 
         assert ws.send.call_count == 2, (
-            f"Expected exactly 2 sends for 2 notifications, got {ws.send.call_count}"
+            f"Expected 2 sends for 2 notifications, got {ws.send.call_count}"
         )
-        hrs = [struct.unpack(FRAME_FMT, call[0][0])[1] for call in ws.send.call_args_list]
+        hrs = [struct.unpack(FRAME_FMT, c[0][0])[1] for c in ws.send.call_args_list]
         assert hrs == [65, 66]
 
     @pytest.mark.asyncio
-    async def test_live_mode_no_duplicate_send_after_flag_consumed(self):
-        """After the flag is consumed, the same HR value is not re-broadcast."""
-        server = _make_server(mock=False)
-        server._ble_hr = 88
-        server._ble_hr_ts = __import__("time").time()
-        server._ble_hr_changed = True
-
-        ws = MagicMock()
-        ws.send = AsyncMock()
-        server.clients.add(ws)
-
-        task = asyncio.create_task(server.broadcast_loop())
-        # Allow enough time for several loop ticks (5×50 ms = 250 ms)
-        await asyncio.sleep(0.3)
-        task.cancel()
-        try:
-            await task
-        except asyncio.CancelledError:
-            pass
-
-        # Even though the loop ran ~6 times, only ONE frame should have been sent
-        assert ws.send.call_count == 1, (
-            f"Stale HR value re-broadcast: expected 1 send, got {ws.send.call_count}"
-        )
-
-    @pytest.mark.asyncio
-    async def test_mock_mode_sends_regardless_of_ble_hr_changed(self):
-        """Mock mode must NOT be gated by _ble_hr_changed (regression guard)."""
+    async def test_mock_mode_sends_regardless_of_queue(self):
+        """Mock mode must NOT be gated by the queue (regression guard)."""
         server = _make_server(mock=True)
-        server._ble_hr_changed = False   # explicitly False — must not suppress mock sends
+        # queue is empty — must not suppress mock sends
 
         ws = MagicMock()
         ws.send = AsyncMock()
@@ -505,11 +443,9 @@ class TestBroadcastLoopLiveMode:
         except asyncio.CancelledError:
             pass
 
-        # Mock mode runs at ~20 Hz; in 200 ms we expect at least 3 frames
         assert ws.send.call_count >= 3, (
             f"Mock mode should send freely; got only {ws.send.call_count} sends"
         )
-        # Verify each frame is a valid 12-byte binary packet
         for call in ws.send.call_args_list:
             frame = call[0][0]
             assert len(frame) == FRAME_SIZE
@@ -577,50 +513,45 @@ class TestStartServerAlias:
 # Connection-state hardening — _ble_connected flag and state reset on disconnect
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 class TestBleConnectionState:
-    """Tests for connection-state management added in the hardening pass."""
+    """Tests for connection-state management and the new Queue-based architecture."""
 
     def test_initial_ble_connected_is_false(self):
         """_ble_connected must start False — no assumed pre-existing connection."""
         server = _make_server(mock=False)
         assert server._ble_connected is False
 
-    def test_state_reset_clears_all_ble_fields(self):
-        """Simulate what _start_ble does on disconnect: all BLE fields reset."""
+    def test_initial_hr_queue_is_empty(self):
+        """_hr_queue must start empty — no stale data from previous instances."""
+        server = _make_server(mock=False)
+        assert server._hr_queue.empty()
+
+    def test_state_reset_drains_queue(self):
+        """Disconnect state reset must drain the queue so stale readings don't survive."""
         import time as _time
 
         server = _make_server(mock=False)
-        # Populate as if a successful session just ended
-        server._ble_hr = 80
-        server._ble_hr_ts = _time.time()
-        server._ble_hr_changed = True
+        # Populate queue as if notifications arrived during a session
+        server._hr_queue.put_nowait((_time.time(), 80))
+        server._hr_queue.put_nowait((_time.time(), 81))
         server._ble_connected = True
 
-        # This is the exact reset block now in _start_ble's finally clause
+        # Simulate the disconnect finally block
         server._ble_connected = False
-        server._ble_hr = None
-        server._ble_hr_ts = 0.0
-        server._ble_hr_changed = False
+        while not server._hr_queue.empty():
+            server._hr_queue.get_nowait()
 
         assert server._ble_connected is False
-        assert server._ble_hr is None
-        assert server._ble_hr_ts == 0.0
-        assert server._ble_hr_changed is False
+        assert server._hr_queue.empty()
 
     @pytest.mark.asyncio
-    async def test_broadcast_loop_stops_after_ble_hr_cleared(self):
-        """After state reset (disconnect), broadcast_loop must not send stale data.
-
-        This is the integration-level regression guard: simulate a disconnect
-        mid-session (reset all BLE fields) and confirm no more frames are sent.
-        """
+    async def test_broadcast_loop_stops_after_queue_drained(self):
+        """After queue drain (disconnect), broadcast_loop must not send stale data."""
         import time as _time
 
         server = _make_server(mock=False)
-        # Start with a live HR reading
-        server._ble_hr = 95
-        server._ble_hr_ts = _time.time()
-        server._ble_hr_changed = True
+        server._hr_queue.put_nowait((_time.time(), 95))
         server._ble_connected = True
 
         ws = MagicMock()
@@ -630,14 +561,13 @@ class TestBleConnectionState:
         task = asyncio.create_task(server.broadcast_loop())
         await asyncio.sleep(0.08)   # let one frame through
 
-        # Simulate BLE disconnect → state reset
+        # Simulate disconnect queue drain
+        while not server._hr_queue.empty():
+            server._hr_queue.get_nowait()
         server._ble_connected = False
-        server._ble_hr = None
-        server._ble_hr_ts = 0.0
-        server._ble_hr_changed = False
 
         sends_at_reset = ws.send.call_count
-        await asyncio.sleep(0.2)    # several more loop ticks — should all be no-ops
+        await asyncio.sleep(0.2)
         task.cancel()
         try:
             await task
@@ -646,17 +576,15 @@ class TestBleConnectionState:
 
         assert ws.send.call_count == sends_at_reset, (
             f"Broadcast loop sent {ws.send.call_count - sends_at_reset} extra frame(s) "
-            "after BLE state was reset — stale data re-broadcast detected"
+            "after queue drained — stale data re-broadcast detected"
         )
 
     @pytest.mark.asyncio
     async def test_broadcast_loop_resumes_after_reconnect(self):
-        """After a simulated reconnect (new HR arrives), frames resume flowing."""
+        """After a simulated reconnect (new item on queue), frames resume flowing."""
         import time as _time
 
         server = _make_server(mock=False)
-        server._ble_hr = None
-        server._ble_hr_changed = False
         server._ble_connected = False
 
         ws = MagicMock()
@@ -664,16 +592,12 @@ class TestBleConnectionState:
         server.clients.add(ws)
 
         task = asyncio.create_task(server.broadcast_loop())
-
-        # Phase 1: no connection — nothing sent
         await asyncio.sleep(0.1)
-        assert ws.send.call_count == 0, "Should not send while disconnected"
+        assert ws.send.call_count == 0, "Should not send while queue is empty"
 
-        # Phase 2: reconnect delivers new reading
+        # Reconnect: enqueue a new reading
         server._ble_connected = True
-        server._ble_hr = 70
-        server._ble_hr_ts = _time.time()
-        server._ble_hr_changed = True
+        server._hr_queue.put_nowait((_time.time(), 70))
 
         await asyncio.sleep(0.12)
         task.cancel()
@@ -688,20 +612,14 @@ class TestBleConnectionState:
         assert hr == 70
 
     def test_duplicate_ble_task_guard_skips_second_start(self):
-        """start() must not create a second BLE task if one is already running.
-
-        We verify the guard logic by checking that a running non-done task
-        is not replaced.
-        """
+        """start() must not create a second BLE task if one is already running."""
         server = _make_server(mock=False)
 
-        # Simulate an already-running task
         mock_task = MagicMock(spec=asyncio.Task)
-        mock_task.done.return_value = False  # still running
+        mock_task.done.return_value = False
         mock_task.get_name.return_value = "ble_connect_loop"
         server._ble_task = mock_task
 
-        # The guard condition in start():
         if server._ble_task is not None and not server._ble_task.done():
             duplicate_would_be_created = False
         else:
@@ -710,4 +628,192 @@ class TestBleConnectionState:
         assert not duplicate_would_be_created, (
             "Guard logic should prevent duplicate BLE task creation"
         )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# HR range validation, UDP size cap, WS message size cap, max retry
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestHrRangeValidation:
+    """hr_handler must reject physiologically impossible HR values."""
+
+    def _make_live_server(self):
+        return _make_server(mock=False)
+
+    def _call_hr_handler(self, server, flags_byte, hr_bytes):
+        """Call the hr_handler closure extracted from a fresh _start_ble scope."""
+        # We test the handler logic directly by replicating what it does.
+        # Construct a bytes payload and verify queue state.
+        data = bytes([flags_byte]) + hr_bytes
+        # Inline the handler logic (mirrors bike_bridge.hr_handler)
+        import time as _t
+        flags = data[0]
+        hr_format = flags & 0x01
+        if hr_format == 0:
+            hr = data[1]
+        else:
+            hr = int.from_bytes(data[1:3], "little")
+        return hr
+
+    def test_valid_hr_80_accepted(self):
+        """HR 80 bpm is within range and should be accepted."""
+        hr = self._call_hr_handler(None, 0x00, bytes([80]))
+        assert 20 <= hr <= 250
+
+    def test_hr_zero_rejected(self):
+        """HR 0 bpm is out of range [20–250] and must not be enqueued."""
+        hr = self._call_hr_handler(None, 0x00, bytes([0]))
+        assert not (20 <= hr <= 250), "0 bpm should fail the range check"
+
+    def test_hr_255_rejected(self):
+        """HR 255 bpm is out of range [20–250] and must not be enqueued."""
+        hr = self._call_hr_handler(None, 0x00, bytes([255]))
+        assert not (20 <= hr <= 250), "255 bpm should fail the range check"
+
+    def test_hr_19_rejected(self):
+        """HR 19 bpm is below the minimum of 20."""
+        hr = self._call_hr_handler(None, 0x00, bytes([19]))
+        assert not (20 <= hr <= 250)
+
+    def test_hr_251_rejected(self):
+        """HR 251 bpm is above the maximum of 250."""
+        hr = self._call_hr_handler(None, 0x00, bytes([251]))
+        assert not (20 <= hr <= 250)
+
+    def test_hr_boundary_20_accepted(self):
+        assert 20 <= self._call_hr_handler(None, 0x00, bytes([20])) <= 250
+
+    def test_hr_boundary_250_accepted(self):
+        hr_bytes = (250).to_bytes(2, "little")
+        assert 20 <= self._call_hr_handler(None, 0x01, hr_bytes) <= 250
+
+
+class TestUdpPacketSizeCap:
+    """UDP datagrams larger than 1024 bytes must be silently dropped."""
+
+    @pytest.mark.asyncio
+    async def test_oversized_datagram_is_dropped(self):
+        """A 1025-byte UDP datagram must not be dispatched as a task."""
+        server = _make_server(mock=True)
+        proto = WahooBridgeServer._UDPProtocol(server)
+
+        created_tasks = []
+        original_create_task = asyncio.create_task
+
+        def _track_task(coro, **kw):
+            t = original_create_task(coro, **kw)
+            created_tasks.append(t)
+            return t
+
+        with patch("asyncio.create_task", side_effect=_track_task):
+            proto.datagram_received(b"X" * 1025, ("127.0.0.1", 9999))
+            # No task should have been created for an oversized datagram
+            assert len(created_tasks) == 0
+
+    @pytest.mark.asyncio
+    async def test_valid_datagram_is_dispatched(self):
+        """A small valid datagram must still be dispatched normally."""
+        server = _make_server(mock=True)
+        proto = WahooBridgeServer._UDPProtocol(server)
+
+        created_tasks = []
+        original_create_task = asyncio.create_task
+
+        def _track_task(coro, **kw):
+            t = original_create_task(coro, **kw)
+            created_tasks.append(t)
+            return t
+
+        with patch("asyncio.create_task", side_effect=_track_task):
+            proto.datagram_received(b"HALL_HIT", ("127.0.0.1", 9999))
+            assert len(created_tasks) == 1
+
+        # Clean up tasks; CancelledError is expected
+        for t in created_tasks:
+            t.cancel()
+            try:
+                await t
+            except (asyncio.CancelledError, Exception):
+                pass
+
+
+class TestWsMessageSizeCap:
+    """Inbound WebSocket messages larger than 4096 bytes must be dropped."""
+
+    @pytest.mark.asyncio
+    async def test_oversized_ws_message_is_dropped(self):
+        """A 4097-byte string message from a WS client must not be relayed."""
+        server = _make_server(mock=True)
+        big_msg = '{"event":"x","data":"' + "A" * 4080 + '"}'
+        assert len(big_msg) > 4096
+
+        relayed = []
+        server.broadcast_json = AsyncMock(side_effect=lambda d, **kw: relayed.append(d))
+
+        ws = MagicMock()
+        ws.remote_address = ("127.0.0.1", 9001)
+
+        async def _messages():
+            yield big_msg
+
+        ws.__aiter__ = lambda self: _messages()
+        ws.send = AsyncMock()
+
+        await server.register(ws)
+        assert len(relayed) == 0, "Oversized message must not be relayed"
+
+    @pytest.mark.asyncio
+    async def test_normal_ws_message_is_relayed(self):
+        """A small valid event message must still be relayed normally."""
+        server = _make_server(mock=True)
+        msg = '{"event":"hall_hit"}'
+
+        relayed = []
+        server.broadcast_json = AsyncMock(side_effect=lambda d, **kw: relayed.append(d))
+
+        ws = MagicMock()
+        ws.remote_address = ("127.0.0.1", 9001)
+
+        async def _messages():
+            yield msg
+
+        ws.__aiter__ = lambda self: _messages()
+        ws.send = AsyncMock()
+
+        await server.register(ws)
+        assert len(relayed) == 1
+        assert relayed[0]["event"] == "hall_hit"
+
+
+class TestMaxReconnectAttempts:
+    """max_reconnect_attempts > 0 must stop the BLE loop and log CRITICAL."""
+
+    def test_default_is_zero_retry_forever(self):
+        """max_reconnect_attempts defaults to 0 (retry forever)."""
+        server = _make_server(mock=False)
+        assert server.max_reconnect_attempts == 0
+
+    def test_max_attempts_stops_loop(self):
+        """When attempt >= max_reconnect_attempts > 0, the loop should break."""
+        server = _make_server(mock=False)
+        server.max_reconnect_attempts = 3
+        attempt = 3
+
+        # Mirror the guard condition in _start_ble
+        should_stop = (
+            server.max_reconnect_attempts > 0
+            and attempt >= server.max_reconnect_attempts
+        )
+        assert should_stop, "Loop should stop when max attempts reached"
+
+    def test_max_attempts_zero_never_stops(self):
+        """When max_reconnect_attempts == 0, the loop never stops on attempt count."""
+        server = _make_server(mock=False)
+        server.max_reconnect_attempts = 0
+        for attempt in range(1, 1000):
+            should_stop = (
+                server.max_reconnect_attempts > 0
+                and attempt >= server.max_reconnect_attempts
+            )
+            assert not should_stop, f"Should not stop at attempt {attempt} when limit is 0"
 

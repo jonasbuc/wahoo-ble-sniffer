@@ -1182,7 +1182,7 @@ class TestWahooBridgeServerInit:
         assert s.mock is False
         assert s.clients == set()
         assert s.running is False
-        assert s._ble_hr is None
+        assert s._hr_queue.empty()
 
     def test_mock_mode(self):
         from bridge.bike_bridge import WahooBridgeServer
