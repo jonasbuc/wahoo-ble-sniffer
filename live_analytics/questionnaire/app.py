@@ -232,6 +232,16 @@ async def link_session_endpoint(participant_id: str, body: LinkSession) -> dict:
     p = get_participant(DB_PATH, participant_id)
     if not p:
         raise HTTPException(404, "Participant not found")
+
+    # Find the old holder BEFORE link_session() unlinks them, so we can
+    # notify the analytics API to clear its cache for the displaced participant.
+    old_holder = get_participant_by_session(DB_PATH, body.session_id)
+    old_participant_id = (
+        old_holder["participant_id"]
+        if old_holder and old_holder["participant_id"] != participant_id
+        else None
+    )
+
     try:
         link_session(DB_PATH, participant_id, body.session_id)
     except ValueError as exc:
@@ -244,11 +254,20 @@ async def link_session_endpoint(participant_id: str, body: LinkSession) -> dict:
             participant_id, body.session_id, exc,
         )
         raise HTTPException(status_code=409, detail=str(exc))
-    logger.info("Session linked: participant=%r ↔ session=%r", participant_id, body.session_id)
+
+    if old_participant_id:
+        logger.info(
+            "Session reassigned: session=%r  %r → %r",
+            body.session_id, old_participant_id, participant_id,
+        )
+    else:
+        logger.info("Session linked: participant=%r ↔ session=%r", participant_id, body.session_id)
 
     # Notify the analytics API so it clears its participant cache immediately.
     # This allows _resolve_and_link_participant to pick up the link on the very
     # next retry (within seconds) rather than waiting for the cooldown to expire.
+    # When this is a reassignment (old_participant_id is set) we also clear the
+    # cache for the displaced participant so stale mappings are removed.
     # Fire-and-forget — a failure here must never block the questionnaire response.
     async def _notify_analytics() -> None:
         url = f"{ANALYTICS_API_URL}/api/sessions/{body.session_id}/participant"
@@ -259,6 +278,15 @@ async def link_session_endpoint(participant_id: str, body: LinkSession) -> dict:
                 "link_session_endpoint: notified analytics API to link %r → %r",
                 body.session_id, participant_id,
             )
+            # If this was a reassignment, also notify analytics to clear cache
+            # for the displaced (old) participant so the next pulse resolve
+            # returns the new participant immediately.
+            if old_participant_id:
+                clear_url = f"{ANALYTICS_API_URL}/api/sessions/{body.session_id}/participant/clear-old"
+                try:
+                    await client.delete(clear_url, params={"old_participant_id": old_participant_id})
+                except Exception:
+                    pass  # best-effort; analytics cache TTL will expire naturally
         except Exception as exc:  # noqa: BLE001
             # Analytics API may not be running yet — this is non-fatal.
             logger.debug(
@@ -268,7 +296,7 @@ async def link_session_endpoint(participant_id: str, body: LinkSession) -> dict:
             )
 
     asyncio.create_task(_notify_analytics())
-    return {"ok": True}
+    return {"ok": True, "reassigned_from": old_participant_id}
 
 
 @app.put("/api/participants/{participant_id}/done")

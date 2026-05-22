@@ -260,6 +260,14 @@ def link_session(db_path: Path | str, participant_id: str, session_id: str) -> N
     (e.g. two Unity clients sharing the same participant_id).  Linking to the
     same session_id twice (idempotent re-link) is silent.
 
+    Reassignment / manual override
+    --------------------------------
+    If *session_id* is currently held by a DIFFERENT participant, that old
+    participant is unlinked first (session_id reset to ``''``) before the new
+    link is written.  This ensures that at all times a session maps to exactly
+    one participant in the questionnaire DB — critical for correct lookup via
+    ``get_participant_by_session``.
+
     Back-fill
     ---------
     Any ``pulse_data`` rows that were written before the participant was linked
@@ -289,6 +297,29 @@ def link_session(db_path: Path | str, participant_id: str, session_id: str) -> N
             # Idempotent re-link to the same session — still run back-fill in case
             # there are newly arrived NULL pulse_data rows.
             pass  # fall through to UPDATE + back-fill below
+
+    # ── Reassignment guard ────────────────────────────────────────────
+    # If session_id is currently held by a DIFFERENT participant, unlink
+    # them first so the session maps to exactly one participant at a time.
+    if session_id:
+        old_holder = conn.execute(
+            "SELECT participant_id FROM participants "
+            "WHERE session_id = ? AND participant_id != ?",
+            (session_id, participant_id),
+        ).fetchone()
+        if old_holder:
+            old_pid = old_holder["participant_id"]
+            conn.execute(
+                "UPDATE participants SET session_id = '', updated_at = ? "
+                "WHERE participant_id = ?",
+                (_now(), old_pid),
+            )
+            logger.info(
+                "link_session: unlinked previous holder %r from session %r "
+                "(reassigned to %r)",
+                old_pid, session_id, participant_id,
+            )
+
     conn.execute(
         "UPDATE participants SET session_id = ?, updated_at = ? WHERE participant_id = ?",
         (session_id, _now(), participant_id),
