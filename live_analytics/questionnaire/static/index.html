@@ -222,6 +222,27 @@
         .pid-label { font-family: monospace; font-weight: 700; }
         .status-session { font-size: 0.8rem; color: var(--muted); }
         .fill-initial { width: 0%; }
+        .session-id-display {
+            font-family: monospace;
+            font-size: 0.78rem;
+            color: var(--muted);
+            word-break: break-all;
+            margin-top: 0.2rem;
+        }
+        .btn-done { background: #7c3aed; color: #fff; }
+        .btn-done:hover { background: #6d28d9; }
+        .done-badge {
+            display: inline-block;
+            background: #7c3aed;
+            color: #fff;
+            border-radius: 4px;
+            padding: 0.1rem 0.5rem;
+            font-size: 0.75rem;
+            font-weight: 700;
+            margin-left: 0.4rem;
+            vertical-align: middle;
+        }
+        .btn-row { display: flex; gap: 0.5rem; align-items: center; }
     </style>
 </head>
 <body>
@@ -267,8 +288,16 @@
         </header>
 
         <div class="flex-between">
-            <span id="qs-pid" class="pid-label"></span>
-            <button class="btn btn-outline btn-sm" onclick="backToLogin()">← Skift person</button>
+            <div>
+                <span id="qs-pid" class="pid-label"></span>
+                <div id="qs-session-id" class="session-id-display hidden"></div>
+            </div>
+            <div class="btn-row">
+                <button class="btn btn-done btn-sm" id="btn-mark-done" onclick="markDone()">
+                    ✓ Marker færdig
+                </button>
+                <button class="btn btn-outline btn-sm" onclick="backToLogin()">← Skift person</button>
+            </div>
         </div>
 
         <!-- Phase tabs -->
@@ -308,6 +337,7 @@
     const API = '';  // same origin
     let currentPid = '';
     let currentPhase = 'pre';
+    let currentSessionId = '';     // full session_id of the loaded participant
     let questionnaireDef = null;   // QuestionnaireDef for current phase
     let savedAnswers = {};         // question_id → answer (loaded on resume)
     let autoSaveTimers = {};       // debounce timers per question
@@ -342,7 +372,8 @@
                     <div>
                         <span class="participant-id">${esc(p.participant_id)}</span>
                         ${p.display_name ? ' – ' + esc(p.display_name) : ''}
-                        ${p.session_id ? `<span style="color:var(--muted); font-size:0.8rem"> (session: ${esc(p.session_id.slice(0,12))}…)</span>` : ''}
+                        ${p.session_id === '__done__' ? '<span class="done-badge">✓ færdig</span>' : ''}
+                        ${p.session_id && p.session_id !== '__done__' ? `<div class="session-id-display">session: ${esc(p.session_id)}</div>` : ''}
                     </div>
                     <button class="btn btn-outline" style="padding:0.2rem 0.6rem; font-size:0.8rem"
                             onclick="resumeParticipant('${esc(p.participant_id)}', '${esc(p.display_name)}')">
@@ -376,9 +407,32 @@
         setStatus('saving', 'Opretter / indlæser…');
 
         try {
-            await api('POST', '/api/participants', { participant_id: pid, display_name: name });
+            const result = await api('POST', '/api/participants', { participant_id: pid, display_name: name });
             currentPid = pid;
-            document.getElementById('qs-pid').textContent = pid;
+            currentSessionId = result.session_id || '';
+            document.getElementById('qs-pid').textContent = pid + (result.display_name ? ' – ' + result.display_name : '');
+
+            // Show full session ID (or a note if not yet linked)
+            const sidEl = document.getElementById('qs-session-id');
+            if (currentSessionId && currentSessionId !== '__done__') {
+                sidEl.textContent = 'Session: ' + currentSessionId;
+                sidEl.classList.remove('hidden');
+            } else if (currentSessionId === '__done__') {
+                sidEl.textContent = '✓ Markeret som færdig';
+                sidEl.classList.remove('hidden');
+            } else {
+                sidEl.classList.add('hidden');
+            }
+
+            // Grey out the "mark done" button if already done
+            const doneBtn = document.getElementById('btn-mark-done');
+            if (currentSessionId === '__done__') {
+                doneBtn.disabled = true;
+                doneBtn.textContent = '✓ Allerede færdig';
+            } else {
+                doneBtn.disabled = false;
+                doneBtn.textContent = '✓ Marker færdig';
+            }
 
             // Load progress
             const progress = await api('GET', `/api/participants/${pid}/progress`);
@@ -397,7 +451,30 @@
         }
     }
 
+    async function markDone() {
+        if (!currentPid) return;
+        const btn = document.getElementById('btn-mark-done');
+        if (!confirm(`Marker testperson ${currentPid} som færdig?\n\nDette afslutter deltageren permanent og frigiver pladsen til næste session.`)) return;
+        btn.disabled = true;
+        btn.textContent = 'Gemmer…';
+        try {
+            await api('PUT', `/api/participants/${currentPid}/done`, {});
+            currentSessionId = '__done__';
+            btn.textContent = '✓ Allerede færdig';
+            const sidEl = document.getElementById('qs-session-id');
+            sidEl.textContent = '✓ Markeret som færdig';
+            sidEl.classList.remove('hidden');
+            setStatus('saved', 'Deltager markeret færdig ✓');
+        } catch (e) {
+            btn.disabled = false;
+            btn.textContent = '✓ Marker færdig';
+            alert('Fejl: ' + e.message);
+        }
+    }
+
     function backToLogin() {
+        currentPid = '';
+        currentSessionId = '';
         document.getElementById('view-questionnaire').classList.add('hidden');
         document.getElementById('view-login').classList.remove('hidden');
         loadParticipants();
