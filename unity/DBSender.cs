@@ -69,6 +69,31 @@ public class DBSender : MonoBehaviour {
     private volatile int _latestHeartRate = 0;
     private string _sessionId     = "";
     private string _participantId = "";   // empty until analytics API resolves it
+    private bool   _manualOverride = false;
+    private Coroutine _pollCoroutine;
+
+    // ── public read / write API ────────────────────────────────────
+    /// <summary>The currently active participant ID, or "PENDING".</summary>
+    public string ParticipantId => string.IsNullOrEmpty(_participantId) ? "PENDING" : _participantId;
+
+    /// <summary>
+    /// Immediately override the participant ID, stop auto-polling, and
+    /// rewrite the pulse.txt header.  Called by Dashboard when the operator
+    /// manually chooses a participant.
+    /// </summary>
+    public void SetParticipantIdManually(string pid)
+    {
+        if (string.IsNullOrWhiteSpace(pid))
+        {
+            Debug.LogWarning("DBSender.SetParticipantIdManually: empty ID ignored.");
+            return;
+        }
+        if (_pollCoroutine != null) { StopCoroutine(_pollCoroutine); _pollCoroutine = null; }
+        _manualOverride = true;
+        _participantId  = pid.Trim();
+        RewriteHeader(_participantId);
+        Debug.Log($"DBSender: participant ID manually overridden → {_participantId}");
+    }
 
     // ── shared threading ───────────────────────────────────────────
 
@@ -119,7 +144,7 @@ public class DBSender : MonoBehaviour {
             Debug.LogWarning("DBSender: SessionId not available from TelemetryPublisher.");
 
         WriteHeader("PENDING");
-        StartCoroutine(PollParticipantId());
+        _pollCoroutine = StartCoroutine(PollParticipantId());
     }
 
     private IEnumerator PollParticipantId() {
@@ -131,6 +156,7 @@ public class DBSender : MonoBehaviour {
         foreach (float delay in delays) {
             yield return new WaitForSeconds(delay);
 
+            if (_manualOverride) yield break;  // operator override wins
             if (!string.IsNullOrEmpty(_participantId)) yield break;
 
             yield return StartCoroutine(FetchParticipantId());

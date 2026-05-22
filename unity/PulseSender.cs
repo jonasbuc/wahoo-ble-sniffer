@@ -48,12 +48,29 @@ public class PulseSender : MonoBehaviour {
     private string _sessionId     = "";
     private string _participantId = "";   // empty until analytics API resolves it
 
+    // ── manual override ───────────────────────────────────────────
+    /// <summary>True when the operator has manually chosen an ID from the
+    /// Dashboard. Auto-polling is suppressed while this flag is set.</summary>
+    private bool _manualOverride = false;
+
+    private Coroutine _pollCoroutine;
+
     private ConcurrentQueue<string> _pulseQueue = new ConcurrentQueue<string>();
     private volatile int _latestHeartRate = 0;
 
     private Thread _loggingThread;
     private bool   _isRunning = true;
     private float  _timeSinceLastLog;
+
+    // ── public read API ───────────────────────────────────────────
+    /// <summary>
+    /// The currently active participant ID.
+    /// Returns <c>"PENDING"</c> while still waiting for auto-resolution.
+    /// </summary>
+    public string ParticipantId => string.IsNullOrEmpty(_participantId) ? "PENDING" : _participantId;
+
+    /// <summary>True while the auto-link poll is still running.</summary>
+    public bool IsPending => string.IsNullOrEmpty(_participantId);
 
     // ── lifecycle ──────────────────────────────────────────────────
 
@@ -87,7 +104,46 @@ public class PulseSender : MonoBehaviour {
             Debug.LogWarning("PulseSender: SessionId not available from TelemetryPublisher.");
 
         WriteHeader("PENDING");
-        StartCoroutine(PollParticipantId());
+        _pollCoroutine = StartCoroutine(PollParticipantId());
+    }
+
+    // ── manual override ────────────────────────────────────────────
+
+    /// <summary>
+    /// Called by Dashboard when the operator confirms a manual participant ID.
+    /// Immediately overwrites the current ID, rewrites the pulse.txt header,
+    /// and suppresses any further auto-polling so the choice is sticky.
+    /// Passing an empty or whitespace string is a no-op (shows a warning).
+    /// </summary>
+    public void SetParticipantIdManually(string pid)
+    {
+        if (string.IsNullOrWhiteSpace(pid))
+        {
+            Debug.LogWarning("PulseSender.SetParticipantIdManually: empty ID ignored.");
+            return;
+        }
+        if (_pollCoroutine != null)
+        {
+            StopCoroutine(_pollCoroutine);
+            _pollCoroutine = null;
+        }
+        _manualOverride  = true;
+        _participantId   = pid.Trim();
+        RewriteHeader(_participantId);
+        Debug.Log($"PulseSender: participant ID manually overridden → {_participantId}");
+    }
+
+    /// <summary>
+    /// Clears a manual override and restarts auto-polling from the beginning.
+    /// Only useful if the operator wants to revert to FIFO auto-assignment.
+    /// </summary>
+    public void ClearManualOverride()
+    {
+        _manualOverride  = false;
+        _participantId   = "";
+        WriteHeader("PENDING");
+        _pollCoroutine   = StartCoroutine(PollParticipantId());
+        Debug.Log("PulseSender: manual override cleared — auto-polling restarted.");
     }
 
     private IEnumerator PollParticipantId() {
@@ -98,6 +154,9 @@ public class PulseSender : MonoBehaviour {
 
         foreach (float delay in delays) {
             yield return new WaitForSeconds(delay);
+
+            // A manual override was applied while we were sleeping — stop polling.
+            if (_manualOverride) yield break;
 
             if (!string.IsNullOrEmpty(_participantId)) yield break;
 
