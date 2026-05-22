@@ -94,6 +94,23 @@ _warned_ext_failed: set[str] = set()
 # better than all 40+ tasks timing out simultaneously.
 _QS_SEMAPHORE = asyncio.Semaphore(3)
 
+# ── External API concurrency semaphore + circuit breaker ──────────────
+# _EXT_SEMAPHORE caps in-flight requests to the external research server so
+# that a burst of send_pulse tasks (e.g. Unity reconnect replay) cannot
+# saturate the asyncio event loop with simultaneous 8-second timeouts.
+#
+# _ext_circuit_open_until is a monotonic timestamp.  When a request fails
+# (ConnectError or TimeoutException) the circuit "opens" for
+# _EXT_CIRCUIT_COOLDOWN seconds.  Any send_pulse task that arrives while
+# the circuit is open is silently dropped — no HTTP attempt, no event-loop
+# stall.  After the cooldown the next task probes the external API and
+# re-closes the circuit on success.  This prevents the thundering-herd
+# failure mode where the external server is unreachable and hundreds of
+# tasks queue up only to timeout simultaneously.
+_EXT_SEMAPHORE = asyncio.Semaphore(2)
+_ext_circuit_open_until: float = 0.0
+_EXT_CIRCUIT_COOLDOWN: float = float(os.getenv("LA_EXT_CIRCUIT_COOLDOWN_SEC", "30.0"))
+
 
 async def resolve_participant(session_id: str) -> str | None:
     """Fetch and cache the participant_id for a session from the questionnaire API.
@@ -395,7 +412,26 @@ async def _send_to_external(client: httpx.AsyncClient, session_id: str, pulse: i
 
     Payload schema (matches external SQLite):
         { "UserId": <TestPersonNumber>, "Pulse": <bpm> }
+
+    Circuit breaker
+    ---------------
+    After a ConnectError or TimeoutException the circuit opens for
+    _EXT_CIRCUIT_COOLDOWN seconds.  All callers that arrive while the
+    circuit is open return False immediately — no HTTP attempt and no
+    event-loop stall.  This prevents the thundering-herd where hundreds
+    of fire-and-forget tasks pile up and timeout simultaneously when the
+    external server is unreachable.
     """
+    global _ext_circuit_open_until
+
+    # ── Circuit breaker guard ─────────────────────────────────────────
+    if time.monotonic() < _ext_circuit_open_until:
+        logger.debug(
+            "send_pulse[external]: circuit open — skipping pulse=%d for session %r",
+            pulse, session_id,
+        )
+        return False
+
     # UserId=0 means no participant is linked or the ID is non-numeric.
     # Log a WARNING once per session_id; demote subsequent occurrences to DEBUG
     # to avoid flooding the log at 2 req/s for unlinked sessions.
@@ -415,37 +451,44 @@ async def _send_to_external(client: httpx.AsyncClient, session_id: str, pulse: i
 
     url = f"{_EXTERNAL_API_URL}/api/cardatasqlite/loglitepd"
     payload = {"UserId": user_id, "Pulse": pulse}
-    try:
-        # verify=False because the research server uses a self-signed certificate.
-        resp = await client.post(url, json=payload, extensions={"sni_hostname": _EXTERNAL_SNI_HOSTNAME})
-        resp.raise_for_status()
-        logger.debug(
-            "send_pulse[external]: OK — UserId=%d pulse=%d → %s",
-            user_id, pulse, url,
-        )
-        return True
-    except httpx.ConnectError as exc:
-        logger.warning(
-            "send_pulse[external]: research API unreachable at %s — "
-            "pulse not persisted in external DB (ConnectError: %s). "
-            "Is the research server reachable on EXTERNAL_API_URL=%s?",
-            url, exc, _EXTERNAL_API_URL,
-        )
-    except httpx.TimeoutException as exc:
-        logger.warning(
-            "send_pulse[external]: request timed out posting to %s (pulse=%d, %s)",
-            url, pulse, exc,
-        )
-    except httpx.HTTPStatusError as exc:
-        logger.error(
-            "send_pulse[external]: HTTP %d for pulse=%d (POST %s — response: %r)",
-            exc.response.status_code, pulse, url, exc.response.text[:200],
-        )
-    except Exception as exc:  # noqa: BLE001
-        logger.exception(
-            "send_pulse[external]: unexpected error posting to %s (pulse=%d): %s",
-            url, pulse, exc,
-        )
+    async with _EXT_SEMAPHORE:
+        try:
+            # verify=False because the research server uses a self-signed certificate.
+            resp = await client.post(url, json=payload, extensions={"sni_hostname": _EXTERNAL_SNI_HOSTNAME})
+            resp.raise_for_status()
+            # Success — close the circuit if it was recently tripped.
+            _ext_circuit_open_until = 0.0
+            logger.debug(
+                "send_pulse[external]: OK — UserId=%d pulse=%d → %s",
+                user_id, pulse, url,
+            )
+            return True
+        except httpx.ConnectError as exc:
+            _ext_circuit_open_until = time.monotonic() + _EXT_CIRCUIT_COOLDOWN
+            logger.warning(
+                "send_pulse[external]: research API unreachable at %s — "
+                "pulse not persisted in external DB (ConnectError: %s). "
+                "Circuit open for %.0f s. "
+                "Is the research server reachable on EXTERNAL_API_URL=%s?",
+                url, exc, _EXT_CIRCUIT_COOLDOWN, _EXTERNAL_API_URL,
+            )
+        except httpx.TimeoutException as exc:
+            _ext_circuit_open_until = time.monotonic() + _EXT_CIRCUIT_COOLDOWN
+            logger.warning(
+                "send_pulse[external]: request timed out posting to %s (pulse=%d, %s). "
+                "Circuit open for %.0f s.",
+                url, pulse, exc, _EXT_CIRCUIT_COOLDOWN,
+            )
+        except httpx.HTTPStatusError as exc:
+            logger.error(
+                "send_pulse[external]: HTTP %d for pulse=%d (POST %s — response: %r)",
+                exc.response.status_code, pulse, url, exc.response.text[:200],
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.exception(
+                "send_pulse[external]: unexpected error posting to %s (pulse=%d): %s",
+                url, pulse, exc,
+            )
     return False
 
 
