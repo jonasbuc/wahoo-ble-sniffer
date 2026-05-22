@@ -229,6 +229,15 @@ public class Dashboard : MonoBehaviour
             @"D:\CarProjektDiverse\WAHOOV2\wahoo-ble-sniffer\starters\START_ALL.bat");
     }
 
+    // ── colour palette ─────────────────────────────────────────────
+    // Centralised so adjusting one value updates the whole dashboard.
+    private static readonly Color ColOk       = new Color(0.18f, 0.80f, 0.44f); // green
+    private static readonly Color ColPending  = new Color(1.00f, 0.76f, 0.03f); // amber
+    private static readonly Color ColError    = new Color(0.93f, 0.25f, 0.25f); // red
+    private static readonly Color ColManual   = new Color(0.40f, 0.60f, 1.00f); // blue
+    private static readonly Color ColLocked   = new Color(0.60f, 0.60f, 0.60f); // grey
+    private static readonly Color ColNeutral  = new Color(0.85f, 0.85f, 0.85f); // off-white
+
     // ── new: ID display ────────────────────────────────────────────
 
     private string _lastDisplayedId = null;  // track transitions to trigger AllCheck
@@ -238,21 +247,28 @@ public class Dashboard : MonoBehaviour
         if (currentIdText == null) return;
         if (pulseSender == null)
         {
-            currentIdText.text = "ID: (PulseSender not wired)";
+            currentIdText.text  = "ID: (PulseSender not wired)";
+            currentIdText.color = ColError;
             return;
         }
 
         string id = pulseSender.ParticipantId; // "PENDING" or resolved value
 
-        string display;
         if (_overrideActive)
-            display = $"ID: {id}  [manual]";
+        {
+            currentIdText.text  = $"ID: {id}  [manual]";
+            currentIdText.color = ColManual;          // blue — manual choice active
+        }
         else if (id == "PENDING")
-            display = "ID: PENDING (auto-linking…)";
+        {
+            currentIdText.text  = "ID: PENDING (auto-linking…)";
+            currentIdText.color = ColPending;         // amber — waiting
+        }
         else
-            display = $"ID: {id}";
-
-        currentIdText.text = display;
+        {
+            currentIdText.text  = $"ID: {id}";
+            currentIdText.color = ColOk;              // green — ready
+        }
 
         // When auto-link fires (PENDING → resolved) we immediately re-run
         // AllCheck so the start button activates without waiting for the next
@@ -274,7 +290,7 @@ public class Dashboard : MonoBehaviour
     {
         if (hasStarted)
         {
-            SetOverrideStatus("Session already started — ID locked.");
+            SetOverrideStatus("Session already started — ID locked.", ColLocked);
             return;
         }
 
@@ -282,14 +298,14 @@ public class Dashboard : MonoBehaviour
 
         if (string.IsNullOrEmpty(raw))
         {
-            SetOverrideStatus("⚠ Enter a participant ID first.");
+            SetOverrideStatus("⚠ Enter a participant ID first.", ColPending);
             return;
         }
 
         // Enforce integer-only (participant IDs are positive whole numbers).
         if (!int.TryParse(raw, out int numericId) || numericId < 1)
         {
-            SetOverrideStatus("⚠ ID must be a positive integer (e.g. 1, 2, 3).");
+            SetOverrideStatus("⚠ ID must be a positive integer (e.g. 1, 2, 3).", ColError);
             return;
         }
 
@@ -298,7 +314,7 @@ public class Dashboard : MonoBehaviour
         // Guard: PulseSender must be wired for the override to have any effect.
         if (pulseSender == null)
         {
-            SetOverrideStatus("⚠ PulseSender not wired — cannot apply override.");
+            SetOverrideStatus("⚠ PulseSender not wired — cannot apply override.", ColError);
             Debug.LogError("[Dashboard] ConfirmOverride: pulseSender is not assigned in the Inspector.");
             return;
         }
@@ -311,7 +327,7 @@ public class Dashboard : MonoBehaviour
             dbSender.SetParticipantIdManually(pid);
 
         _overrideActive = true;
-        SetOverrideStatus($"✓ Override active: {pid}");
+        SetOverrideStatus($"✓ Override active: {pid}", ColOk);
 
         Debug.Log($"[Dashboard] Participant ID manually set to: {pid}");
 
@@ -321,10 +337,11 @@ public class Dashboard : MonoBehaviour
     }
 
     /// <summary>Updates the small override-status label (safe if null).</summary>
-    private void SetOverrideStatus(string msg)
+    private void SetOverrideStatus(string msg, Color? colour = null)
     {
-        if (overrideStatusText != null)
-            overrideStatusText.text = msg;
+        if (overrideStatusText == null) return;
+        overrideStatusText.text  = msg;
+        overrideStatusText.color = colour ?? ColNeutral;
     }
 
     // ── new: populate input placeholder from questionnaire API ─────
