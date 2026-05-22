@@ -35,7 +35,6 @@ _REPO_ROOT = _HERE.parent.parent.parent
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-from live_analytics.app.utils.time_utils import fmt_now as _fmt_now  # noqa: E402
 from live_analytics.app.utils.time_utils import now_cph_iso as _now_cph_iso  # noqa: E402
 logger = logging.getLogger("questionnaire.db")
 
@@ -505,8 +504,31 @@ def get_progress(db_path: Path | str, participant_id: str) -> dict:
 
 
 def delete_participant_data(db_path: Path | str, participant_id: str) -> None:
-    """Delete all data for a participant (GDPR-friendly)."""
+    """Delete all data for a participant (GDPR-friendly).
+
+    Removes rows from:
+    - ``pulse_data``              (heart-rate samples linked to this participant)
+    - ``questionnaire_responses`` (pre/post answers)
+    - ``participants``            (registration record)
+
+    NULL-participant pulse_data rows for the same session (written before the
+    participant was linked) are also deleted so no orphaned health data remains.
+    """
     conn = _connect(db_path)
+    # Fetch the session_id before deleting the participants row so we can
+    # clean up any pulse_data rows that were written before the participant
+    # was linked (stored with participant_id = NULL).
+    row = conn.execute(
+        "SELECT session_id FROM participants WHERE participant_id = ?", (participant_id,)
+    ).fetchone()
+    session_id = row["session_id"] if row else None
+
+    if session_id and session_id not in ("", "__done__"):
+        conn.execute(
+            "DELETE FROM pulse_data WHERE session_id = ? AND participant_id IS NULL",
+            (session_id,),
+        )
+    conn.execute("DELETE FROM pulse_data WHERE participant_id = ?", (participant_id,))
     conn.execute("DELETE FROM questionnaire_responses WHERE participant_id = ?", (participant_id,))
     conn.execute("DELETE FROM participants WHERE participant_id = ?", (participant_id,))
     conn.commit()
