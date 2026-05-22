@@ -59,7 +59,7 @@ public class Dashboard : MonoBehaviour
     private float timeSinceLastCheck;
     public float TimeBetweenChecks;
 
-    private Color final;
+    private Color final;     // kept for serialisation compatibility
     private Image[] allChecks;
     private string[] filePaths;
     private string rpiAPI = "https://10.200.130.36:5001/api/cardata";
@@ -86,7 +86,6 @@ public class Dashboard : MonoBehaviour
     private bool _overrideActive = false;
 
     // ── original private state (unchanged) ─────────────────────────
-    bool check = false;
     private float rpiCheckCD = 5;
     private float timesinceLastRPICheck;
     private bool hasStarted;
@@ -108,7 +107,6 @@ public class Dashboard : MonoBehaviour
         timeSinceLastCheck = 0;
         final              = Color.green;
         startSessionButtonObj.SetActive(false);
-
         bikeDataLogPath      = Application.dataPath + "/CARLogs/bikeData.txt";
         headTransformLogPath = Application.dataPath + "/CARLogs/headTransform.txt";
         arduinoLogPath       = Application.dataPath + "/CARLogs/arduino.txt";
@@ -134,6 +132,11 @@ public class Dashboard : MonoBehaviour
         StartCoroutine(FetchAvailableParticipantIds());
 
         SetOverrideStatus("");
+
+        // Show the correct initial state immediately on frame 0 so there is
+        // never a blank/stale frame before Update fires.
+        UpdateIdDisplay();
+        AllCheck();
     }
 
     void Update()
@@ -160,6 +163,13 @@ public class Dashboard : MonoBehaviour
 
     void AllCheck()
     {
+        // Guard: if required references are missing, log once and bail out.
+        if (headSetCheckImg == null || allLogsCheckImg == null)
+        {
+            Debug.LogWarning("[Dashboard] AllCheck: one or more check images are not wired in the Inspector.");
+            return;
+        }
+
         if (OVRManager.isHmdPresent)
             headSetCheckImg.color = OVRPlugin.userPresent ? Color.green : Color.red;
 
@@ -175,11 +185,14 @@ public class Dashboard : MonoBehaviour
         allLogsCheckImg.color = allFilesExists ? Color.green : Color.red;
 
         // Valid if PulseSender has resolved an ID (auto or manual override).
-        bool gotParticipantID = pulseSender.ParticipantId != "PENDING";
-        startSessionButtonObj.SetActive(
-            headSetCheckImg.color  == Color.green &&
-            allLogsCheckImg.color  == Color.green &&
-            gotParticipantID);
+        // If pulseSender is not wired the button stays hidden — fail safe.
+        bool gotParticipantID = pulseSender != null && pulseSender.ParticipantId != "PENDING";
+
+        if (startSessionButtonObj != null)
+            startSessionButtonObj.SetActive(
+                headSetCheckImg.color == Color.green &&
+                allLogsCheckImg.color == Color.green &&
+                gotParticipantID);
     }
 
     public static bool startedSim = false;
@@ -218,18 +231,36 @@ public class Dashboard : MonoBehaviour
 
     // ── new: ID display ────────────────────────────────────────────
 
+    private string _lastDisplayedId = null;  // track transitions to trigger AllCheck
+
     private void UpdateIdDisplay()
     {
-        if (currentIdText == null || pulseSender == null) return;
+        if (currentIdText == null) return;
+        if (pulseSender == null)
+        {
+            currentIdText.text = "ID: (PulseSender not wired)";
+            return;
+        }
 
         string id = pulseSender.ParticipantId; // "PENDING" or resolved value
 
+        string display;
         if (_overrideActive)
-            currentIdText.text = $"ID: {id}  [manual]";
+            display = $"ID: {id}  [manual]";
         else if (id == "PENDING")
-            currentIdText.text = "ID: PENDING (auto-linking…)";
+            display = "ID: PENDING (auto-linking…)";
         else
-            currentIdText.text = $"ID: {id}";
+            display = $"ID: {id}";
+
+        currentIdText.text = display;
+
+        // When auto-link fires (PENDING → resolved) we immediately re-run
+        // AllCheck so the start button activates without waiting for the next
+        // TimeBetweenChecks interval.
+        if (_lastDisplayedId == "PENDING" && id != "PENDING")
+            AllCheck();
+
+        _lastDisplayedId = id;
     }
 
     // ── new: manual override ───────────────────────────────────────
@@ -263,6 +294,14 @@ public class Dashboard : MonoBehaviour
         }
 
         string pid = numericId.ToString();
+
+        // Guard: PulseSender must be wired for the override to have any effect.
+        if (pulseSender == null)
+        {
+            SetOverrideStatus("⚠ PulseSender not wired — cannot apply override.");
+            Debug.LogError("[Dashboard] ConfirmOverride: pulseSender is not assigned in the Inspector.");
+            return;
+        }
 
         // Apply to PulseSender — stops auto-polling, rewrites pulse.txt header.
         pulseSender.SetParticipantIdManually(pid);
@@ -306,7 +345,15 @@ public class Dashboard : MonoBehaviour
 
             if (req.result != UnityWebRequest.Result.Success)
             {
-                Debug.Log($"[Dashboard] Could not fetch participants from questionnaire API: {req.error}");
+                Debug.Log($"[Dashboard] Could not fetch participants from questionnaire API ({req.error}) — placeholder left as default hint.");
+                // Degrade gracefully: set a static hint so the operator knows
+                // the field is editable even without a live service.
+                if (overrideIdInput != null)
+                {
+                    var ph = overrideIdInput.placeholder as TMPro.TMP_Text;
+                    if (ph != null)
+                        ph.text = "Enter participant ID (e.g. 1)";
+                }
                 yield break;
             }
 
@@ -327,7 +374,13 @@ public class Dashboard : MonoBehaviour
                 // Put the list into the placeholder so the operator can see
                 // registered IDs at a glance.  e.g. "Available: 1, 2, 3"
                 string hint = "Available: " + string.Join(", ", ids);
-                overrideIdInput.placeholder.GetComponent<TMPro.TMP_Text>().text = hint;
+
+                // TMP_InputField.placeholder is a Graphic component — cast safely.
+                var ph = overrideIdInput.placeholder as TMPro.TMP_Text;
+                if (ph != null)
+                    ph.text = hint;
+                else
+                    Debug.LogWarning("[Dashboard] overrideIdInput placeholder is not a TMP_Text — cannot set hint.");
             }
         }
     }
