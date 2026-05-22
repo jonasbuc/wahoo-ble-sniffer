@@ -183,18 +183,27 @@ def compute_features(
     for r in records:
         t = r.unity_time
 
-        if t >= steer_cut:
-            steer_vals.append(r.steering_angle)
+        # hr_only records are BLE relay frames: speed=0, steering=0, head
+        # rotation=identity quaternion.  Including them in movement-based
+        # features would artificially suppress steering variance, corrupt
+        # head-scan detection (constant yaw=0 from identity quaternion), and
+        # drag mean_speed toward zero.  HR delta is unaffected — hr_only
+        # records carry a valid heart_rate and are included in that window.
+        is_hr_only = getattr(r, "record_type", "gameplay") == "hr_only"
+
+        if not is_hr_only:
+            if t >= steer_cut:
+                steer_vals.append(r.steering_angle)
+
+            if t >= scan_cut:
+                scan_recs.append(r)
+
+            if t >= speed_cut:
+                speed_vals.append(r.speed)
 
         if t >= hr_cut and r.heart_rate > 0:
             hr_vals.append(r.heart_rate)
             hr_times.append(t)
-
-        if t >= scan_cut:
-            scan_recs.append(r)
-
-        if t >= speed_cut:
-            speed_vals.append(r.speed)
 
         # Track first trigger for brake reaction (only set once)
         if r.trigger_id and first_trigger_time is None:

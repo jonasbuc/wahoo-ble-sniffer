@@ -189,9 +189,7 @@ async def trigger_relink() -> dict:
     Safe to call multiple times — duplicate tasks for the same session are
     harmless (participant cache is checked on every attempt).
     """
-    import asyncio
     from live_analytics.app import ws_ingest
-    from datetime import datetime, timezone
     from live_analytics.app.utils.time_utils import now_cph_iso, unix_ms_to_cph_iso
 
     # Find all sessions that are currently active (have an open sliding window)

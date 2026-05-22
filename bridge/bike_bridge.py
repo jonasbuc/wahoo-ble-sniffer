@@ -626,6 +626,13 @@ class WahooBridgeServer:
                             getattr(target, "address", target), type(exc).__name__, exc,
                         )
 
+                    # Capture the running event loop NOW (on the asyncio thread) so
+                    # hr_handler can use call_soon_threadsafe even when bleak invokes
+                    # the callback on a worker thread.  asyncio.get_event_loop() from
+                    # a non-asyncio thread is deprecated in Python 3.10 and raises
+                    # RuntimeError in Python 3.12, which would silently drop all HR data.
+                    _ble_loop = asyncio.get_running_loop()
+
                     def hr_handler(sender, data: bytes):
                         """Parse a raw HR notification and enqueue it for broadcast_loop.
 
@@ -677,10 +684,6 @@ class WahooBridgeServer:
                             # we drop the oldest item first so the queue never blocks
                             # and broadcast_loop always sees fresh data.
                             ts = time.time()
-                            try:
-                                loop = asyncio.get_event_loop()
-                            except RuntimeError:
-                                return  # no event loop — bridge is shutting down
 
                             def _enqueue():
                                 if self._hr_queue.full():
@@ -696,7 +699,7 @@ class WahooBridgeServer:
                                 except asyncio.QueueFull:
                                     pass  # extremely unlikely after the drain above
 
-                            loop.call_soon_threadsafe(_enqueue)
+                            _ble_loop.call_soon_threadsafe(_enqueue)
                         except Exception as exc:
                             LOG.debug(
                                 "Failed to parse HR notification (len=%d): %s: %s",

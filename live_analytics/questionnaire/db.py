@@ -404,9 +404,12 @@ def get_oldest_unlinked_participant(db_path: Path | str) -> Optional[dict]:
     conn = _connect(db_path)
     row = conn.execute(
         "SELECT * FROM participants WHERE session_id = '' OR session_id IS NULL "
-        "ORDER BY created_at ASC LIMIT 1"
-        # Note: '__done__' participants are intentionally excluded — they have
-        # already completed a session and must not be auto-linked again.
+        "ORDER BY rowid ASC LIMIT 1"
+        # rowid is SQLite's implicit monotonically-increasing insertion counter.
+        # It is always correct FIFO order regardless of DST transitions, unlike
+        # ORDER BY created_at ASC which sorts ISO-8601 strings lexicographically
+        # and breaks when UTC offsets change between +01:00 and +02:00 on the
+        # DST change night in October.
     ).fetchone()
     return dict(row) if row else None
 

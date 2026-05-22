@@ -188,16 +188,13 @@ def append_session_event(participants_dir: Path, participant_id: str, record: di
 def _sanitise(participant_id: str) -> str:
     """Return a filesystem-safe version of *participant_id*.
 
-    Replaces path separators and null bytes with underscores so that
-    malicious or accidentally malformed IDs cannot escape the directory.
+    Uses a whitelist approach: only alphanumeric characters and hyphens are
+    kept; everything else (including path separators, null bytes, dots, and
+    colons) is replaced with underscores.  This prevents ``..`` directory
+    traversal — e.g. ``participant_id=".."`` maps to ``"__"`` rather than
+    navigating to the parent of ``participants_dir``.
     """
-    return (
-        participant_id
-        .replace("/", "_")
-        .replace("\\", "_")
-        .replace(":", "_")       # Windows: colon is not valid in path components
-        .replace("\x00", "_")    # null bytes are illegal on all platforms
-    )
+    return "".join(c if (c.isalnum() or c == "-") else "_" for c in participant_id)
 
 
 def _write_json(path: Path, data: dict) -> None:
