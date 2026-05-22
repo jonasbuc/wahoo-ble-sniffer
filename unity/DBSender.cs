@@ -93,10 +93,13 @@ public class DBSender : MonoBehaviour {
         File.WriteAllText(pulseLog, "");
 
         // Subscribe to Wahoo HR events.
+        // Auto-find if not wired in Inspector.
+        if (wahooWsClient == null)
+            wahooWsClient = FindObjectOfType<WahooWsClient>();
         if (wahooWsClient != null)
             wahooWsClient.OnHeartRate += OnHeartRateReceived;
         else
-            Debug.LogWarning("DBSender: WahooWsClient not assigned — pulse will not be logged.");
+            Debug.LogWarning("DBSender: WahooWsClient not found — pulse will not be logged.");
 
         // Single background thread handles all four log files.
         loggingThread = new Thread(WriteToFileLoop) { IsBackground = true };

@@ -125,6 +125,8 @@ public class PulseSender : MonoBehaviour {
                 string pid = ExtractJsonString(req.downloadHandler.text, "participant_id");
                 if (!string.IsNullOrEmpty(pid) && pid != "null")
                     _participantId = pid;
+            } else {
+                Debug.Log($"PulseSender: could not fetch participant_id from {url} — {req.result}: {req.error}");
             }
         }
     }

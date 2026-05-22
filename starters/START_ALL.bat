@@ -18,5 +18,5 @@ if not exist "%PYTHON%" (
     exit /b 1
 )
 
-"%PYTHON%" starters\launcher.py %*
+"%PYTHON%" starters\launcher.py --bridge %*
 pause

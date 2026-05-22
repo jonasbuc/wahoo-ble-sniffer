@@ -79,6 +79,21 @@ _RESOLVE_COOLDOWN_SEC: float = float(os.getenv("LA_RESOLVE_COOLDOWN_SEC", "5.0")
 # DEBUG instead.
 _warned_userid_zero: set[str] = set()
 
+# ── Per-session "NOT saved" summary warning gates ─────────────────────
+# Prevents "was NOT saved to questionnaire/external DB" from flooding the
+# log on every pulse when an API is temporarily unreachable.  Each gate fires
+# once per session; subsequent failures demote to DEBUG.
+_warned_qs_failed: set[str] = set()
+_warned_ext_failed: set[str] = set()
+
+# ── Questionnaire concurrency semaphore ───────────────────────────────
+# Limits concurrent HTTP requests to the questionnaire API so a burst of
+# ingest messages (e.g. Unity reconnect replay) cannot overwhelm the
+# single-worker uvicorn process.  Tasks that arrive while all slots are
+# taken queue here and send successfully once the API catches up — far
+# better than all 40+ tasks timing out simultaneously.
+_QS_SEMAPHORE = asyncio.Semaphore(3)
+
 
 async def resolve_participant(session_id: str) -> str | None:
     """Fetch and cache the participant_id for a session from the questionnaire API.
@@ -225,10 +240,14 @@ def clear_participant_cache(session_id: str | None = None) -> None:
         _participant_cache.pop(session_id, None)
         _resolve_cooldown_until.pop(session_id, None)
         _warned_userid_zero.discard(session_id)
+        _warned_qs_failed.discard(session_id)
+        _warned_ext_failed.discard(session_id)
     else:
         _participant_cache.clear()
         _resolve_cooldown_until.clear()
         _warned_userid_zero.clear()
+        _warned_qs_failed.clear()
+        _warned_ext_failed.clear()
 
 
 async def clear_participant_session_link(participant_id: str, session_id: str | None = None) -> None:
@@ -274,6 +293,39 @@ async def clear_participant_session_link(participant_id: str, session_id: str | 
         )
 
 
+async def mark_participant_done(participant_id: str, session_id: str | None = None) -> None:
+    """Mark *participant_id* as permanently done in the questionnaire DB.
+
+    Calls ``PUT /api/participants/{id}/done`` which sets session_id =
+    '__done__', permanently excluding the participant from the FIFO pool.
+    Called at normal session end.  Fire-and-forget — failures are logged
+    but never raised.
+    """
+    url = f"{_QS_BASE_URL}/api/participants/{participant_id}/done"
+    _DONE_TIMEOUT = httpx.Timeout(connect=2.0, read=3.0, write=3.0, pool=2.0)
+    try:
+        async with httpx.AsyncClient(timeout=_DONE_TIMEOUT) as client:
+            resp = await client.put(url)
+            if resp.status_code == 200:
+                logger.info(
+                    "mark_participant_done: participant %r marked __done__",
+                    participant_id,
+                )
+                if session_id:
+                    clear_participant_cache(session_id)
+            else:
+                logger.warning(
+                    "mark_participant_done: PUT %s returned HTTP %d",
+                    url, resp.status_code,
+                )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "mark_participant_done: could not reach questionnaire API "
+            "for participant %r: %s: %s",
+            participant_id, type(exc).__name__, exc,
+        )
+
+
 def get_cached_participant(session_id: str) -> str | None:
     """Return the participant_id for *session_id* from the in-memory cache.
 
@@ -293,32 +345,33 @@ async def _send_to_questionnaire(client: httpx.AsyncClient, session_id: str, uni
     """POST pulse to our own questionnaire API → questionnaire.db."""
     url = f"{_QS_BASE_URL}/api/pulse"
     payload = {"session_id": session_id, "unix_ms": unix_ms, "pulse": pulse}
-    try:
-        resp = await client.post(url, json=payload)
-        resp.raise_for_status()
-        return True
-    except httpx.ConnectError as exc:
-        logger.warning(
-            "send_pulse[questionnaire]: API unreachable at %s — "
-            "pulse for session %r not persisted (ConnectError: %s). "
-            "Is the questionnaire service running on QS_BASE_URL=%s?",
-            url, session_id, exc, _QS_BASE_URL,
-        )
-    except httpx.TimeoutException as exc:
-        logger.warning(
-            "send_pulse[questionnaire]: request timed out (session=%r, pulse=%d, %s)",
-            session_id, pulse, exc,
-        )
-    except httpx.HTTPStatusError as exc:
-        logger.error(
-            "send_pulse[questionnaire]: HTTP %d for session=%r pulse=%d (response: %r)",
-            exc.response.status_code, session_id, pulse, exc.response.text[:200],
-        )
-    except Exception as exc:  # noqa: BLE001
-        logger.exception(
-            "send_pulse[questionnaire]: unexpected error (session=%r, pulse=%d): %s",
-            session_id, pulse, exc,
-        )
+    async with _QS_SEMAPHORE:
+        try:
+            resp = await client.post(url, json=payload)
+            resp.raise_for_status()
+            return True
+        except httpx.ConnectError as exc:
+            logger.warning(
+                "send_pulse[questionnaire]: API unreachable at %s — "
+                "pulse for session %r not persisted (ConnectError: %s). "
+                "Is the questionnaire service running on QS_BASE_URL=%s?",
+                url, session_id, exc, _QS_BASE_URL,
+            )
+        except httpx.TimeoutException as exc:
+            logger.warning(
+                "send_pulse[questionnaire]: request timed out (session=%r, pulse=%d, %s)",
+                session_id, pulse, exc,
+            )
+        except httpx.HTTPStatusError as exc:
+            logger.error(
+                "send_pulse[questionnaire]: HTTP %d for session=%r pulse=%d (response: %r)",
+                exc.response.status_code, session_id, pulse, exc.response.text[:200],
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.exception(
+                "send_pulse[questionnaire]: unexpected error (session=%r, pulse=%d): %s",
+                session_id, pulse, exc,
+            )
     return False
 
 
@@ -453,15 +506,31 @@ async def send_pulse(session_id: str, unix_ms: int, pulse: int) -> bool:
         )
 
     if not qs_ok:
-        logger.warning(
-            "send_pulse: pulse=%d for session %r was NOT saved to questionnaire DB",
-            pulse, session_id,
-        )
+        if session_id not in _warned_qs_failed:
+            _warned_qs_failed.add(session_id)
+            logger.warning(
+                "send_pulse: pulse=%d for session %r was NOT saved to questionnaire DB "
+                "(further failures this session suppressed — check questionnaire service)",
+                pulse, session_id,
+            )
+        else:
+            logger.debug(
+                "send_pulse: pulse=%d for session %r was NOT saved to questionnaire DB (already warned)",
+                pulse, session_id,
+            )
     if not ext_ok:
-        logger.warning(
-            "send_pulse: pulse=%d for session %r was NOT saved to external research DB",
-            pulse, session_id,
-        )
+        if session_id not in _warned_ext_failed:
+            _warned_ext_failed.add(session_id)
+            logger.warning(
+                "send_pulse: pulse=%d for session %r was NOT saved to external research DB "
+                "(further failures this session suppressed — check EXTERNAL_API_URL)",
+                pulse, session_id,
+            )
+        else:
+            logger.debug(
+                "send_pulse: pulse=%d for session %r was NOT saved to external research DB (already warned)",
+                pulse, session_id,
+            )
 
     return qs_ok and ext_ok
 

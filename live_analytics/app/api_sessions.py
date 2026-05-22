@@ -14,6 +14,7 @@ Endpoints:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from fastapi import APIRouter, HTTPException, Response
@@ -157,7 +158,7 @@ async def link_participant_to_session(session_id: str, body: _LinkParticipantBod
     Body: ``{ "participant_id": "P001" }``
     """
     try:
-        set_session_participant(DB_PATH, session_id, body.participant_id)
+        await asyncio.to_thread(set_session_participant, DB_PATH, session_id, body.participant_id)
     except Exception as exc:
         logger.exception(
             "link_participant_to_session: DB error for session %r participant %r",

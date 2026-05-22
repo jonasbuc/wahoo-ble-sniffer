@@ -24,6 +24,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 import time
 from collections import deque
 from datetime import datetime, timezone
@@ -248,14 +249,11 @@ async def _on_disconnect(session_ids: set[str]) -> None:
             "ended_at=%s SQLite.end_unix_ms updated",
             sid, pid, _record_counts.get(sid, 0), local_time,
         )
-        # ── Unlink participant so they auto-link to the next session ──
-        # Clearing the questionnaire session_id returns the participant to
-        # the FIFO unlinked pool.  The next Unity session will be linked
-        # automatically without any manual step.
-        # Pass sid so the analytics in-memory cache is also cleared,
-        # preventing stale participant_id from being returned for future
-        # sessions that happen to reuse this sid.
-        await web_api_client.clear_participant_session_link(pid, session_id=sid)
+        # ── Mark participant as done ───────────────────────────────────
+        # Sets session_id = '__done__' in the questionnaire DB so this
+        # participant is permanently excluded from the FIFO pool and
+        # cannot be auto-linked to a future Unity session.
+        await web_api_client.mark_participant_done(pid, session_id=sid)
 
 
 async def _process_message(ws: ServerConnection, raw: str, connection_sessions: set[str] | None = None) -> None:
@@ -344,9 +342,11 @@ async def _process_message(ws: ServerConnection, raw: str, connection_sessions: 
     session_id = batch.records[0].session_id
     if session_id in latest_scores:
         scores = latest_scores[session_id]
+        # Guard against NaN/Inf: Pydantic serialises non-finite floats as JSON
+        # `null`, which Unity's JsonUtility cannot parse for a C# `float` field.
         feedback = LiveFeedback(
-            stress_score=scores.stress_score,
-            risk_score=scores.risk_score,
+            stress_score=scores.stress_score if math.isfinite(scores.stress_score) else 0.0,
+            risk_score=scores.risk_score if math.isfinite(scores.risk_score) else 0.0,
         )
         try:
             await ws.send(feedback.model_dump_json())

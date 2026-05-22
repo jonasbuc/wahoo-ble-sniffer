@@ -35,6 +35,7 @@ from live_analytics.questionnaire.db import (
     insert_pulse_data,
     link_session,
     list_participants,
+    mark_participant_done,
     save_answer,
     save_answers_bulk,
     unlink_session,
@@ -259,12 +260,30 @@ async def link_session_endpoint(participant_id: str, body: LinkSession) -> dict:
     return {"ok": True}
 
 
+@app.put("/api/participants/{participant_id}/done")
+async def mark_participant_done_endpoint(participant_id: str) -> dict:
+    """Mark a participant as permanently done (session_id = '__done__').
+
+    Called automatically by the analytics server at normal session end so
+    the participant cannot be recycled into a future Unity session.
+    """
+    p = get_participant(DB_PATH, participant_id)
+    if not p:
+        raise HTTPException(404, "Participant not found")
+    mark_participant_done(DB_PATH, participant_id)
+    logger.info("Participant marked done: id=%r", participant_id)
+    return {"ok": True, "participant_id": participant_id}
+
+
 @app.delete("/api/participants/{participant_id}/session")
 async def unlink_session_endpoint(participant_id: str) -> dict:
-    """Clear the session link for a participant, returning them to the unlinked pool.
+    """Restore a participant to the unlinked pool (sets session_id to '').
 
-    Called automatically by the analytics server when a session ends so the
-    participant is available for auto-linking to the next Unity session.
+    Called by the analytics server safety-net path (participant was linked
+    but received no records) and by stale-session eviction.  Restores the
+    participant to the FIFO unlinked pool so they can be auto-linked to the
+    next Unity session.  NOT called at normal session end — after a normal
+    session the participant keeps their completed session_id.
     """
     p = get_participant(DB_PATH, participant_id)
     if not p:

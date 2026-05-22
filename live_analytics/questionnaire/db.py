@@ -302,15 +302,34 @@ def link_session(db_path: Path | str, participant_id: str, session_id: str) -> N
 
 
 def unlink_session(db_path: Path | str, participant_id: str) -> None:
-    """Clear the session link for a participant so they become available for the next session.
+    """Remove the session link from a participant so they re-enter the
+    unlinked pool.
 
-    Called automatically by the analytics server when a session ends cleanly,
-    so the participant is returned to the FIFO unlinked pool and will be
-    auto-linked when Unity starts the next session.
+    Sets session_id = '' so the participant is eligible for auto-linking
+    again.  Called only by the safety-net path (participant linked but no
+    records received) and by stale-session eviction — NOT at normal session
+    end.  At normal session end the participant keeps their completed
+    session_id, which excludes them from oldest-unlinked (WHERE
+    session_id='' OR NULL) while still allowing by-session reconnects.
     """
     conn = _connect(db_path)
     conn.execute(
         "UPDATE participants SET session_id = '', updated_at = ? WHERE participant_id = ?",
+        (_now(), participant_id),
+    )
+    conn.commit()
+
+
+def mark_participant_done(db_path: Path | str, participant_id: str) -> None:
+    """Permanently retire a participant by setting session_id = '__done__'.
+
+    Called at normal session end so the participant is never auto-linked to
+    a future session.  Unlike unlink_session (which resets to ''), this
+    keeps them out of the FIFO pool permanently.
+    """
+    conn = _connect(db_path)
+    conn.execute(
+        "UPDATE participants SET session_id = '__done__', updated_at = ? WHERE participant_id = ?",
         (_now(), participant_id),
     )
     conn.commit()
@@ -338,6 +357,8 @@ def get_oldest_unlinked_participant(db_path: Path | str) -> Optional[dict]:
     row = conn.execute(
         "SELECT * FROM participants WHERE session_id = '' OR session_id IS NULL "
         "ORDER BY created_at ASC LIMIT 1"
+        # Note: '__done__' participants are intentionally excluded — they have
+        # already completed a session and must not be auto-linked again.
     ).fetchone()
     return dict(row) if row else None
 

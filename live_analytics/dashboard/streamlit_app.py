@@ -19,6 +19,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import pandas as pd
 import requests
 import streamlit as st
@@ -611,6 +612,16 @@ def _render_live() -> None:
     except Exception as exc:
         log.warning("Failed to sort/dedup telemetry DataFrame for session '%s': %s", selected, exc)
 
+    # Coerce chart columns to float and drop rows with null/non-finite unity_time.
+    # Prevents Altair "Infinite extent" warnings when the JSONL contains null values.
+    for _col in ("unity_time", "speed", "heart_rate", "steering_angle", "brake_front", "brake_rear"):
+        if _col in df.columns:
+            df[_col] = pd.to_numeric(df[_col], errors="coerce")
+    df = df[np.isfinite(df["unity_time"].to_numpy(dtype=float, na_value=float("nan")))]
+    if df.empty:
+        st.info("No valid telemetry data yet (all records have null or non-finite timestamps).")
+        return
+
     # Downsample for chart display (keeps full session shape, not just recent window)
     chart_df = _downsample(df)
 
@@ -621,7 +632,11 @@ def _render_live() -> None:
             # Exclude hr_only relay records which always have speed=0
             speed_df = chart_df[chart_df["record_type"] != "hr_only"] if "record_type" in chart_df.columns else chart_df
             if not speed_df.empty:
-                st.line_chart(speed_df.set_index("unity_time")[["speed"]], height=220)
+                _speed_chart = speed_df.set_index("unity_time")[["speed"]].dropna()
+                if not _speed_chart.empty:
+                    st.line_chart(_speed_chart, height=220)
+                else:
+                    st.info("No speed data yet.")
             else:
                 st.info("No speed data yet.")
             st.caption(f"Speed (m/s) — {len(df):,} records")
@@ -630,7 +645,11 @@ def _render_live() -> None:
 
     with chart_col2:
         if "heart_rate" in chart_df.columns:
-            st.line_chart(chart_df.set_index("unity_time")[["heart_rate"]], height=220)
+            _hr_chart = chart_df.set_index("unity_time")[["heart_rate"]].dropna()
+            if not _hr_chart.empty:
+                st.line_chart(_hr_chart, height=220)
+            else:
+                st.info("No heart-rate data yet.")
             st.caption("Heart Rate (bpm)")
         else:
             st.info("No heart-rate data yet.")
@@ -639,7 +658,11 @@ def _render_live() -> None:
 
     with chart_col3:
         if "steering_angle" in chart_df.columns:
-            st.line_chart(chart_df.set_index("unity_time")[["steering_angle"]], height=220)
+            _steer_chart = chart_df.set_index("unity_time")[["steering_angle"]].dropna()
+            if not _steer_chart.empty:
+                st.line_chart(_steer_chart, height=220)
+            else:
+                st.info("No steering data yet.")
             st.caption("Steering Angle (°)")
         else:
             st.info("No steering data yet.")
@@ -647,7 +670,11 @@ def _render_live() -> None:
     with chart_col4:
         brake_cols = [c for c in ("brake_front", "brake_rear") if c in chart_df.columns]
         if brake_cols:
-            st.line_chart(chart_df.set_index("unity_time")[brake_cols], height=220)
+            _brake_chart = chart_df.set_index("unity_time")[brake_cols].dropna(how="all")
+            if not _brake_chart.empty:
+                st.line_chart(_brake_chart, height=220)
+            else:
+                st.info("No brake data yet.")
             st.caption("Brake Pressure")
         else:
             st.info("No brake data yet.")
