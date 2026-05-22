@@ -185,7 +185,7 @@ async def _on_disconnect(session_ids: set[str]) -> None:
                 await web_api_client.clear_participant_session_link(_safety_pid, session_id=sid)
             continue
 
-        pid = web_api_client._participant_cache.get(sid)
+        pid = web_api_client.get_cached_participant(sid)
         if not pid:
             # Participant not yet resolved — try one last lookup before giving up.
             pid = await web_api_client.resolve_participant(sid)
@@ -776,7 +776,7 @@ async def _evict_stale_sessions() -> None:
             latest_gameplay_records.pop(sid, None)
             latest_hr.pop(sid, None)
             # Read participant BEFORE clearing the cache entry.
-            pid = web_api_client._participant_cache.get(sid)
+            pid = web_api_client.get_cached_participant(sid)
             # clear_participant_cache cleans _participant_cache, cooldown, and
             # _warned_userid_zero in one call — avoid popping _participant_cache
             # directly which would leave those other dicts stale.
@@ -816,14 +816,33 @@ async def _evict_stale_sessions() -> None:
                     sid,
                 )
 
-            # ── Unlink participant from questionnaire DB ───────────────
-            # After eviction the participant would stay marked as linked to
-            # this (now-dead) session_id in the questionnaire DB forever —
-            # they would never re-enter the FIFO unlinked pool.
-            # Calling clear_participant_session_link returns them to the pool
-            # so they can be auto-linked when the next Unity session starts.
+            # ── Unlink or mark done in questionnaire DB ───────────────
+            # Sessions that received records: the participant completed their
+            # session (normal disconnect called mark_participant_done, but the
+            # HTTP call may have failed, leaving the cache populated).  Retry
+            # mark_participant_done so they are permanently excluded from the
+            # FIFO pool — not silently recycled.
+            # Sessions with NO records: the participant was linked but never
+            # sent data (e.g. headset put on briefly then taken off without
+            # starting the Unity scene).  Return them to the FIFO pool so they
+            # can be auto-linked when the next Unity session starts.
             if pid:
-                await web_api_client.clear_participant_session_link(pid, session_id=sid)
+                if last_rec is not None:
+                    # Session had data → permanent done (not FIFO-recyclable)
+                    await web_api_client.mark_participant_done(pid, session_id=sid)
+                    logger.info(
+                        "_evict_stale_sessions: participant %r marked done "
+                        "(session %r had records — eviction retry of done-mark)",
+                        pid, sid,
+                    )
+                else:
+                    # Session had no data → return to FIFO pool
+                    await web_api_client.clear_participant_session_link(pid, session_id=sid)
+                    logger.info(
+                        "_evict_stale_sessions: participant %r unlinked "
+                        "(session %r had no records — returned to FIFO pool)",
+                        pid, sid,
+                    )
 
         logger.info(
             "Evicted in-memory state for %d stale session(s) "
