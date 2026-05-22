@@ -278,15 +278,6 @@ async def link_session_endpoint(participant_id: str, body: LinkSession) -> dict:
                 "link_session_endpoint: notified analytics API to link %r → %r",
                 body.session_id, participant_id,
             )
-            # If this was a reassignment, also notify analytics to clear cache
-            # for the displaced (old) participant so the next pulse resolve
-            # returns the new participant immediately.
-            if old_participant_id:
-                clear_url = f"{ANALYTICS_API_URL}/api/sessions/{body.session_id}/participant/clear-old"
-                try:
-                    await client.delete(clear_url, params={"old_participant_id": old_participant_id})
-                except Exception:
-                    pass  # best-effort; analytics cache TTL will expire naturally
         except Exception as exc:  # noqa: BLE001
             # Analytics API may not be running yet — this is non-fatal.
             logger.debug(

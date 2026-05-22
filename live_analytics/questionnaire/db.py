@@ -301,6 +301,7 @@ def link_session(db_path: Path | str, participant_id: str, session_id: str) -> N
     # ── Reassignment guard ────────────────────────────────────────────
     # If session_id is currently held by a DIFFERENT participant, unlink
     # them first so the session maps to exactly one participant at a time.
+    _displaced_pid: str | None = None  # track old holder for pulse_data re-attribution
     if session_id:
         old_holder = conn.execute(
             "SELECT participant_id FROM participants "
@@ -308,18 +309,17 @@ def link_session(db_path: Path | str, participant_id: str, session_id: str) -> N
             (session_id, participant_id),
         ).fetchone()
         if old_holder:
-            old_pid = old_holder["participant_id"]
+            _displaced_pid = old_holder["participant_id"]
             conn.execute(
                 "UPDATE participants SET session_id = '', updated_at = ? "
                 "WHERE participant_id = ?",
-                (_now(), old_pid),
+                (_now(), _displaced_pid),
             )
             logger.info(
                 "link_session: unlinked previous holder %r from session %r "
                 "(reassigned to %r)",
-                old_pid, session_id, participant_id,
+                _displaced_pid, session_id, participant_id,
             )
-
     conn.execute(
         "UPDATE participants SET session_id = ?, updated_at = ? WHERE participant_id = ?",
         (session_id, _now(), participant_id),
@@ -332,6 +332,15 @@ def link_session(db_path: Path | str, participant_id: str, session_id: str) -> N
         (participant_id, session_id),
     )
     backfilled = result.rowcount
+    # Re-attribute pulse_data rows previously written under the old participant
+    # so the whole session is consistently attributed to the new participant.
+    if _displaced_pid:
+        result2 = conn.execute(
+            "UPDATE pulse_data SET participant_id = ? "
+            "WHERE session_id = ? AND participant_id = ?",
+            (participant_id, session_id, _displaced_pid),
+        )
+        backfilled += result2.rowcount
     conn.commit()
     if backfilled:
         logger.info(

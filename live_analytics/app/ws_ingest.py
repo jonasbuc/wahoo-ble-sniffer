@@ -721,11 +721,17 @@ async def _broadcast_dashboard(session_id: str | None) -> None:
     rec = latest_records.get(session_id)
     if not scores or not rec:
         return
+    gameplay_rec = latest_gameplay_records.get(session_id)
     payload = json.dumps({
         "session_id": session_id,
         "unix_ms": rec.unix_ms,
-        "speed": rec.speed,
-        "heart_rate": rec.heart_rate,
+        # Use latest gameplay record for speed — hr_only records always have
+        # speed=0 and would give the dashboard a false "stopped" reading.
+        "speed": gameplay_rec.speed if gameplay_rec is not None else None,
+        # Use dedicated HR tracker (updated from every record type) instead of
+        # the latest record's heart_rate field which may be 0 for gameplay records
+        # that arrived between HR broadcasts.
+        "heart_rate": latest_hr.get(session_id) or rec.heart_rate,
         "scores": scores.model_dump(),
     })
     dead: list[Any] = []
