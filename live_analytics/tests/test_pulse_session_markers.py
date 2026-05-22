@@ -194,6 +194,12 @@ class TestIngestPipelineWithMockParticipant:
 
         self._setup_ingest(db, pdir)
 
+        # _do_resolve_and_link_participant checks _windows at the top of every
+        # iteration before calling resolve_participant.  Add the session so the
+        # guard passes and resolution proceeds normally.
+        from collections import deque
+        ingest._windows[sid] = deque(maxlen=600)
+
         # Mock questionnaire API: returnerer TP_001 med det samme
         with patch.object(web_api_client, "resolve_participant", new=AsyncMock(return_value=pid)):
             with patch("live_analytics.app.storage.sqlite_store.set_session_participant"):
@@ -257,6 +263,9 @@ class TestIngestPipelineWithMockParticipant:
 
         for sid, pid, hr in participants:
             # --- Session start ---
+            # _do_resolve_and_link_participant checks _windows before resolving.
+            from collections import deque
+            ingest._windows[sid] = deque(maxlen=600)
             with patch.object(web_api_client, "resolve_participant", new=AsyncMock(return_value=pid)):
                 with patch("live_analytics.app.storage.sqlite_store.set_session_participant"):
                     await ingest._resolve_and_link_participant(sid, "mock_scenario", "2026-05-12T10:00:00+00:00")

@@ -312,7 +312,9 @@ class TestResolveAndLinkRetry:
             _run(wsi._resolve_and_link_participant(sid, "sc1", "2026-01-01T00:00:00+00:00"))
 
         # After the first None with no active session, the task should stop.
-        assert mock_resolve.call_count == 1
+        # With the hardened implementation the _windows check fires BEFORE
+        # resolve_participant is called, so resolve is never called at all.
+        assert mock_resolve.call_count == 0
         mock_sleep.assert_not_called()
         mock_append.assert_not_called()
 

@@ -273,13 +273,22 @@ def link_session(db_path: Path | str, participant_id: str, session_id: str) -> N
     ).fetchone()
     if existing_row:
         existing_sid = existing_row["session_id"] or ""
-        if existing_sid and existing_sid != session_id:
-            logger.warning(
-                "link_session: participant %r already linked to session %r — "
-                "overwriting with %r.  If this is unexpected, check that only "
-                "one Unity client is active for this participant.",
-                participant_id, existing_sid, session_id,
+        if existing_sid and existing_sid not in ("", "__done__") and existing_sid != session_id:
+            # The participant is already firmly linked to a DIFFERENT active session.
+            # Silently overwriting would break the FIFO invariant and corrupt the
+            # session ↔ participant mapping.  Raise so callers can handle the
+            # conflict explicitly (e.g. return HTTP 409 and retry with a fresh
+            # oldest-unlinked participant).
+            raise ValueError(
+                f"link_session: participant {participant_id!r} is already linked to "
+                f"session {existing_sid!r} — refusing to overwrite with {session_id!r}. "
+                "Use unlink_session() first if the old session has ended, or verify "
+                "that only one Unity client is active for this participant."
             )
+        if existing_sid == session_id:
+            # Idempotent re-link to the same session — still run back-fill in case
+            # there are newly arrived NULL pulse_data rows.
+            pass  # fall through to UPDATE + back-fill below
     conn.execute(
         "UPDATE participants SET session_id = ?, updated_at = ? WHERE participant_id = ?",
         (session_id, _now(), participant_id),

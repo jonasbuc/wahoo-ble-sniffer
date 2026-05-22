@@ -167,6 +167,21 @@ async def resolve_participant(session_id: str) -> str | None:
                                     session_id, pid,
                                 )
                                 return pid
+                            elif link_resp.status_code == 409:
+                                # Participant was already linked to a different active
+                                # session — collision between two concurrent resolvers
+                                # (TOCTOU race on oldest-unlinked).  Do NOT cache.
+                                # Apply cooldown so we re-try shortly rather than
+                                # hammering; the other session will have finished
+                                # linking and the next retry will get a fresh
+                                # oldest-unlinked result.
+                                logger.warning(
+                                    "resolve_participant: auto-link 409 conflict for "
+                                    "session %r → participant %r (already linked to a "
+                                    "different session); will retry after cooldown",
+                                    session_id, pid,
+                                )
+                                # fall through to cooldown + return None
                             else:
                                 logger.warning(
                                     "resolve_participant: auto-link PUT failed for "
@@ -518,6 +533,16 @@ async def send_pulse(session_id: str, unix_ms: int, pulse: int) -> bool:
                 "send_pulse: pulse=%d for session %r was NOT saved to questionnaire DB (already warned)",
                 pulse, session_id,
             )
+    elif session_id in _warned_qs_failed:
+        # Delivery just recovered — clear the gate and log INFO so operators
+        # can see when the questionnaire service came back.
+        _warned_qs_failed.discard(session_id)
+        logger.info(
+            "send_pulse: questionnaire DB delivery recovered for session %r "
+            "(pulse=%d accepted — further failures will warn again)",
+            session_id, pulse,
+        )
+
     if not ext_ok:
         if session_id not in _warned_ext_failed:
             _warned_ext_failed.add(session_id)
@@ -531,6 +556,14 @@ async def send_pulse(session_id: str, unix_ms: int, pulse: int) -> bool:
                 "send_pulse: pulse=%d for session %r was NOT saved to external research DB (already warned)",
                 pulse, session_id,
             )
+    elif session_id in _warned_ext_failed:
+        # Delivery just recovered.
+        _warned_ext_failed.discard(session_id)
+        logger.info(
+            "send_pulse: external API delivery recovered for session %r "
+            "(pulse=%d accepted — further failures will warn again)",
+            session_id, pulse,
+        )
 
     return qs_ok and ext_ok
 

@@ -157,58 +157,65 @@ async def _on_disconnect(session_ids: set[str]) -> None:
     end_unix_ms = int(_now.timestamp() * 1000)
 
     for sid in session_ids:
-        # Guard: if no records were ever received for this session there is
-        # nothing meaningful to record as a session_end — and there is no
-        # point trying to resolve a participant for it either.
-        last_rec = latest_records.get(sid)
-        if last_rec is None:
-            logger.debug(
-                "_on_disconnect: no latest record for session %r "
-                "(evicted before disconnect?) — session_end not written",
-                sid,
+        try:
+            await _process_one_disconnect(sid, ended_at, local_time, end_unix_ms)
+        finally:
+            # Always pop the window so the background _resolve_and_link_participant
+            # task aborts on its next iteration (it checks `if sid not in _windows`).
+            # This prevents the task from linking a fresh FIFO participant to a
+            # session that has already ended — which would mark that participant
+            # as done without them ever having ridden.
+            _windows.pop(sid, None)
+
+
+async def _process_one_disconnect(sid: str, ended_at: str, local_time: str, end_unix_ms: int) -> None:
+    """Process session-end for a single session_id on disconnect.
+
+    Extracted from the _on_disconnect loop so the try/finally in _on_disconnect
+    can unconditionally pop _windows[sid] regardless of early returns.
+    """
+    # Guard: if no records were ever received for this session there is
+    # nothing meaningful to record as a session_end — and there is no
+    # point trying to resolve a participant for it either.
+    last_rec = latest_records.get(sid)
+    if last_rec is None:
+        logger.debug(
+            "_on_disconnect: no latest record for session %r "
+            "(evicted before disconnect?) — session_end not written",
+            sid,
+        )
+        # Safety-net: if a participant was already resolved (cached) for
+        # this session, make sure they are unlinked so they can be
+        # auto-linked to the next session.  This handles the race where
+        # _evict_stale_sessions already ran (clearing _participant_cache
+        # and calling unlink), so get_cached_participant returns None and
+        # this call is a cheap no-op.  It also handles the case where
+        # all ingest batches failed (so latest_records was never set) but
+        # the resolve task had already linked the participant.
+        _safety_pid = web_api_client.get_cached_participant(sid)
+        if _safety_pid:
+            logger.info(
+                "_on_disconnect: safety-net unlink — participant %r was linked "
+                "to session %r but no records received; unlinking so they re-enter FIFO pool",
+                _safety_pid, sid,
             )
-            # Safety-net: if a participant was already resolved (cached) for
-            # this session, make sure they are unlinked so they can be
-            # auto-linked to the next session.  This handles the race where
-            # _evict_stale_sessions already ran (clearing _participant_cache
-            # and calling unlink), so get_cached_participant returns None and
-            # this call is a cheap no-op.  It also handles the case where
-            # all ingest batches failed (so latest_records was never set) but
-            # the resolve task had already linked the participant.
-            _safety_pid = web_api_client.get_cached_participant(sid)
-            if _safety_pid:
-                logger.info(
-                    "_on_disconnect: safety-net unlink — participant %r was linked "
-                    "to session %r but no records received; unlinking so they re-enter FIFO pool",
-                    _safety_pid, sid,
-                )
-                await web_api_client.clear_participant_session_link(_safety_pid, session_id=sid)
-            continue
+            await web_api_client.clear_participant_session_link(_safety_pid, session_id=sid)
+        return
 
-        pid = web_api_client.get_cached_participant(sid)
-        if not pid:
-            # Participant not yet resolved — try one last lookup before giving up.
-            pid = await web_api_client.resolve_participant(sid)
+    pid = web_api_client.get_cached_participant(sid)
+    if not pid:
+        # Participant not yet resolved — try one last lookup before giving up.
+        pid = await web_api_client.resolve_participant(sid)
 
-        if not pid:
-            logger.warning(
-                "_on_disconnect: no participant linked to session %r "
-                "— session_end not written. "
-                "Register the participant in the questionnaire before putting on "
-                "the headset and link the session_id immediately after pressing Play.",
-                sid,
-            )
-            # Still update SQLite end_unix_ms so the session isn't left open.
-            try:
-                end_session(DB_PATH, sid, end_unix_ms)
-            except Exception:
-                logger.exception(
-                    "_on_disconnect: could not set end_unix_ms for session %r in SQLite",
-                    sid,
-                )
-            continue
-
-        # ── Update SQLite end_unix_ms ─────────────────────────────────
+    if not pid:
+        logger.warning(
+            "_on_disconnect: no participant linked to session %r "
+            "— session_end not written. "
+            "Register the participant in the questionnaire before putting on "
+            "the headset and link the session_id immediately after pressing Play.",
+            sid,
+        )
+        # Still update SQLite end_unix_ms so the session isn't left open.
         try:
             end_session(DB_PATH, sid, end_unix_ms)
         except Exception:
@@ -216,44 +223,54 @@ async def _on_disconnect(session_ids: set[str]) -> None:
                 "_on_disconnect: could not set end_unix_ms for session %r in SQLite",
                 sid,
             )
+        return
 
-        # ── Write session_end to participant JSONL ────────────────────
-        _append_session_event(PARTICIPANTS_DIR, pid, {
-            "event": "session_end",
-            "session_id": sid,
-            "participant_id": pid,
-            "ended_at": ended_at,
-            "local_time": local_time,
-            "record_count": _record_counts.get(sid, 0),
-        })
-        # ── Write SESSION_END marker to pulse log ─────────────────────
-        # After this marker, no more pulse data will be written for this session.
-        # The next participant's session will start with its own SESSION_START marker.
-        _append_pulse_marker(
-            PARTICIPANTS_DIR,
-            pid,
-            marker="SESSION_END",
-            session_id=sid,
-            timestamp=ended_at,
-            local_time=local_time,
-            extra={"record_count": _record_counts.get(sid, 0)},
+    # ── Update SQLite end_unix_ms ─────────────────────────────────
+    try:
+        end_session(DB_PATH, sid, end_unix_ms)
+    except Exception:
+        logger.exception(
+            "_on_disconnect: could not set end_unix_ms for session %r in SQLite",
+            sid,
         )
-        # Close the dedicated PulseSessionLogger file for this participant.
-        _psl = _get_pulse_logger()
-        if _psl is not None:
-            _psl.close_session(
-                pid, extra={"record_count": _record_counts.get(sid, 0)}
-            )
-        logger.info(
-            "session_end written — session=%r participant=%r records=%d "
-            "ended_at=%s SQLite.end_unix_ms updated",
-            sid, pid, _record_counts.get(sid, 0), local_time,
+
+    # ── Write session_end to participant JSONL ────────────────────
+    _append_session_event(PARTICIPANTS_DIR, pid, {
+        "event": "session_end",
+        "session_id": sid,
+        "participant_id": pid,
+        "ended_at": ended_at,
+        "local_time": local_time,
+        "record_count": _record_counts.get(sid, 0),
+    })
+    # ── Write SESSION_END marker to pulse log ─────────────────────
+    # After this marker, no more pulse data will be written for this session.
+    # The next participant's session will start with its own SESSION_START marker.
+    _append_pulse_marker(
+        PARTICIPANTS_DIR,
+        pid,
+        marker="SESSION_END",
+        session_id=sid,
+        timestamp=ended_at,
+        local_time=local_time,
+        extra={"record_count": _record_counts.get(sid, 0)},
+    )
+    # Close the dedicated PulseSessionLogger file for this participant.
+    _psl = _get_pulse_logger()
+    if _psl is not None:
+        _psl.close_session(
+            pid, extra={"record_count": _record_counts.get(sid, 0)}
         )
-        # ── Mark participant as done ───────────────────────────────────
-        # Sets session_id = '__done__' in the questionnaire DB so this
-        # participant is permanently excluded from the FIFO pool and
-        # cannot be auto-linked to a future Unity session.
-        await web_api_client.mark_participant_done(pid, session_id=sid)
+    logger.info(
+        "session_end written — session=%r participant=%r records=%d "
+        "ended_at=%s SQLite.end_unix_ms updated",
+        sid, pid, _record_counts.get(sid, 0), local_time,
+    )
+    # ── Mark participant as done ───────────────────────────────────
+    # Sets session_id = '__done__' in the questionnaire DB so this
+    # participant is permanently excluded from the FIFO pool and
+    # cannot be auto-linked to a future Unity session.
+    await web_api_client.mark_participant_done(pid, session_id=sid)
 
 
 async def _process_message(ws: ServerConnection, raw: str, connection_sessions: set[str] | None = None) -> None:
@@ -412,6 +429,20 @@ async def _do_resolve_and_link_participant(sid: str, scenario_id: str, started_a
     _RESOLVE_MAX_RETRIES = _FAST_RETRIES + _SLOW_RETRIES
 
     for attempt in range(1, _RESOLVE_MAX_RETRIES + 1):
+        # ── Early-exit: session closed or evicted ─────────────────────────
+        # _on_disconnect() pops _windows[sid] after processing the session so
+        # this check fires immediately on the next retry cycle — preventing
+        # the task from linking a fresh participant to an already-ended session.
+        # _evict_stale_sessions also pops _windows so the same guard covers
+        # eviction-triggered aborts.
+        if sid not in _windows:
+            logger.debug(
+                "_resolve_and_link_participant: session %r is no longer active "
+                "(removed from _windows by disconnect/eviction) — aborting after %d attempt(s).",
+                sid, attempt,
+            )
+            return
+
         pid = await web_api_client.resolve_participant(sid)
         if pid:
             try:
@@ -455,16 +486,6 @@ async def _do_resolve_and_link_participant(sid: str, scenario_id: str, started_a
                 "_resolve_and_link_participant: session_start written for session %r "
                 "(participant=%r, scenario=%r, attempt=%d)",
                 sid, pid, scenario_id, attempt,
-            )
-            return
-
-        # Participant not yet registered; bail out if the session has already
-        # been evicted (the client disconnected before the participant registered).
-        if sid not in _windows:
-            logger.debug(
-                "_resolve_and_link_participant: session %r evicted before participant "
-                "could be resolved — giving up after %d attempt(s)",
-                sid, attempt,
             )
             return
 

@@ -194,7 +194,14 @@ class TestSessionStartLocalTime:
                 new=AsyncMock(return_value="P003"),
             ),
         ):
-            _run(ws_ingest._resolve_and_link_participant("sess-lt-1", "forest", started_at))
+            # _do_resolve_and_link_participant checks _windows before resolving —
+            # add the session so the check passes and resolution proceeds.
+            from collections import deque
+            ws_ingest._windows["sess-lt-1"] = deque(maxlen=600)
+            try:
+                _run(ws_ingest._resolve_and_link_participant("sess-lt-1", "forest", started_at))
+            finally:
+                ws_ingest._windows.pop("sess-lt-1", None)
 
         lines = [l for l in jsonl.read_text().splitlines() if l.strip()]
         assert len(lines) == 1

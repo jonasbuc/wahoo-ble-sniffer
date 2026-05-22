@@ -232,7 +232,18 @@ async def link_session_endpoint(participant_id: str, body: LinkSession) -> dict:
     p = get_participant(DB_PATH, participant_id)
     if not p:
         raise HTTPException(404, "Participant not found")
-    link_session(DB_PATH, participant_id, body.session_id)
+    try:
+        link_session(DB_PATH, participant_id, body.session_id)
+    except ValueError as exc:
+        # Participant is already linked to a different active session.
+        # Return 409 Conflict so the caller (resolve_participant in
+        # web_api_client.py) knows to retry with a different participant
+        # rather than silently overwriting the existing link.
+        logger.warning(
+            "link_session_endpoint: conflict for participant %r ↔ session %r: %s",
+            participant_id, body.session_id, exc,
+        )
+        raise HTTPException(status_code=409, detail=str(exc))
     logger.info("Session linked: participant=%r ↔ session=%r", participant_id, body.session_id)
 
     # Notify the analytics API so it clears its participant cache immediately.
