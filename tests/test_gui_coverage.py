@@ -449,7 +449,7 @@ class TestWebsocketClient:
 
     @pytest.mark.asyncio
     async def test_trigger_bridge_source_is_added(self, gui):
-        """Triggers with source='bridge' (from spawn_loop) must be displayed."""
+        """Triggers with source='bridge' must be displayed."""
         self._sync_after(gui)
         msg = json.dumps({
             "event": "spawn", "source": "bridge",

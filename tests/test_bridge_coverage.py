@@ -6,10 +6,9 @@ Tests targeting the previously uncovered sections of bike_bridge.py:
   • main() entry point — normal run and KeyboardInterrupt handling
   • _start_ble() no-bleak fast-return path
   • hr_handler — uint8, uint16 and corrupt payload parsing
-  • spawn_loop — disabled (None) and enabled (fires events)
   • ping_loop — sends pings and handles CancelledError
   • broadcast_loop — live-mode waits while _ble_hr is None
-  • start() — UDP bind failure is non-fatal; tasks are cancelled on exit
+  • start() — tasks are cancelled on exit
   • WahooBridgeServer.start_server alias resolves to start
 """
 
@@ -178,69 +177,6 @@ class TestHrHandler:
         handler = self._make_hr_handler(server)
         handler(None, bytes([0x00]))   # flags=0 but no byte 1
         assert server._ble_hr == 55   # unchanged
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# spawn_loop
-# ─────────────────────────────────────────────────────────────────────────────
-
-class TestSpawnLoop:
-    """spawn_loop broadcasts events at the configured interval."""
-
-    @pytest.mark.asyncio
-    async def test_spawn_loop_disabled_exits_immediately(self):
-        """spawn_interval=None → loop exits without broadcasting."""
-        server = _make_server()
-        server.spawn_interval = None
-        # Should return quickly
-        await asyncio.wait_for(server.spawn_loop(), timeout=1.0)
-
-    @pytest.mark.asyncio
-    async def test_spawn_loop_fires_event(self):
-        """With a short interval, at least one event should be broadcast."""
-        server = _make_server()
-        server.spawn_interval = 0.05   # 50 ms
-        server.running = True          # spawn_loop checks self.running
-
-        received: list[dict] = []
-
-        async def fake_broadcast_json(data, exclude=None):
-            received.append(data)
-
-        server.broadcast_json = fake_broadcast_json
-
-        task = asyncio.create_task(server.spawn_loop())
-        await asyncio.sleep(0.20)   # long enough for 3–4 events
-        server.running = False       # stop the while loop
-        task.cancel()
-        try:
-            await task
-        except asyncio.CancelledError:
-            pass
-
-        assert len(received) >= 1
-        assert received[0].get("event") == "spawn"
-
-    @pytest.mark.asyncio
-    async def test_spawn_loop_cancelled_cleanly(self):
-        """CancelledError in spawn_loop exits without propagating."""
-        server = _make_server()
-        server.spawn_interval = 0.01
-        server.running = True
-
-        async def fake_broadcast_json(data, exclude=None):
-            pass
-
-        server.broadcast_json = fake_broadcast_json
-
-        task = asyncio.create_task(server.spawn_loop())
-        await asyncio.sleep(0.02)
-        task.cancel()
-        # Should not raise
-        try:
-            await task
-        except asyncio.CancelledError:
-            pass   # acceptable — loop may propagate CancelledError
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -454,50 +390,6 @@ class TestBroadcastLoopLiveMode:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# start() — UDP bind failure is non-fatal
-# ─────────────────────────────────────────────────────────────────────────────
-
-class TestStartUdpBindFailure:
-    """If UDP bind fails, the WebSocket server still starts normally."""
-
-    @pytest.mark.asyncio
-    async def test_udp_bind_failure_does_not_prevent_ws_start(self):
-        """start() continues even when UDP bind raises OSError."""
-        server = _make_server(mock=True)
-
-        # fake websockets context manager
-        mock_ws_ctx = MagicMock()
-        mock_ws_ctx.__aenter__ = AsyncMock(return_value=None)
-        mock_ws_ctx.__aexit__ = AsyncMock(return_value=False)
-
-        async def fake_gather(*tasks):
-            # cancel all immediately so start() exits
-            for t in tasks:
-                if hasattr(t, "cancel"):
-                    t.cancel()
-            raise asyncio.CancelledError
-
-        async def raise_oserror(*a, **kw):
-            raise OSError("Address already in use")
-
-        with patch("websockets.serve", return_value=mock_ws_ctx), \
-             patch("asyncio.gather", side_effect=fake_gather):
-            loop = asyncio.get_event_loop()
-            original_cde = loop.create_datagram_endpoint
-            loop.create_datagram_endpoint = raise_oserror
-            try:
-                try:
-                    await server.start()
-                except (asyncio.CancelledError, Exception):
-                    pass
-            finally:
-                loop.create_datagram_endpoint = original_cde
-
-        # websockets.serve was still entered
-        mock_ws_ctx.__aenter__.assert_called_once()
-
-
-# ─────────────────────────────────────────────────────────────────────────────
 # start_server alias
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -686,55 +578,6 @@ class TestHrRangeValidation:
     def test_hr_boundary_250_accepted(self):
         hr_bytes = (250).to_bytes(2, "little")
         assert 20 <= self._call_hr_handler(None, 0x01, hr_bytes) <= 250
-
-
-class TestUdpPacketSizeCap:
-    """UDP datagrams larger than 1024 bytes must be silently dropped."""
-
-    @pytest.mark.asyncio
-    async def test_oversized_datagram_is_dropped(self):
-        """A 1025-byte UDP datagram must not be dispatched as a task."""
-        server = _make_server(mock=True)
-        proto = WahooBridgeServer._UDPProtocol(server)
-
-        created_tasks = []
-        original_create_task = asyncio.create_task
-
-        def _track_task(coro, **kw):
-            t = original_create_task(coro, **kw)
-            created_tasks.append(t)
-            return t
-
-        with patch("asyncio.create_task", side_effect=_track_task):
-            proto.datagram_received(b"X" * 1025, ("127.0.0.1", 9999))
-            # No task should have been created for an oversized datagram
-            assert len(created_tasks) == 0
-
-    @pytest.mark.asyncio
-    async def test_valid_datagram_is_dispatched(self):
-        """A small valid datagram must still be dispatched normally."""
-        server = _make_server(mock=True)
-        proto = WahooBridgeServer._UDPProtocol(server)
-
-        created_tasks = []
-        original_create_task = asyncio.create_task
-
-        def _track_task(coro, **kw):
-            t = original_create_task(coro, **kw)
-            created_tasks.append(t)
-            return t
-
-        with patch("asyncio.create_task", side_effect=_track_task):
-            proto.datagram_received(b"HALL_HIT", ("127.0.0.1", 9999))
-            assert len(created_tasks) == 1
-
-        # Clean up tasks; CancelledError is expected
-        for t in created_tasks:
-            t.cancel()
-            try:
-                await t
-            except (asyncio.CancelledError, Exception):
-                pass
 
 
 class TestWsMessageSizeCap:

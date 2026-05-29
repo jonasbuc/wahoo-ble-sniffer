@@ -11,7 +11,7 @@ from bridge.mock_wahoo_bridge import MockWahooBridge
 async def test_mock_server_emits_frames(tmp_path):
     # Start mock server on an ephemeral port
     port = 8766
-    bridge = MockWahooBridge(port=port, use_binary=True, spawn_interval=2.0)
+    bridge = MockWahooBridge(port=port, use_binary=True)
 
     server_task = asyncio.create_task(bridge.start_server())
     await asyncio.sleep(0.2)  # let server start

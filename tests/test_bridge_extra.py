@@ -7,8 +7,6 @@ Additional tests for bike_bridge.py covering paths not yet exercised:
   • parse_args — default values and flag overrides
   • Handshake JSON — all required keys present
   • JSON event relay — message sent by one client reaches other clients
-  • UDP pre-formed JSON body forwarded as-is
-  • UDP known-string mappings (HALL_HIT, HIT, SWITCH_HIT, etc.)
   • broadcast_json with zero clients — no error, returns cleanly
   • broadcast_json with many clients — all receive the message
   • Live-mode frame packing — struct round-trip for _ble_hr value
@@ -120,11 +118,6 @@ class TestServerInitAttributes:
         s = WahooBridgeServer(keepalive_interval=30.0)
         assert s.keepalive_interval == 30.0
 
-    def test_udp_host_port_stored(self):
-        s = WahooBridgeServer(udp_host="192.168.1.1", udp_port=7777)
-        assert s.udp_host == "192.168.1.1"
-        assert s.udp_port == 7777
-
     def test_ble_address_stored(self):
         s = WahooBridgeServer(ble_address="AA:BB:CC:DD:EE:FF")
         assert s.ble_address == "AA:BB:CC:DD:EE:FF"
@@ -204,14 +197,6 @@ class TestParseArgs:
     def test_no_binary_flag(self):
         args = self._parse(["--no-binary"])
         assert args.no_binary is True
-
-    def test_spawn_interval_default_none(self):
-        args = self._parse([])
-        assert args.spawn_interval is None
-
-    def test_spawn_interval_override(self):
-        args = self._parse(["--spawn-interval", "5.0"])
-        assert args.spawn_interval == 5.0
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -526,93 +511,6 @@ class TestEventRelay:
                 pass
 
         assert len(got_non_event) == 0, "Non-event JSON must not be relayed to other clients"
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# UDP — pre-formed JSON body and known-string mappings
-# ─────────────────────────────────────────────────────────────────────────────
-
-@pytest.mark.skipif(not HAS_WS, reason="websockets not installed")
-class TestUDPMapping:
-
-    async def _start_and_send(self, udp_payload: bytes) -> list[dict]:
-        """Helper: start server, connect one WS client, send UDP datagram, collect events."""
-        udp_port = _free_port()
-        ws_port = _free_port()
-        server = WahooBridgeServer(
-            host="127.0.0.1", port=ws_port, mock=True,
-            udp_host="127.0.0.1", udp_port=udp_port,
-        )
-        task = asyncio.create_task(server.start())
-        await asyncio.sleep(0.2)
-
-        events = []
-        try:
-            async with websockets.connect(f"ws://127.0.0.1:{ws_port}") as ws:
-                await asyncio.wait_for(ws.recv(), timeout=2.0)  # handshake
-                sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-                sock.sendto(udp_payload, ("127.0.0.1", udp_port))
-                sock.close()
-                deadline = time.time() + 2.0
-                while time.time() < deadline:
-                    try:
-                        msg = await asyncio.wait_for(ws.recv(), timeout=0.3)
-                        if isinstance(msg, str):
-                            try:
-                                d = json.loads(msg)
-                                if "event" in d:
-                                    events.append(d)
-                            except Exception:
-                                pass
-                    except asyncio.TimeoutError:
-                        break
-        finally:
-            task.cancel()
-            try:
-                await task
-            except (asyncio.CancelledError, Exception):
-                pass
-
-        return events
-
-    @pytest.mark.asyncio
-    async def test_udp_hit_maps_to_hall_hit(self):
-        events = await self._start_and_send(b"HIT")
-        assert any(e.get("event") == "hall_hit" for e in events)
-
-    @pytest.mark.asyncio
-    async def test_udp_switch_hit_maps_correctly(self):
-        events = await self._start_and_send(b"SWITCH_HIT")
-        assert any(e.get("event") == "switch_hit" for e in events)
-
-    @pytest.mark.asyncio
-    async def test_udp_unknown_string_uses_raw_text_as_event(self):
-        events = await self._start_and_send(b"CUSTOM_TRIGGER")
-        assert any(e.get("event") == "CUSTOM_TRIGGER" for e in events)
-
-    @pytest.mark.asyncio
-    async def test_udp_preformed_json_forwarded_as_is(self):
-        payload = json.dumps({"event": "spawn", "x": 1.5, "y": 0.0}).encode()
-        events = await self._start_and_send(payload)
-        assert any(e.get("event") == "spawn" and e.get("x") == 1.5 for e in events)
-
-    @pytest.mark.asyncio
-    async def test_udp_event_has_source_metadata(self):
-        events = await self._start_and_send(b"HALL_HIT")
-        assert events, "Expected at least one event"
-        e = events[0]
-        assert e.get("source") == "udp"
-        assert "addr" in e
-        assert "timestamp" in e
-
-    @pytest.mark.asyncio
-    async def test_udp_event_timestamp_is_recent(self):
-        before = time.time()
-        events = await self._start_and_send(b"HALL_HIT")
-        after = time.time()
-        assert events
-        ts = events[0].get("timestamp", 0)
-        assert before - 1 <= ts <= after + 1, f"Timestamp {ts} outside expected window"
 
 
 # ─────────────────────────────────────────────────────────────────────────────

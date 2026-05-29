@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
 """
-bike_bridge.py — BLE + Arduino → Unity WebSocket bridge
-=========================================================
+bike_bridge.py — Wahoo BLE → Unity WebSocket bridge
+=====================================================
 Canonical real-time bridge.  Runs a WebSocket server (default port 8765)
-that streams heart-rate data from a Wahoo TICKR FIT and relays UDP trigger
-events from the Arduino to any number of Unity clients.
+that streams heart-rate data from a Wahoo TICKR FIT to any number of
+Unity clients.
+
+Arduino sensor data (speed, cadence, steering, brakes) is read directly
+inside Unity and is not handled by this bridge.
 
 Modes
 -----
@@ -27,21 +30,6 @@ Every broadcast frame is a 12-byte binary struct:
   | hr        | int32  |   4   | Heart rate in BPM                         |
   +-----------+--------+-------+-------------------------------------------+
 
-Bike data (speed, cadence, steering, brakes) comes from the Arduino over UDP
-and is forwarded to Unity clients as JSON event messages — it is NOT packed
-into the binary frame.
-
-UDP trigger listener
---------------------
-The server also binds a UDP socket (default 127.0.0.1:5005).  The Arduino
-(or any other sender) can send either:
-
-* Plain ASCII strings like ``HALL_HIT``, ``SWITCH_HIT`` — mapped to canonical
-  event names and broadcast as JSON.
-* JSON objects ``{"event": "...", ...}`` — forwarded as-is.
-
-All UDP events are broadcast to every connected WebSocket client as JSON.
-
 Robustness features
 -------------------
 - Validates binary frame length before unpacking
@@ -60,7 +48,7 @@ import math
 import random
 import struct
 import time
-from typing import Any, Optional, Set, Tuple
+from typing import Any, Optional, Set
 
 try:
     import websockets
@@ -84,8 +72,6 @@ class MockCyclingData:
 
     The heart rate oscillates around a ``base_hr`` value using a sine wave
     (period ~31 s) plus small random noise, mimicking a realistic HR trace.
-    Bike data (speed, cadence, steering, brakes) comes from the Arduino and
-    is not simulated here.
     """
 
     def __init__(self):
@@ -118,8 +104,7 @@ class WahooBridgeServer:
       1. Optionally launches a BLE background task (``_start_ble``) when
          ``--live`` is passed and bleak is installed.
       2. Opens the WebSocket server (``websockets.serve``).
-      3. Binds a UDP socket for external trigger events from Arduino/Unity.
-      4. Runs ``broadcast_loop`` and ``ping_loop`` concurrently.
+      3. Runs ``broadcast_loop`` and ``ping_loop`` concurrently.
 
     Each Unity client that connects calls ``register()``, which:
       - Sends a JSON handshake announcing the protocol version.
@@ -139,43 +124,30 @@ class WahooBridgeServer:
         port: int = 8765,
         use_binary: bool = True,
         mock: bool = False,
-        udp_host: str = "127.0.0.1",
-        udp_port: int = 5005,
         ble_address: Optional[str] = None,
         keepalive_interval: float = 10.0,
         base_backoff: float = 1.0,
         max_backoff: float = 30.0,
         scan_timeout: float = 12.0,
-        spawn_interval: Optional[float] = None,
         max_reconnect_attempts: int = 0,
     ):
         self.host = host
         self.port = port
         self.use_binary = use_binary   # True = send binary frames; False = send JSON
         self.mock = mock               # True = use MockCyclingData; False = use BLE
-        self.udp_host = udp_host       # Host to bind the UDP trigger listener on
-        self.udp_port = udp_port       # Port to bind the UDP trigger listener on
         self.ble_address = ble_address # Optional BLE device address to connect to directly
         self.clients: Set[Any] = set() # Active WebSocket connections
         self.running = False
         self.mockgen = MockCyclingData()   # Simulated data generator (used in mock mode)
         # ── BLE state ────────────────────────────────────────────────────────
-        # hr_handler (a bleak callback that may run on a worker thread) places
-        # (timestamp, hr) tuples onto this Queue using
-        # loop.call_soon_threadsafe(queue.put_nowait, ...).
-        # broadcast_loop drains the Queue on the event-loop thread — no shared
-        # mutable fields, no flag races.
         self._hr_queue: asyncio.Queue = asyncio.Queue(maxsize=32)
-        self._ble_connected: bool = False  # True only while a live subscription is active
+        self._ble_connected: bool = False
         self._ble_task: Optional[asyncio.Task] = None
         # ── Reconnect policy ─────────────────────────────────────────────────
-        self.keepalive_interval = keepalive_interval  # seconds between battery reads
-        self.base_backoff = base_backoff               # initial backoff (seconds)
-        self.max_backoff = max_backoff                 # cap on backoff (seconds)
-        self.scan_timeout = scan_timeout               # BLE scan timeout (seconds)
-        self.spawn_interval = spawn_interval           # seconds between auto spawn events
-        # max_reconnect_attempts: 0 = retry forever (default).
-        # Set > 0 to cap total consecutive failures before giving up.
+        self.keepalive_interval = keepalive_interval
+        self.base_backoff = base_backoff
+        self.max_backoff = max_backoff
+        self.scan_timeout = scan_timeout
         self.max_reconnect_attempts = max_reconnect_attempts
 
     async def register(self, ws: Any):
@@ -198,7 +170,7 @@ class WahooBridgeServer:
                 {
                     "protocol": "binary" if self.use_binary else "json",
                     "version": "1.0",
-                    "modes": ["hr", "triggers"],
+                    "modes": ["hr"],
                 }
             )
             await ws.send(handshake)
@@ -316,9 +288,8 @@ class WahooBridgeServer:
 
         1. Launch the BLE task (if ``--live`` and bleak is available).
         2. Open the WebSocket server (binds ``self.host:self.port``).
-        3. Bind a UDP socket for external trigger events.
-        4. Run ``broadcast_loop`` + ``ping_loop`` concurrently until cancelled.
-        5. On shutdown: cancel tasks, close the UDP transport.
+        3. Run ``broadcast_loop`` + ``ping_loop`` concurrently until cancelled.
+        4. On shutdown: cancel tasks.
         """
         LOG.info(
             "Starting WahooBridgeServer (mock=%s) on %s:%d",
@@ -326,10 +297,6 @@ class WahooBridgeServer:
             self.host,
             self.port,
         )
-        # Start BLE task when bleak is available, guarding against duplicate tasks.
-        # If start() is ever called twice, a second task must not be created while
-        # the first is still running — both would scan and subscribe concurrently,
-        # leading to duplicate callbacks and double-writes to _ble_hr.
         if HAVE_BLEAK and not self.mock:
             if self._ble_task is not None and not self._ble_task.done():
                 LOG.warning(
@@ -345,31 +312,12 @@ class WahooBridgeServer:
                     LOG.exception("Failed to start BLE task")
 
         async with websockets.serve(self.register, self.host, self.port):
-            # Start UDP listener for trigger events (Arduino/Unity)
-            udp_transport = None
-            try:
-                loop = asyncio.get_running_loop()
-                udp_transport, udp_protocol = await loop.create_datagram_endpoint(
-                    lambda: WahooBridgeServer._UDPProtocol(self),
-                    local_addr=(self.udp_host, self.udp_port),
-                )
-                self._udp_transport = udp_transport
-                LOG.info("UDP event listener bound to %s:%d", self.udp_host, self.udp_port)
-            except Exception as exc:
-                LOG.warning(
-                    "Failed to bind UDP event listener on %s:%d – %s: %s  "
-                    "(Arduino trigger events will NOT be forwarded to Unity clients)",
-                    self.udp_host, self.udp_port, type(exc).__name__, exc,
-                )
-
-            # Run broadcast loop and ping loop concurrently while server context is active
             ping_task = asyncio.create_task(self.ping_loop(), name="ping_loop")
             broadcast_task = asyncio.create_task(self.broadcast_loop(), name="broadcast_loop")
-            spawn_task = asyncio.create_task(self.spawn_loop(), name="spawn_loop")
 
             def _task_done(task: asyncio.Task) -> None:
                 if task.cancelled():
-                    return  # normal shutdown via cancel()
+                    return
                 exc = task.exception() if not task.cancelled() else None
                 if exc is not None:
                     LOG.critical(
@@ -382,20 +330,12 @@ class WahooBridgeServer:
 
             ping_task.add_done_callback(_task_done)
             broadcast_task.add_done_callback(_task_done)
-            spawn_task.add_done_callback(_task_done)
 
             try:
-                await asyncio.gather(ping_task, broadcast_task, spawn_task)
+                await asyncio.gather(ping_task, broadcast_task)
             finally:
                 ping_task.cancel()
                 broadcast_task.cancel()
-                spawn_task.cancel()
-                # Close UDP transport if opened
-                try:
-                    if getattr(self, "_udp_transport", None):
-                        self._udp_transport.close()
-                except Exception:
-                    pass
 
     # Backwards-compatibility alias used by legacy tests and scripts.
     start_server = start
@@ -424,90 +364,6 @@ class WahooBridgeServer:
                     self.clients.discard(c)
                 except Exception:
                     pass
-
-    # ── UDP trigger listener ─────────────────────────────────────────────────
-    # The Arduino (or any Unity script) can send plain ASCII strings
-    # (e.g. "HALL_HIT", "SWITCH_HIT") or JSON objects to UDP port 5005.
-    # The listener normalises them into JSON event dicts and broadcasts
-    # them to all WebSocket clients.
-    #
-    # Expected ASCII trigger strings:
-    #   HALL_HIT   / HIT        → {"event": "hall_hit",   ...}
-    #   SWITCH_HIT / Switch HIT → {"event": "switch_hit", ...}
-    #   <anything else>         → {"event": "<raw text>", ...}
-    #
-    # JSON objects are forwarded as-is (extra keys are preserved).
-    # Every relayed message also gets "source", "addr", and "timestamp" keys.
-    class _UDPProtocol(asyncio.DatagramProtocol):
-        """asyncio protocol that receives UDP datagrams and relays them as JSON events."""
-
-        def __init__(self, server: "WahooBridgeServer"):
-            self.server = server
-
-        def datagram_received(self, data: bytes, addr: Tuple[str, int]):
-            """Called by asyncio when a UDP datagram arrives."""
-            # Reject oversized datagrams — a legitimate Arduino trigger message
-            # is at most a few dozen bytes.  Anything > 1024 bytes is either a
-            # misconfigured sender or a malicious flood; drop it immediately.
-            if len(data) > 1024:
-                LOG.warning(
-                    "Dropping oversized UDP datagram from %s:%d (%d bytes > 1024 limit)",
-                    addr[0], addr[1], len(data),
-                )
-                return
-            try:
-                text = data.decode("utf-8", errors="ignore").strip()
-            except Exception:
-                text = ""
-            # Dispatch async handling without blocking the protocol callback
-            try:
-                asyncio.create_task(self._handle(text, addr))
-            except Exception as exc:
-                LOG.warning(
-                    "Could not dispatch UDP datagram from %s:%d – %s: %s",
-                    addr[0], addr[1], type(exc).__name__, exc,
-                )
-
-        async def _handle(self, text: str, addr: Tuple[str, int]):
-            """Parse the raw UDP text and broadcast it as a JSON event."""
-            if not text:
-                return
-
-            # If the sender already provided valid JSON, use it directly
-            data = None
-            if text.startswith("{"):
-                try:
-                    data = json.loads(text)
-                except Exception:
-                    data = None
-
-            if data is None:
-                # Map known ASCII trigger strings to canonical event names
-                mapping = {
-                    "HALL_HIT":   "hall_hit",
-                    "HIT":        "hall_hit",
-                    "SWITCH_HIT": "switch_hit",
-                    "Switch HIT": "switch_hit",
-                }
-                evt = mapping.get(text, text)   # fall back to the raw string as event name
-                data = {
-                    "event": evt,
-                    "raw":   text,
-                }
-
-            # Attach metadata so clients can filter by source
-            data.setdefault("source",    "udp")
-            data.setdefault("addr",      f"{addr[0]}:{addr[1]}")
-            data.setdefault("timestamp", time.time())
-
-            try:
-                await self.server.broadcast_json(data)
-                LOG.info("Relayed UDP event to %d clients: %s", len(self.server.clients), data.get("event"))
-            except Exception as exc:
-                LOG.warning(
-                    "Failed to broadcast UDP event '%s' to clients: %s: %s",
-                    data.get("event"), type(exc).__name__, exc,
-                )
 
     # ── BLE helpers ──────────────────────────────────────────────────────────
 
@@ -1173,26 +1029,6 @@ class WahooBridgeServer:
                     except Exception:
                         pass
 
-    async def spawn_loop(self):
-        """Emit periodic ``spawn`` JSON events when ``spawn_interval`` is set.
-
-        This is used in mock/testing scenarios to simulate game events (e.g.
-        obstacle spawns in Unity) at a fixed cadence.  Set ``spawn_interval``
-        to the number of seconds between events; ``None`` disables the loop.
-        """
-        if not self.spawn_interval:
-            return
-        while self.running:
-            try:
-                await asyncio.sleep(self.spawn_interval)
-                await self.broadcast_json({"event": "spawn", "source": "bridge", "timestamp": time.time()})
-            except asyncio.CancelledError:
-                LOG.info("Spawn loop cancelled")
-                break
-            except Exception:
-                LOG.exception(
-                    "Spawn loop encountered an unexpected error – loop will continue"
-                )
 
 
 def parse_args():
@@ -1251,13 +1087,6 @@ def parse_args():
         help="Emit JSON frames instead of binary frames",
     )
     p.add_argument(
-        "--spawn-interval",
-        type=float,
-        default=None,
-        metavar="SECONDS",
-        help="Emit a JSON spawn event every N seconds (useful for testing)",
-    )
-    p.add_argument(
         "--max-reconnect-attempts",
         type=int,
         default=0,
@@ -1284,7 +1113,6 @@ def main():
     )
     LOG.info("  mode     = %s", "LIVE (BLE)" if args.live else "MOCK (simulated)")
     LOG.info("  ws       = ws://%s:%d", args.host, args.port)
-    LOG.info("  udp      = %s:%d", "127.0.0.1", 5005)
     if args.ble_address:
         LOG.info("  ble addr = %s", args.ble_address)
     LOG.info("  keepalive = %.0f s%s", args.keepalive_interval,
@@ -1305,7 +1133,6 @@ def main():
         base_backoff=args.base_backoff,
         max_backoff=args.max_backoff,
         scan_timeout=args.scan_timeout,
-        spawn_interval=args.spawn_interval,
         max_reconnect_attempts=args.max_reconnect_attempts,
     )
     try:
