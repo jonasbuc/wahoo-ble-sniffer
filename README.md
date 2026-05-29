@@ -1,15 +1,14 @@
 # Blu Sniffer — Bike VR Data Bridge & Live Analytics
 
-Stream live bike-sensor data into a **Unity VR cycling simulator** using a Wahoo TICKR FIT heart-rate monitor (BLE) and an Arduino for speed / cadence / steering / brake signals. Data is relayed over WebSocket, logged to SQLite and JSONL files, and processed by a **real-time analytics pipeline** with a live dashboard, questionnaire system, and system health-check GUI.
+Stream live heart-rate data into a **Unity VR cycling simulator** using a Wahoo TICKR FIT heart-rate monitor (BLE). Speed, steering, and brake signals come from an Arduino connected directly to Unity via serial port. Heart-rate data is relayed over WebSocket, logged to SQLite and JSONL files, and processed by a **real-time analytics pipeline** with a live dashboard, questionnaire system, and system health-check GUI.
 
 ---
 
 ## Architecture
 
 ```
-Wahoo TICKR FIT ──BLE──┐
-                        ├── bridge/bike_bridge.py ── ws://localhost:8765 ──► Unity (WahooWsClient.cs)
-Arduino ────────UDP────┘                                                         │
+Wahoo TICKR FIT ──BLE──► bridge/bike_bridge.py ── ws://localhost:8765 ──► Unity (WahooWsClient.cs)
+Arduino ──Serial────────────────────────────────────────────────────────► ArduinoSerialReader.cs
                                                                                  │ telemetry
                                                                          WS ingest :8766
                                                                                  │
@@ -114,7 +113,7 @@ Arduino ────────UDP────┘                              
 │   │           └── session.jsonl     #       Session start/slut events
 │   └── tests/                        # pytest – analytics pipeline
 ├── bridge/                           # BLE bridge & data tools
-│   ├── bike_bridge.py                #   WebSocket bridge (Wahoo HR + Arduino → Unity)
+│   ├── bike_bridge.py                #   WebSocket bridge (Wahoo HR → Unity, puls-only)
 │   ├── mock_wahoo_bridge.py          #   Mock server (no hardware)
 │   ├── wahoo_bridge_gui.py           #   Tkinter live monitor
 │   ├── collector_tail.py             #   VRSF binary collector → SQLite / Parquet
@@ -504,8 +503,9 @@ System Check GUI (:8095)
   • REST API + static SPA served from live_analytics/system_check/static/
 
 Wahoo BLE Bridge (:8765)
-  • reads from Wahoo TICKR FIT via BLE (bleak) and Arduino via UDP
-  • forwards combined frames to Unity via WebSocket
+  • reads HR from Wahoo TICKR FIT via BLE (bleak)
+  • forwards 12-byte binary HR frames to Unity via WebSocket
+  • Arduino sensor data (speed, steering, brakes) is read directly in Unity via ArduinoSerialReader (serial port) — the bridge has no role there
   • optional GUI monitor: bridge/wahoo_bridge_gui.py
 ```
 
@@ -944,7 +944,7 @@ curl http://127.0.0.1:8080/healthz
 
 ### Step 4 — Start the BLE bridge (or mock)
 
-**Real Wahoo TICKR FIT + Arduino hardware:**
+**Real Wahoo TICKR FIT hardware:**
 ```bash
 python bridge/bike_bridge.py
 # macOS one-click: starters/START_BRIDGE.command

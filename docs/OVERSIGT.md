@@ -1,15 +1,16 @@
 # Unity Integration Oversigt 🎮
 
-**Systemarkitektur: Arduino + TICKR FIT → Python Bridge → Unity**
+**Systemarkitektur: TICKR FIT → Python Bridge → Unity**
 
 ## 📡 Datakilder
 
 | Kilde | Data | Transport |
 |-------|------|-----------|
-| Wahoo TICKR FIT | Puls (BPM) | Bluetooth LE → Python (Bleak) |
-| Arduino | Hastighed, kadence, styring, bremser | UDP → Python |
+| Wahoo TICKR FIT | Puls (BPM) | Bluetooth LE → Python (Bleak) → WebSocket |
+| Arduino | Hastighed, styring, bremser | Seriel port → direkte til Unity (`ArduinoSerialReader.cs`) |
 
-Python-broen sender alt videre til Unity over WebSocket.
+Python-broen sender **kun puls** til Unity over WebSocket.
+Arduino-data læses direkte i Unity via `ArduinoSerialReader` — broen er ikke involveret.
 
 ---
 
@@ -19,7 +20,7 @@ Python-broen sender alt videre til Unity over WebSocket.
 
 | Fil | Beskrivelse |
 |-----|-------------|
-| `bike_bridge.py` | TICKR HR + Arduino UDP → WebSocket server (mock + live) |
+| `bike_bridge.py` | Wahoo TICKR HR → WebSocket server (mock + live) |
 | `wahoo_bridge_gui.py` | Tkinter GUI monitor |
 | `ble_test_connect.py` | Test af TICKR FIT BLE forbindelse |
 | `collector_tail.py` | VRSF binary → SQLite / Parquet |
@@ -31,7 +32,7 @@ Python-broen sender alt videre til Unity over WebSocket.
 |-----|-------------|
 | `BikeController.cs` | Bevægelse + styring (ArduinoSerialReader + Quest-controller) |
 | `WahooWsClient.cs` | Low-level WebSocket klient — puls fra bridge |
-| `ArduinoSerialReader.cs` | Seriel hastighed fra Arduino |
+| `ArduinoSerialReader.cs` | Seriel hastighed/styring fra Arduino (direkte til Unity) |
 | `GroundSensor.cs` | Grounds-check for CharacterController |
 
 ### Session Logging (VRSF)
@@ -49,7 +50,7 @@ Python-broen sender alt videre til Unity over WebSocket.
 
 ```
 bridge/                              # BLE bridge & collector
-├── bike_bridge.py                   # TICKR HR + Arduino UDP -> WebSocket
+├── bike_bridge.py                   # Wahoo TICKR HR -> WebSocket (puls-only)
 ├── mock_wahoo_bridge.py             # Mock server (no hardware)
 ├── wahoo_bridge_gui.py              # GUI monitor
 ├── collector_tail.py                # VRSF -> SQLite/Parquet
@@ -80,8 +81,8 @@ docs/                                # Dokumentation
 ## 🔌 Data Flow
 
 ```
-TICKR FIT ──BLE──► Python Bridge ──WebSocket──► WahooWsClient.cs (puls)
-Arduino   ──Serial──►                            ArduinoSerialReader.cs
+TICKR FIT ──BLE──► Python Bridge ──WebSocket──► WahooWsClient.cs  (puls)
+Arduino   ──Serial──────────────────────────────► ArduinoSerialReader.cs (hastighed/styring)
                         │                               ↓
                         └──► collector_tail.py    BikeController.cs (bevægelse + styring)
                                     │

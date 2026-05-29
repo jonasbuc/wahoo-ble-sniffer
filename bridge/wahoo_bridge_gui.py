@@ -22,7 +22,7 @@ thread — the only thread allowed to touch Tkinter widgets.
 Graph features
 --------------
 - Rolling 30-second HR line chart drawn on a dark Canvas widget.
-- Trigger events (from Unity via UDP relay) are drawn as orange vertical lines.
+- Trigger events (from Unity/bridge) are drawn as orange vertical lines.
 - Click-and-drag to pan left/right; double-click to snap back to live view.
 - X-axis shows seconds-since-GUI-start; Y-axis auto-scales ±10 BPM.
 
@@ -31,7 +31,7 @@ Wire format (from bridge server)
 Binary frames: 12 bytes — ``struct.pack("di", ts, hr)``
 JSON frames  : ``{"heart_rate": …}``
 Handshake    : ``{"protocol": "binary", "version": "1.0"}`` (first JSON after connect)
-Trigger      : ``{"event": "hall_hit", "source": "udp", "timestamp": …}``
+Trigger      : ``{"event": "…", "source": "unity"/"bridge", "timestamp": …}``
 """
 
 import asyncio
@@ -250,7 +250,7 @@ class WahooBridgeGUI:
 
         Parameters
         ----------
-        name      : short event label shown above the marker (e.g. "spawn")
+        name      : short event label shown above the marker (e.g. "collision")
         timestamp : absolute epoch seconds for the event; defaults to now
         """
         if timestamp is None:
@@ -495,7 +495,7 @@ class WahooBridgeGUI:
         --------------
         str  frames: JSON parsed and dispatched based on keys:
                "protocol"      → server handshake; update bridge label
-               "event"         → trigger marker (only if source is "udp"/"unity")
+               "event"         → trigger marker (only if source is "unity"/"bridge")
                other           → cycling data {heart_rate}
         bytes frames: 12-byte binary; unpacked as ``struct.unpack("di", …)``
                fields: timestamp(d), hr(i)
@@ -518,14 +518,12 @@ class WahooBridgeGUI:
                                     self.root.after(0, self.update_bridge_status, True, self.bridge_protocol)
                                     continue
 
-                                # ── Trigger event (e.g. from Unity UDP) ───
+                                # ── Trigger event (e.g. from Unity) ──────
                                 if isinstance(data, dict) and data.get("event"):
                                     # Only display triggers that originate from
-                                    # Unity/UDP/bridge — mock spawn events
-                                    # (source="mock") are filtered out to avoid
-                                    # clutter.
+                                    # Unity or bridge — filter out anything else.
                                     src = data.get("source")
-                                    if src in ("udp", "unity", "bridge"):
+                                    if src in ("unity", "bridge"):
                                         evt_name = data.get("event")
                                         # Use supplied timestamp if available so
                                         # the marker aligns with the actual event time.

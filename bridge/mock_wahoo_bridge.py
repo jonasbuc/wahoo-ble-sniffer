@@ -13,11 +13,11 @@ Usage (command-line)
 --------------------
 ::
 
-    python mock_wahoo_bridge.py [--port 8765] [--no-binary] [--spawn-interval 5]
+    python mock_wahoo_bridge.py [--port 8765] [--no-binary]
 
 is equivalent to::
 
-    python bike_bridge.py [--port 8765] [--no-binary] [--spawn-interval 5]
+    python bike_bridge.py [--port 8765] [--no-binary]
 """
 import sys
 from pathlib import Path

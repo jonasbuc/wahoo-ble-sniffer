@@ -3,14 +3,15 @@
 ## Arkitektur
 
 ```
-TICKR armband  ──BLE──► bike_bridge.py  ──WS──► WahooWsClient.cs  (puls)
-Arduino        ──Serial──►                        ArduinoSerialReader.cs (hastighed)
+TICKR armband  ──BLE──► bike_bridge.py  ──WS──► WahooWsClient.cs      (puls)
+Arduino        ──Serial────────────────────────► ArduinoSerialReader.cs (hastighed/styring)
                                                         ↓
                                                   BikeController.cs  (bevægelse)
 ```
 
-`BikeController` læser hastighed direkte fra `ArduinoSerialReader` og styring fra Quest-controlleren.
+`BikeController` læser hastighed direkte fra `ArduinoSerialReader` (seriel port) og styring fra Quest-controlleren.
 `WahooWsClient` bruges separat til at modtage puls fra broen — de to scripts er uafhængige.
+**Python-broen (`bike_bridge.py`) sender kun puls — ingen Arduino/UDP-rolle.**
 
 ---
 
@@ -21,7 +22,7 @@ Arduino        ──Serial──►                        ArduinoSerialReader.
 Kopier disse filer til din Unity projekt `Assets/Scripts/` mappe:
 - ✅ `BikeController.cs` — bevægelse + styring
 - ✅ `WahooWsClient.cs` — puls fra Python-bro (valgfri)
-- ✅ `ArduinoSerialReader.cs` — seriel hastighed fra Arduino
+- ✅ `ArduinoSerialReader.cs` — seriel hastighed/styring fra Arduino (direkte til Unity)
 - ✅ `GroundSensor.cs` — grounds-check
 
 ### 2. Setup Scene
@@ -45,7 +46,7 @@ Kopier disse filer til din Unity projekt `Assets/Scripts/` mappe:
 
 1. Opret tomt GameObject: `ArduinoSerialReader`
 2. Add Component → `ArduinoSerialReader`
-3. Sæt den korrekte COM-port / device path
+3. Sæt den korrekte COM-port / device path (Arduino forbindes direkte til Unity — ikke via broen)
 
 #### C. Puls (valgfri) — WahooWsClient
 
@@ -63,7 +64,7 @@ Kopier disse filer til din Unity projekt `Assets/Scripts/` mappe:
 
 2. **Start Unity → Press Play ▶️**
    - Console: `[WahooWsClient] Connected` (puls)
-   - Cyklen skal bevæge sig når Arduino sender hastighed > 0
+   - Cyklen bevæger sig når Arduino sender hastighed over seriel port
 
 ---
 
@@ -88,7 +89,7 @@ speed ≤ 0.3      →  ingen rotation, men stadig gravity
 ## 🐛 Troubleshooting
 
 ### "Cyklen bevæger sig ikke"
-- Er `ArduinoSerialReader` tilsluttet og sender data?
+- Er `ArduinoSerialReader` tilsluttet og sender data over seriel port?
 - Er `ArduinoSerialReader`-feltet sat i `BikeController` Inspector?
 - Er `CharacterController` på samme GameObject?
 
@@ -105,7 +106,7 @@ speed ≤ 0.3      →  ingen rotation, men stadig gravity
 
 ## ✅ Test Checklist
 
-- [ ] Arduino sender hastighed (Console / Debug)
+- [ ] Arduino sender hastighed (Console / Debug via seriel port)
 - [ ] `BikeController` er på cykel-objektet med alle refs sat
 - [ ] Cyklen bevæger sig fremad med fart
 - [ ] Styring responderer på Quest-controller

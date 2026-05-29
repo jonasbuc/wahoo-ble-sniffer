@@ -6,7 +6,6 @@
 - ✅ **Koden kompilerer** — ingen syntax errors
 - ✅ **Dependencies installeret** — bleak + websockets
 - ✅ **TICKR FIT BLE forbindelse** — testet og verificeret
-- ✅ **Arduino UDP modtagelse** — integreret i bridge
 - ✅ **Mock server** — test uden hardware
 - ✅ **Unity scripts klar** — BikeController.cs + WahooWsClient.cs fungerer
 
@@ -37,17 +36,17 @@ python3 bridge/bike_bridge.py
 python3 bridge/bike_bridge.py --live
 ```
 
-(Kræver TICKR FIT på + Arduino tilsluttet)
+(Kræver TICKR FIT på)
 
 ---
 
 ## 📁 Hvilke Filer Skal Du Bruge?
 
 ```
-✅ bike_bridge.py        - Bridge: mock mode (ingen hardware) + live BLE mode
-✅ BikeController.cs     - VR bike bevægelse + Quest-styring
-✅ WahooWsClient.cs      - Puls fra Python-bro (valgfri)
-✅ ArduinoSerialReader.cs - Hastighed fra Arduino seriel
+✅ bike_bridge.py         - Bridge: mock mode (ingen hardware) + live BLE mode (puls-only)
+✅ BikeController.cs      - VR bike bevægelse + Quest-styring
+✅ WahooWsClient.cs       - Puls fra Python-bro (valgfri)
+✅ ArduinoSerialReader.cs - Hastighed/styring fra Arduino (seriel → direkte til Unity)
 ```
 
 ---
@@ -66,8 +65,8 @@ Læs i denne rækkefølge:
 ## 🎯 Min Anbefaling
 
 1. ✅ Kør **`bike_bridge.py`** (mock mode) til initial Unity-udvikling
-2. ✅ Skift til **`bike_bridge.py --live`** når hardware er klar
-3. ✅ Arduino senderdata direkte til Unity over UDP (separat fra bridge)
+2. ✅ Skift til **`bike_bridge.py --live`** når TICKR FIT er klar
+3. ✅ Arduino sender data direkte til Unity over seriel port (`ArduinoSerialReader.cs`)
 
 ---
 
@@ -75,10 +74,10 @@ Læs i denne rækkefølge:
 
 - [ ] Kør `bike_bridge.py` (mock mode)
 - [ ] Sæt alle Inspector-referencer i `BikeController`
-- [ ] Test bevægelse med Arduino-data
+- [ ] Test bevægelse med Arduino seriel data
 - [ ] (Valgfri) Test puls med `WahooWsClient`
 - [ ] Byg din VR world
-- [ ] Test med TICKR FIT + Arduino
+- [ ] Test med TICKR FIT
 
 ---
 

@@ -4,7 +4,7 @@ Kom i gang med VR cykling på 5 minutter! 🚴‍♂️
 
 **Hardware:**
 - Wahoo TICKR FIT (puls via BLE)
-- Arduino (hastighed, kadence, styring, bremser via UDP)
+- Arduino (hastighed, styring, bremser via seriel port → direkte til Unity)
 
 ---
 
@@ -58,7 +58,7 @@ Du ser:
    - Bike Steer Steel → træk styr-objektet hertil
    - Quest Controller Transform → træk Quest-controller hertil
    - Camera Rig → træk kamera-riggen hertil
-   - Arduino Serial Reader → træk ArduinoSerialReader-objektet hertil
+   - Arduino Serial Reader → træk ArduinoSerialReader-objektet hertil (seriel port → Unity direkte)
    - Speed Multiplier: `1.0`
    - Turn Speed Modifier: prøv `60`
 
@@ -86,7 +86,7 @@ Du ser:
 python3 bridge/bike_bridge.py --live
 ```
 
-(Kræver TICKR FIT på + Arduino tilsluttet og kørende)
+(Kræver TICKR FIT på)
 
 ---
 
@@ -108,8 +108,8 @@ Scanning... no device found             ← Sæt TICKR på (elektroderne skal r�
 
 ## Data Du Får
 
-- **Heart Rate** (BPM) — fra Wahoo TICKR FIT via BLE
-- **Speed / Cadence / Steering / Brakes** — fra Arduino via UDP (direkte til Unity)
+- **Heart Rate** (BPM) — fra Wahoo TICKR FIT via BLE → Python bridge → WebSocket
+- **Speed / Steering / Brakes** — fra Arduino via seriel port, læst direkte i Unity (`ArduinoSerialReader.cs`)
 
 ---
 

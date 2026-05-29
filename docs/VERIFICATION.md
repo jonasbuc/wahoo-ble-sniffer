@@ -43,7 +43,6 @@ python3 bridge/bike_bridge.py
 Du skulle se:
 ```
 INFO wahoo_bridge: Starting WahooBridgeServer (mock=True) on localhost:8765
-INFO wahoo_bridge: UDP event listener bound to 127.0.0.1:5005
 INFO websockets.server: server listening on 127.0.0.1:8765
 ```
 
@@ -89,9 +88,8 @@ Found trainer at C7:52:A1:6F:EB:57
 | Bleak lib | ✅ Installed | Version 0.21.0+ |
 | Mock server | ✅ Ready | Test uden hardware |
 | TICKR FIT BLE | ✅ Tested | HR UUID 0x2A37 |
-| Arduino UDP | ✅ Integrated | bike_bridge.py |
 | Unity C# scripts | ✅ Written | BikeController.cs + WahooWsClient.cs |
-| BikeController | ✅ Complete | ArduinoSerialReader + Quest-styring |
+| BikeController | ✅ Complete | ArduinoSerialReader (seriel) + Quest-styring |
 
 ## 🎯 Anbefaling Baseret På Tests
 
@@ -116,12 +114,12 @@ Dette setup er baseret på **verified working code**:
 
 ```
 Wahoo TICKR FIT (BLE HR)
-Arduino (seriel hastighed)
+Arduino (seriel hastighed/styring — direkte til Unity)
     ↓
-bridge/bike_bridge.py   ← Bridge (puls)
+bridge/bike_bridge.py   ← Bridge (puls only)
     ↓ (binær 12-byte frame over WebSocket)
 WahooWsClient.cs             ← Puls i Unity
-ArduinoSerialReader.cs       ← Hastighed fra Arduino
+ArduinoSerialReader.cs       ← Hastighed/styring fra Arduino (seriel port)
     ↓
 BikeController.cs            ← Bevægelse + Quest-styring
 ```
