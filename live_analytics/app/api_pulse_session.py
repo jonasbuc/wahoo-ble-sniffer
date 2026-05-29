@@ -63,6 +63,12 @@ class EndSessionRequest(BaseModel):
 # ── Helpers ───────────────────────────────────────────────────────────
 
 def _require_logger():
+    """Return the shared ``PulseSessionLogger`` instance, or raise HTTP 503 if not yet initialised.
+
+    The logger is created during the FastAPI lifespan startup.  If an endpoint
+    is called before startup completes (or after an unexpected startup failure),
+    this guard surfaces a clear 503 rather than an ``AttributeError``.
+    """
     psl = get_pulse_logger()
     if psl is None:
         raise HTTPException(

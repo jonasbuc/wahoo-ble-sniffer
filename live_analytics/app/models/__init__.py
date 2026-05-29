@@ -59,7 +59,13 @@ class TelemetryRecord(BaseModel):
     head_rot_z: float = 0.0
     head_rot_w: float = 1.0
 
-    record_type: str = "gameplay"  # "gameplay" | "headpose" — used to filter non-gameplay frames
+    record_type: str = "gameplay"
+    # Discriminator for the frame origin:
+    #   "gameplay"  — full sensor frame sent every Unity FixedUpdate tick
+    #                 (speed, steering, brakes, head-pose, heart rate all populated).
+    #   "headpose"  — head-pose-only frame; speed/brakes are zero, HR may be absent.
+    #   "hr_only"   — BLE relay frame forwarded from the bridge.  Only heart_rate
+    #                 is meaningful; all motion fields are zero / identity quaternion.
 
 
 class TelemetryBatch(BaseModel):

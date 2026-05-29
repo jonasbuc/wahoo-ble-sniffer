@@ -122,11 +122,11 @@ class WindowFeatures:
 
     def __init__(
         self,
-        sv: float,
-        hrd: float,
-        hsc: int,
-        spd: float,
-        brm: float,
+        sv: float,   # steering_variance_3s  — variance of steering angle over last 3 s
+        hrd: float,  # hr_delta_10s           — HR change (bpm) over last 10 s (positive = rising)
+        hsc: int,    # head_scan_count_5s     — number of large lateral head-turns in last 5 s
+        spd: float,  # mean_speed_5s          — mean speed (m/s) over last 5 s
+        brm: float,  # brake_reaction_ms      — reaction time (ms) from trigger to brake; 0 if no trigger seen
     ) -> None:
         self.steering_variance_3s = sv
         self.hr_delta_10s = hrd

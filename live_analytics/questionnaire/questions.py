@@ -1,8 +1,11 @@
 """
 Questionnaire definitions.
 
-PRE_QUESTIONS   — spørgeskema udfyldt FØR cykling (demografi + baggrund)
-POST_QUESTIONS  — spørgeskema udfyldt EFTER cykling (oplevelse — TBD)
+PRE_QUESTIONS   — questionnaire filled in BEFORE cycling (demographics + background)
+POST_QUESTIONS  — questionnaire filled in AFTER cycling (experience — TBD)
+
+The question text and section headings are intentionally in Danish because this
+questionnaire is administered to Danish-speaking test participants.
 
 Field reference
 ---------------

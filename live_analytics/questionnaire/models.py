@@ -17,6 +17,13 @@ from pydantic import BaseModel, Field, field_validator
 
 
 class ParticipantCreate(BaseModel):
+    """Request body for ``POST /api/participants``.
+
+    ``participant_id`` must be a positive integer (supplied as a string).
+    Leading zeros are stripped and the canonical integer form is stored in the
+    database.  ``display_name`` and ``session_id`` are optional at creation
+    time and can be set later via PATCH or the link-session endpoint.
+    """
     participant_id: str = Field(..., min_length=1, description="Unique test-person ID — must be a positive integer")
     display_name: str = ""
     session_id: str = ""
@@ -35,6 +42,12 @@ class ParticipantCreate(BaseModel):
 
 
 class ParticipantOut(BaseModel):
+    """Read model returned by GET/POST participant endpoints.
+
+    ``metadata`` is stored as a raw JSON string in the database and is
+    surfaced here as-is.  Callers that need a structured object should
+    call ``json.loads(metadata)``.
+    """
     participant_id: str
     display_name: str
     session_id: str
@@ -44,15 +57,33 @@ class ParticipantOut(BaseModel):
 
 
 class LinkSession(BaseModel):
+    """Request body for ``PUT /api/participants/{id}/session``.
+
+    Links a questionnaire participant to a live analytics session so that
+    pulse logs, answer records, and session metrics can be joined on
+    ``session_id`` in offline analysis.
+    """
     session_id: str = Field(..., min_length=1)
 
 
 class AnswerSave(BaseModel):
+    """Request body for single-question autosave (``POST /api/answers``).
+
+    Triggered on every ``blur`` event in the questionnaire SPA so that
+    partial progress is persisted even if the participant closes the tab
+    before submitting.
+    """
     question_id: str = Field(..., min_length=1)
     answer: Any
 
 
 class AnswersBulkSave(BaseModel):
+    """Request body for bulk-submission at the end of a questionnaire phase.
+
+    All answers for a phase are submitted in one call.  The server upserts
+    each ``question_id → answer`` pair, so re-submitting the same phase is
+    idempotent and overwrites previous autosave values.
+    """
     answers: dict[str, Any] = Field(..., description="Map of question_id → answer value")
 
 

@@ -1,16 +1,17 @@
 """
 HTTP client for outbound calls from the analytics ingest server.
 
-Pulse data is written to THREE destinations:
+This module handles the two *external* API destinations for pulse data.
+Local file persistence (per-participant pulse JSONL logs) is handled
+separately in ``ws_ingest.py`` via ``PulseSessionLogger``.
+
+Pulse data is forwarded to TWO destinations:
   1. Local questionnaire API  (QS_BASE_URL, default http://localhost:8090)
      → questionnaire.db  (our own SQLite, rich schema with session_id etc.)
 
   2. External research API    (EXTERNAL_API_URL, default https://10.200.130.98:5001)
      → POST /api/cardatasqlite/loglitepd
      → external SQLite PulseData table  { UserId INTEGER, Pulse INTEGER }
-
-  3. Participant log file  (live_analytics/data/participants/<participant_id>/pulse.jsonl)
-     → appended locally so each test person has their own pulse log file
 
 All sends are fire-and-forget — a failure in one never blocks the others,
 and none ever crash the ingest pipeline.

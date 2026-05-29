@@ -50,7 +50,15 @@ logger = logging.getLogger("live_analytics.pulse_session_logger")
 
 
 class _ActiveSession:
-    """Internal bookkeeping for one open pulse-log session."""
+    """Internal bookkeeping for one open pulse-log session.
+
+    Owns the file handle for the participant's ``pulse.jsonl`` file.
+    Created by :meth:`PulseSessionLogger.start_session` and kept alive until
+    :meth:`PulseSessionLogger.close_session` is called (or the server shuts down).
+
+    This is a private implementation detail of ``PulseSessionLogger`` — do not
+    instantiate or call it directly from outside this module.
+    """
 
     __slots__ = ("participant_id", "session_id", "log_path", "_fh", "record_count")
 
@@ -68,10 +76,21 @@ class _ActiveSession:
         self._fh = log_path.open("a", encoding="utf-8")
 
     def write(self, record: dict[str, Any]) -> None:
+        """Serialise *record* as a JSON line and flush it to the log file immediately.
+
+        Flushing on every write ensures that data is durable even if the server
+        crashes mid-session.  The overhead is acceptable at typical pulse rates
+        (≤ 1 Hz per participant).
+        """
         self._fh.write(json.dumps(record, ensure_ascii=False) + "\n")
         self._fh.flush()
 
     def close(self) -> None:
+        """Close the underlying file handle, silently ignoring any I/O errors.
+
+        Errors are suppressed so that a failing close never propagates up to
+        the session-management logic — the file is considered closed regardless.
+        """
         try:
             self._fh.close()
         except Exception:

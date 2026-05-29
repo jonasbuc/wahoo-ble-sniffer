@@ -340,6 +340,17 @@ def insert_event(
     event_type: str,
     payload: dict | None = None,
 ) -> None:
+    """Insert a discrete event (trigger-press, brake, etc.) into the events table.
+
+    Events are keyed by *session_id* and stored as JSON-encoded *payload* so
+    that arbitrary metadata can be attached per event type.
+
+    .. note::
+        This function is **not** called from the live ingest pipeline.  It exists
+        for use by test fixtures and offline data-population scripts (e.g.
+        ``populate_demo_data.py``).  Any production code that needs to log events
+        should call the WebSocket ingest path instead.
+    """
     conn = _connect(db_path)
     conn.execute(
         "INSERT INTO events (session_id, unix_ms, event_type, payload) VALUES (?, ?, ?, ?)",
@@ -351,6 +362,16 @@ def insert_event(
 def get_recent_events(
     db_path: Path | str, session_id: str, limit: int = 50
 ) -> list[dict]:
+    """Return the *limit* most recent events for *session_id*, ordered newest-first.
+
+    Each element is a plain ``dict`` with keys ``id``, ``session_id``,
+    ``unix_ms``, ``event_type``, and ``payload`` (a JSON string).
+
+    Returns an empty list when no events have been recorded for the session.
+
+    .. note::
+        Not exposed via any HTTP endpoint — used by tests and analysis scripts only.
+    """
     conn = _connect(db_path)
     rows = conn.execute(
         "SELECT id, session_id, unix_ms, event_type, payload "
