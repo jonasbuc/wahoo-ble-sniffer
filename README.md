@@ -59,39 +59,37 @@ Arduino ──Serial────────────────────
 │   │   ├── config.py                 #   Configuration via env vars (LA_*)
 │   │   ├── env_utils.py              #   int_env / float_env helpers
 │   │   ├── api_sessions.py           #   /healthz, /api/sessions, /api/live/latest
-│   │   │                             #   PUT /api/sessions/{id}/participant  ← NY
-│   │   ├── api_pulse_session.py      #   /api/pulse-session/* – dedikeret puls-session API  ← NY
-│   │   ├── pulse_session_logger.py   #   PulseSessionLogger – logs/pulse/<id>_<ts>_pulse_log.jsonl  ← NY
+│   │   │                             #   PUT /api/sessions/{id}/participant
+│   │   ├── api_pulse_session.py      #   /api/pulse-session/* — dedicated pulse-session API
+│   │   ├── pulse_session_logger.py   #   PulseSessionLogger — logs/pulse/<id>_<ts>_pulse_log.jsonl
 │   │   ├── ws_ingest.py              #   WebSocket ingest server (:8766)
-│   │   │                             #   Auto-resolver: henter participant_id ved ny session ← NY
+│   │   │                             #   Auto-resolves participant_id for new sessions
 │   │   ├── ws_dashboard.py           #   WebSocket dashboard feed (/ws/dashboard)
 │   │   ├── models/                   #   Pydantic v2 data models
 │   │   ├── scoring/                  #   Real-time scoring (features.py, rules.py, anomaly.py)
 │   │   └── storage/
 │   │       ├── sqlite_store.py       #   Session metadata & scores (WAL mode)
-│   │       │                         #   sessions.participant_id kolonne  ← NY
-│   │       │                         #   set_session_participant()  ← NY
+│   │       │                         #   sessions.participant_id column, set_session_participant()
 │   │       ├── raw_writer.py         #   Per-session JSONL raw telemetry
-│   │       ├── participant_logs.py   #   Per-deltager log-mappe + pulse.jsonl  ← NY
-│   │       │                         #   append_pulse_session_marker() — SESSION_START/END  ← NY
-│   │       └── web_api_client.py     #   Udgående HTTP-kald (puls → QS + ekstern DB)
-│   │                                 #   resolve_participant() + _participant_cache  ← NY
+│   │       ├── participant_logs.py   #   Per-participant log folder + pulse.jsonl
+│   │       │                         #   append_pulse_session_marker() — SESSION_START/END
+│   │       └── web_api_client.py     #   Outbound HTTP calls (pulse → questionnaire + external DB)
+│   │                                 #   resolve_participant() + _participant_cache
 │   ├── dashboard/
 │   │   └── streamlit_app.py          # Streamlit dashboard (:8501)
 │   ├── questionnaire/
 │   │   ├── app.py                    #   FastAPI questionnaire service (:8090)
-│   │   │                             #   GET /api/participants/by-session/{id}  ← NY
-│   │   │                             #   GET /api/participants/oldest-unlinked   ← NY (FIFO)
+│   │   │                             #   GET /api/participants/by-session/{id}
+│   │   │                             #   GET /api/participants/oldest-unlinked   (FIFO)
 │   │   ├── config.py                 #   Configuration via env vars (QS_*)
-│   │   │                             #   ANALYTICS_API_URL  ← NY
 │   │   ├── db.py                     #   SQLite CRUD
-│   │   │                             #   get_oldest_unlinked_participant() ORDER BY ASC  ← NY (FIFO fix)
-│   │   │                             #   create_participant() FIFO guard  ← NY
+│   │   │                             #   get_oldest_unlinked_participant() ORDER BY ASC
+│   │   │                             #   create_participant() FIFO guard
 │   │   ├── questions.py              #   Pre/post question definitions
-│   │   ├── models.py                 #   Pydantic models
-│   │   │                             #   ParticipantCreate: integer-only validator  ← NY
+│   │   ├── models.py                 #   Pydantic models — ParticipantCreate: integer validator
 │   │   └── static/                   #   SPA web UI (served at /)
-│   │       └── index.html            #   Testperson-ID input: type=number, integers only  ← NY│   ├── system_check/
+│   │       └── index.html            #   Participant-ID input: type=number, integers only
+│   ├── system_check/
 │   │   ├── app.py                    #   FastAPI system-check GUI (:8095)
 │   │   ├── __init__.py               #   Configuration via env vars (SC_*)
 │   │   ├── checks.py                 #   All health-check implementations
@@ -106,14 +104,14 @@ Arduino ──Serial────────────────────
 │   ├── data/                         #   Runtime data (auto-created)
 │   │   ├── live_analytics.db         #     SQLite analytics database (WAL mode)
 │   │   ├── sessions/                 #     Per-session JSONL raw-event files
-│   │   └── participants/             #     Per-deltager logmapper (pulse.jsonl, session.jsonl)
-│   │       └── <participant_id>/     #     Oprettes automatisk ved registrering i questionnaire
-│   │           ├── info.json         #       Deltager-metadata (id, navn, created_at)
-│   │           ├── pulse.jsonl       #       Alle HR-samples + SESSION_START/END markører
-│   │           └── session.jsonl     #       Session start/slut events
-│   └── tests/                        # pytest – analytics pipeline
+│   │   └── participants/             #     Per-participant log folders (pulse.jsonl, session.jsonl)
+│   │       └── <participant_id>/     #     Created automatically on questionnaire registration
+│   │           ├── info.json         #       Participant metadata (id, name, created_at)
+│   │           ├── pulse.jsonl       #       All HR samples + SESSION_START/END markers
+│   │           └── session.jsonl     #       Session start/end events
+│   └── tests/                        # pytest — analytics pipeline
 ├── bridge/                           # BLE bridge & data tools
-│   ├── bike_bridge.py                #   WebSocket bridge (Wahoo HR → Unity, puls-only)
+│   ├── bike_bridge.py                #   WebSocket bridge (Wahoo HR → Unity, pulse only)
 │   ├── mock_wahoo_bridge.py          #   Mock server (no hardware)
 │   ├── wahoo_bridge_gui.py           #   Tkinter live monitor
 │   ├── collector_tail.py             #   VRSF binary collector → SQLite / Parquet
@@ -121,10 +119,10 @@ Arduino ──Serial────────────────────
 │   └── db/                           #   DB utilities (views, export, validation)
 │
 ├── unity/                            # Unity C# scripts
-│   ├── WahooWsClient.cs              #   WebSocket client (bridge consumer)
+│   ├── WahooWsClient.cs              #   WebSocket client for the BLE bridge (:8765)
 │   ├── BikeMovementController.cs     #   Translates sensor data to bike movement
 │   ├── SpawnZoneTrigger.cs           #   Sends timestamped events on collider hit
-│   ├── DBSender.cs                   #   Pulse logger → CARLogs/pulse.txt  ← NY
+│   ├── DBSender.cs                   #   Pulse logger → CARLogs/pulse.txt
 │   │                                 #   Line 1: participant_id (int, fetched from API)
 │   │                                 #   Remaining lines: unix_ms|bpm at 1 Hz
 │   │                                 #   Polls GET /api/sessions/{id} every 5 s until resolved
@@ -136,13 +134,13 @@ Arduino ──Serial────────────────────
 │       ├── TelemetryModels.cs
 │       └── LiveFeedbackClient.cs
 │
-├── tests/                            # pytest – bridge, collector, parser, VRSF
-│   └── mock_dbsender/                # Standalone C# mock run for DBSender logic  ← NY
+├── tests/                            # pytest — bridge, collector, parser, VRSF
+│   └── mock_dbsender/                # Standalone C# mock for DBSender logic
 │       ├── Program.cs                #   14 tests: file format, header rewrite, JSON extraction
 │       └── mock_dbsender.csproj
 ├── logs/                             # Service log files (auto-created by launcher)
-│   ├── *.log                         #   Rotated service stdout/stderr (analytics, questionnaire, …)
-│   └── pulse/                        #   Dedikeret puls-log pr. testperson/session  ← NY
+│   ├── *.log                         #   Rotated service stdout/stderr (analytics, questionnaire…)
+│   └── pulse/                        #   Dedicated pulse log per participant/session
 │       └── <id>_<YYYYMMDD_HHMMSSffffff>_pulse_log.jsonl
 │                                     #   session_start | pulse | session_end records
 ├── analysis/                         # Offline analysis notebooks & scripts
@@ -355,8 +353,8 @@ All services are configured via **environment variables**. Every variable has a 
 | `LA_DATA_DIR` | `<LA_BASE_DIR>/data` | Data directory |
 | `LA_DB_PATH` | `<LA_DATA_DIR>/live_analytics.db` | SQLite database path |
 | `LA_SESSIONS_DIR` | `<LA_DATA_DIR>/sessions` | Per-session JSONL directory |
-| `LA_PARTICIPANTS_DIR` | `<LA_DATA_DIR>/participants` | Per-deltager logmapper |
-| `LA_PULSE_LOG_DIR` | `<LA_BASE_DIR>/logs/pulse` | Dedikeret puls-log dir (PulseSessionLogger) |
+| `LA_PARTICIPANTS_DIR` | `<LA_DATA_DIR>/participants` | Per-participant log directories |
+| `LA_PULSE_LOG_DIR` | `<LA_BASE_DIR>/logs/pulse` | Dedicated pulse-log directory (PulseSessionLogger) |
 | `LA_HTTP_HOST` | `0.0.0.0` | API bind address |
 | `LA_HTTP_PORT` | `8080` | API HTTP port |
 | `LA_WS_INGEST_HOST` | `0.0.0.0` | WS ingest bind address |
@@ -365,13 +363,13 @@ All services are configured via **environment variables**. Every variable has a 
 | `LA_HR_BASELINE_BPM` | `70.0` | Resting HR baseline for scoring |
 | `LA_LOG_LEVEL` | `INFO` | Logging level |
 
-### Udgående HTTP-kald / ekstern DB (`live_analytics/app/storage/web_api_client.py`)
+### Outbound HTTP calls / external DB (`live_analytics/app/storage/web_api_client.py`)
 
 | Variable | Default | Description |
 |---|---|---|
-| `QS_BASE_URL` | `http://localhost:8090` | Base URL til lokalt questionnaire-service |
-| `EXTERNAL_API_URL` | `https://10.200.130.98:5001` | Ekstern forsknings-API (self-signed TLS) |
-| `EXTERNAL_USER_ID` | `0` | Fallback `UserId` (TestPersonNumber) til ekstern DB — bruges kun hvis questionnaire ikke har linket en deltager til sessionen endnu |
+| `QS_BASE_URL` | `http://localhost:8090` | Base URL for the local questionnaire service |
+| `EXTERNAL_API_URL` | `https://10.200.130.98:5001` | External research API (self-signed TLS) |
+| `EXTERNAL_USER_ID` | `0` | Fallback `UserId` (participant number) for external DB — used only when the questionnaire has not yet linked a participant to the session |
 
 ### Streamlit dashboard (`live_analytics/dashboard/streamlit_app.py`)
 
@@ -416,11 +414,11 @@ All services are configured via **environment variables**. Every variable has a 
 | `live_analytics/data/` | `init_db.py` / `ensure_dirs()` at startup | Analytics data root |
 | `live_analytics/data/live_analytics.db` | `init_db.py` / first startup | SQLite analytics DB (WAL mode) |
 | `live_analytics/data/sessions/` | `ensure_dirs()` at startup | Per-session `<session_id>.jsonl` raw event files |
-| `live_analytics/data/participants/` | questionnaire API / `create_participant_log_dir()` | Per-deltager logmapper (auto-oprettet ved registrering) |
+| `live_analytics/data/participants/` | questionnaire API / `create_participant_log_dir()` | Per-participant log directories (auto-created on registration) |
 | `live_analytics/questionnaire/data/` | `ensure_dirs()` at startup | Questionnaire data root |
 | `live_analytics/questionnaire/data/questionnaire.db` | `init_db.py` / first startup | SQLite questionnaire DB |
 | `logs/` | Launcher on first run | Service stdout/stderr log files (rotated at 2 MB, 3 backups) |
-| `logs/pulse/` | `ensure_dirs()` / `init_pulse_logger()` at startup | Dedikerede puls-log JSONL-filer pr. testperson/session |
+| `logs/pulse/` | `ensure_dirs()` / `init_pulse_logger()` at startup | Dedicated pulse-log JSONL files per participant/session |
 
 All directories are created automatically on first startup. A pre-existing `live_analytics/data/.gitkeep` keeps the `data/` directory tracked by git before the database is created.
 
@@ -438,62 +436,62 @@ live_analytics/app/ws_ingest.py
   • maintains in-memory sliding window (default 5 s)
   • calls compute_scores() → stores in latest_scores dict
   • broadcasts score update to /ws/dashboard subscribers
-  • [NY] ved ny session: henter participant_id fra questionnaire API
-    og gemmer det på sessionen i SQLite (asynkron baggrundsopgave)
+  • on new session: fetches participant_id from questionnaire API
+    and stores it on the session in SQLite (async background task)
         │
         ├── GET /api/live/latest  ◄── Streamlit dashboard (polls every REFRESH_SEC)
         ├── GET /api/sessions     ◄── Streamlit dashboard
         └── WS  /ws/dashboard     ◄── Streamlit dashboard (push updates)
 
-live_analytics/app/storage/web_api_client.py  [NY dual-write + participant-resolver]
-  • send_pulse() sender puls til to destinationer simultaneously:
-      1. POST :8090/api/pulse  →  questionnaire.db  (rig schema med session_id etc.)
+live_analytics/app/storage/web_api_client.py  — dual-write + participant resolver
+  • send_pulse() writes pulse data to two destinations simultaneously:
+      1. POST :8090/api/pulse  →  questionnaire.db  (rich schema with session_id etc.)
       2. POST 10.200.130.98:5001/api/cardatasqlite/loglitepd
-             →  ekstern SQLite PulseData { UserId=TestPersonNumber, Pulse }
-  • resolve_participant(session_id): slår deltager op via questionnaire API og cacher
-    resultatet — bruges som UserId i ekstern DB (fallback: EXTERNAL_USER_ID env var)
-  • Fejl i én destination blokerer aldrig den anden
+             →  external SQLite PulseData { UserId=ParticipantNumber, Pulse }
+  • resolve_participant(session_id): looks up participant via questionnaire API and caches
+    the result — used as UserId in external DB (fallback: EXTERNAL_USER_ID env var)
+  • An error in one destination never blocks the other
 
-live_analytics/app/storage/participant_logs.py  [NY per-deltager puls-log]
-  • Opretter live_analytics/data/participants/<participant_id>/ ved registrering
-  • pulse.jsonl: ALLE HR-samples (heart_rate > 0) skrives per batch — ikke kun den
-    sidst kendte. Records med heart_rate = 0 (headpose/relay) springes over.
-  • SESSION_START-markør skrives til pulse.jsonl, når participant resolver
-  • SESSION_END-markør skrives til pulse.jsonl, når Unity disconnecter
-  • session.jsonl: session_start / session_end events (adskilt fra pulse-data)
+live_analytics/app/storage/participant_logs.py  — per-participant pulse log
+  • Creates live_analytics/data/participants/<participant_id>/ on registration
+  • pulse.jsonl: ALL HR samples (heart_rate > 0) written per batch — not just the
+    last known value. Records with heart_rate = 0 (head-pose/relay) are skipped.
+  • SESSION_START marker written to pulse.jsonl when participant resolves
+  • SESSION_END marker written to pulse.jsonl when Unity disconnects
+  • session.jsonl: session_start / session_end events (separate from pulse data)
 
-live_analytics/app/pulse_session_logger.py  [NY dedikeret puls-log pr. session]
-  • PulseSessionLogger-klassen med start_session(), write_pulse(), close_session()
-  • Skriver til logs/pulse/<participant_id>_<YYYYMMDD_HHMMSSffffff>_pulse_log.jsonl
-  • Én fil pr. testperson pr. session — adskilt fra participants/-mappen
-  • session_start → pulse (alle samples) → session_end — rent JSONL-format
-  • Auto-lukker gammel session hvis en ny starter for samme deltager
-  • Eksponeret via HTTP API: POST /api/pulse-session/start|end, GET /current
+live_analytics/app/pulse_session_logger.py  — dedicated per-session pulse log
+  • PulseSessionLogger class with start_session(), write_pulse(), close_session()
+  • Writes to logs/pulse/<participant_id>_<YYYYMMDD_HHMMSSffffff>_pulse_log.jsonl
+  • One file per participant per session — separate from the participants/ directory
+  • session_start → pulse (all samples) → session_end — clean JSONL format
+  • Auto-closes the previous session if a new one starts for the same participant
+  • Exposed via HTTP API: POST /api/pulse-session/start|end, GET /current
 
 Questionnaire service (:8090)
-  • standalone FastAPI process med eget SQLite-DB
+  • standalone FastAPI process with its own SQLite DB
   • REST API + static SPA served from live_analytics/questionnaire/static/
-  • participants-tabel: participant_id (TestPersonNumber), session_id, svar, puls
-  • [NY] GET /api/participants/by-session/{session_id}: opslag fra analytics → QS
+  • participants table: participant_id (integer), session_id, answers, pulse
+  • GET /api/participants/by-session/{session_id}: look-up from analytics → QS
 
-Operatør-workflow for at koble en testperson til en session:
-  1. POST /api/participants  →  opret testperson (f.eks. participant_id="7")
-     • Testperson-ID er et positivt heltal — valideret i UI, Pydantic-model og DB
-     • Gentagen indsendelse af et allerede-linket ID (operator-fejl) opdaterer kun
-       kosmetiske felter; session_id berøres IKKE (FIFO guard i db.py)
+Operator workflow for linking a participant to a session:
+  1. POST /api/participants  →  create participant (e.g. participant_id=7)
+     • Participant ID is a positive integer — validated in UI, Pydantic model and DB
+     • Re-submitting an already-linked ID (operator error) only updates cosmetic fields;
+       session_id is NOT overwritten (FIFO guard in db.py)
   2. PUT /api/participants/7/session  { "session_id": "..." }  (questionnaire API)
-     ELLER
+     OR
      PUT /api/sessions/.../participant  { "participant_id": "7" }  (analytics API)
-  Herefter bruges TestPersonNumber=7 automatisk som UserId i alle eksterne DB-skrivninger.
+  After this, participant_id=7 is automatically used as UserId in all external DB writes.
 
-Unity DBSender.cs  [NY puls-log med deltager-ID]
-  • Skriver CARLogs/pulse.txt ved session-start (én fil pr. kørsel)
-  • Linje 1: participant_id (heltal) — hentes fra GET /api/sessions/{session_id}
-    og polles hvert 5/10/30 s, indtil questionnaire har linket en deltager
-  • Øvrige linjer: unix_ms|bpm (1 Hz)
-  • session_id læses fra TelemetryPublisher.SessionId (assign i Inspector)
-  • Hvis participant aldrig resolver: linje 1 forbliver "PENDING"
-  • Se docs/DBSENDER.md for import-script til pulse_data-tabellen
+Unity DBSender.cs  — pulse log with participant ID
+  • Writes CARLogs/pulse.txt at session start (one file per ride)
+  • Line 1: participant_id (integer) — fetched from GET /api/sessions/{session_id}
+    and polled every 5/10/30 s until the questionnaire has linked a participant
+  • Remaining lines: unix_ms|bpm (1 Hz)
+  • session_id read from TelemetryPublisher.SessionId (assigned in Inspector)
+  • If participant never resolves: line 1 remains "PENDING"
+  • See docs/DBSENDER.md for the import script to the pulse_data table
 
 System Check GUI (:8095)
   • probes all other services (HTTP health + WebSocket TCP check)
@@ -522,19 +520,19 @@ All HTTP endpoints are served on port **8080**.
 | `GET` | `/healthz` | API status + SQLite DB reachability |
 | `GET` | `/api/sessions` | List all sessions (summary) |
 | `GET` | `/api/sessions/{session_id}` | Session detail + latest scores |
-| `PUT` | `/api/sessions/{session_id}/participant` | Kobl deltager til session — body: `{ "participant_id": "P001" }` |
-| `POST` | `/api/sessions/trigger-relink` | Re-kør participant resolution for alle aktive sessions uden deltager (kaldt automatisk ved ny deltager-registrering) |
+| `PUT` | `/api/sessions/{session_id}/participant` | Link participant to session — body: `{ "participant_id": "7" }` |
+| `POST` | `/api/sessions/trigger-relink` | Re-run participant resolution for all active sessions without a participant (called automatically on new participant registration) |
 | `GET` | `/api/live/latest` | Latest live telemetry across all active sessions |
 | `WS` | `/ws/dashboard` | Push live score updates to dashboard clients |
 
-**Pulse Session API** (dedikeret puls-log pr. testperson):
+**Pulse Session API** (dedicated pulse log per participant):
 
 | Method | Path | Description |
 |---|---|---|
-| `POST` | `/api/pulse-session/start` | Åbn ny puls-log-fil — body: `{ "test_person_id": "TP_001" }` |
-| `POST` | `/api/pulse-session/end` | Luk aktiv puls-log-fil — body: `{ "test_person_id": "TP_001" }` — 404 hvis ingen aktiv session |
-| `GET` | `/api/pulse-session/current` | Alle aktive puls-sessions (alle deltagere) |
-| `GET` | `/api/pulse-session/current/{test_person_id}` | Aktiv session for én deltager — 404 hvis ingen aktiv |
+| `POST` | `/api/pulse-session/start` | Open new pulse-log file — body: `{ "test_person_id": "7" }` |
+| `POST` | `/api/pulse-session/end` | Close active pulse-log file — body: `{ "test_person_id": "7" }` — 404 if no active session |
+| `GET` | `/api/pulse-session/current` | All active pulse sessions (all participants) |
+| `GET` | `/api/pulse-session/current/{test_person_id}` | Active session for one participant — 404 if none |
 
 WebSocket ingest (port **8766**, separate `websockets` server):
 
@@ -546,19 +544,19 @@ WebSocket ingest (port **8766**, separate `websockets` server):
 
 | Method | Path | Description |
 |---|---|---|
-| `POST` | `/api/participants` | Opret testperson — `participant_id` **skal** være et positivt heltal (422 ellers) |
-| `GET` | `/api/participants` | Alle testpersoner |
-| `GET` | `/api/participants/{participant_id}` | Hent enkelt testperson |
-| `GET` | `/api/participants/by-session/{session_id}` | Hent testperson via analytics-session ID |
-| `GET` | `/api/participants/oldest-unlinked` | Hent ældste deltager uden session (FIFO — bruges af analytics auto-linker) |
-| `PUT` | `/api/participants/{participant_id}/session` | Kobl analytics session til testperson |
-| `DELETE` | `/api/participants/{participant_id}` | Slet testperson og alle svar |
-| `POST` | `/api/participants/{participant_id}/answers/{phase}` | Gem enkelt svar (pre/post) |
-| `PUT` | `/api/participants/{participant_id}/answers/{phase}` | Gem alle svar i bulk (pre/post) |
-| `GET` | `/api/participants/{participant_id}/answers/{phase}` | Hent alle svar |
-| `GET` | `/api/participants/{participant_id}/progress` | Besvarelsesprogress |
-| `POST` | `/api/pulse` | Modtag puls-sample (fra ws_ingest) |
-| `GET` | `/api/pulse/{session_id}` | Hent puls-data for en session |
+| `POST` | `/api/participants` | Create participant — `participant_id` **must** be a positive integer (422 otherwise) |
+| `GET` | `/api/participants` | List all participants |
+| `GET` | `/api/participants/{participant_id}` | Get single participant |
+| `GET` | `/api/participants/by-session/{session_id}` | Get participant by analytics session ID |
+| `GET` | `/api/participants/oldest-unlinked` | Get oldest participant without a session (FIFO — used by analytics auto-linker) |
+| `PUT` | `/api/participants/{participant_id}/session` | Link analytics session to participant |
+| `DELETE` | `/api/participants/{participant_id}` | Delete participant and all answers |
+| `POST` | `/api/participants/{participant_id}/answers/{phase}` | Save single answer (pre/post) |
+| `PUT` | `/api/participants/{participant_id}/answers/{phase}` | Save all answers in bulk (pre/post) |
+| `GET` | `/api/participants/{participant_id}/answers/{phase}` | Get all answers |
+| `GET` | `/api/participants/{participant_id}/progress` | Answer completion progress |
+| `POST` | `/api/pulse` | Receive pulse sample (from ws_ingest) |
+| `GET` | `/api/pulse/{session_id}` | Get pulse data for a session |
 
 ---
 
@@ -824,25 +822,25 @@ these exact steps on the Windows machine:
 | Store | Location | Written by |
 |---|---|---|
 | Analytics SQLite (WAL) | `live_analytics/data/live_analytics.db` | `init_db.py` / WS ingest |
-| — sessions.participant_id | kolonne i ovenstående DB | `ws_ingest` (auto-resolve) / `PUT /api/sessions/{id}/participant` |
+| — sessions.participant_id | column in the analytics DB above | `ws_ingest` (auto-resolve) / `PUT /api/sessions/{id}/participant` |
 | Per-session raw JSONL | `live_analytics/data/sessions/<session_id>.jsonl` | WS ingest (first event) |
-| Per-deltager pulse log | `live_analytics/data/participants/<id>/pulse.jsonl` | `ws_ingest` → `participant_logs.append_pulse()` — **alle** HR-samples med SESSION_START/END markører |
-| Per-deltager session log | `live_analytics/data/participants/<id>/session.jsonl` | `ws_ingest` → `participant_logs.append_session_event()` |
-| Per-deltager info | `live_analytics/data/participants/<id>/info.json` | `questionnaire/app.py` ved oprettelse |
-| **Dedikeret puls-log** | `logs/pulse/<id>_<YYYYMMDD_HHMMSSffffff>_pulse_log.jsonl` | `PulseSessionLogger` — én fil pr. session, JSONL med `session_start` / `pulse` / `session_end` records |
+| Per-participant pulse log | `live_analytics/data/participants/<id>/pulse.jsonl` | `ws_ingest` → `participant_logs.append_pulse()` — **all** HR samples with SESSION_START/END markers |
+| Per-participant session log | `live_analytics/data/participants/<id>/session.jsonl` | `ws_ingest` → `participant_logs.append_session_event()` |
+| Per-participant info | `live_analytics/data/participants/<id>/info.json` | `questionnaire/app.py` on registration |
+| **Dedicated pulse log** | `logs/pulse/<id>_<YYYYMMDD_HHMMSSffffff>_pulse_log.jsonl` | `PulseSessionLogger` — one file per session, JSONL with `session_start` / `pulse` / `session_end` records |
 | Questionnaire SQLite | `live_analytics/questionnaire/data/questionnaire.db` | `init_db.py` / questionnaire API |
-| — pulse_data tabel | del af questionnaire.db | `web_api_client.send_pulse()` via `/api/pulse` endpoint |
-| Ekstern SQLite (PulseData) | `10.200.130.98:5001` (ekstern server) | `web_api_client.send_pulse()` dual-write |
+| — pulse_data table | part of questionnaire.db | `web_api_client.send_pulse()` via `/api/pulse` endpoint |
+| External SQLite (PulseData) | `10.200.130.98:5001` (external server) | `web_api_client.send_pulse()` dual-write |
 | VRSF binary sessions | `Logs/` (Unity-controlled path) | Unity `VrsSessionLogger.cs` |
 | Collector SQLite / Parquet | `collector_out/` | `bridge/collector_tail.py` |
 
-> **Puls-flow:** puls skrives til **fire** destinationer:
-> 1. `participants/<id>/pulse.jsonl` — lokalt filsystem, alle samples, SESSION_START/END markører
-> 2. `logs/pulse/<id>_<ts>_pulse_log.jsonl` — dedikeret fil pr. session via `PulseSessionLogger` (session_start / pulse / session_end JSONL records)
-> 3. `questionnaire.db` via questionnaire API (én sample per batch)
-> 4. Ekstern forsknings-DB via `web_api_client` (én sample per batch)
+> **Pulse flow:** pulse data is written to **four** destinations:
+> 1. `participants/<id>/pulse.jsonl` — local filesystem, all samples, SESSION_START/END markers
+> 2. `logs/pulse/<id>_<ts>_pulse_log.jsonl` — dedicated file per session via `PulseSessionLogger` (session_start / pulse / session_end JSONL records)
+> 3. `questionnaire.db` via questionnaire API (one sample per batch)
+> 4. External research DB via `web_api_client` (one sample per batch)
 >
-> `live_analytics.db`'s `sessions`-tabel gemmer kun `participant_id` som et fremmednøgle-link.
+> The `live_analytics.db` `sessions` table stores only `participant_id` as a foreign-key link.
 
 The analytics database is opened in **WAL mode** with a thread-safe connection pool, allowing concurrent reads from the dashboard while the ingest server is writing.
 
