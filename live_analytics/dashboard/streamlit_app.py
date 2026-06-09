@@ -154,7 +154,7 @@ def _get(path: str) -> dict | list | None:
     url = f"{API_BASE}{path}"
     r = None  # keep reference so we can log the body on JSON parse failure
     try:
-        r = _http_session().get(url, timeout=(2, 3))
+        r = _http_session().get(url, timeout=(3, 8))
         r.raise_for_status()
         data = r.json()   # parse FIRST – may raise JSONDecodeError
 

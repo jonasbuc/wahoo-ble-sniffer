@@ -17,6 +17,11 @@ Performance notes
   ``len(_windows[sid])`` because the deque has ``maxlen``; once it is full
   ``len()`` is always ``_WINDOW_MAX`` and ``len % 20 == 0`` would be True
   on every record, causing a DB write every record instead of every 20.
+- ``_ingest_session_batch`` / ``_write_db_batch`` split: all blocking I/O
+  (SQLite writes, JSONL file appends) runs in a thread-pool executor via
+  ``run_in_executor`` so it never freezes the asyncio event loop.  The fast
+  in-memory mutations (_windows, _record_counts, latest_scores, etc.) remain
+  on the event-loop thread where they are safe without locks.
 """
 
 from __future__ import annotations
@@ -27,6 +32,7 @@ import logging
 import math
 import time
 from collections import deque
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
@@ -108,6 +114,118 @@ _SCORE_PERSIST_EVERY = 20
 # asyncio is single-threaded: .add() and .discard() inside coroutines on the
 # same event-loop thread are inherently race-free without locks.
 _resolve_running: set[str] = set()
+
+
+# ── DB write payload ──────────────────────────────────────────────────
+@dataclass
+class _DbWritePayload:
+    """All parameters needed for the blocking I/O part of one ingest batch.
+
+    Created by ``_ingest_session_batch`` (event-loop thread, fast/no-I/O) and
+    passed to ``_write_db_batch`` which runs in a ``ThreadPoolExecutor`` via
+    ``run_in_executor``.  This split ensures that SQLite writes and JSONL file
+    appends never block the asyncio event loop, keeping the FastAPI HTTP server
+    responsive to dashboard requests even under heavy Unity telemetry load.
+
+    Fields must be plain Python values or thread-safe objects — no asyncio
+    primitives (Queues, Events, etc.) may be included here.
+    """
+    sid: str
+    records: list[Any]           # list[TelemetryRecord] — all records in batch
+    gameplay_to_write: list[Any] # non-hr_only records written to JSONL
+    is_new: bool                 # True on first batch for this session
+    first_unix_ms: int           # unix_ms of the first record (for upsert_session)
+    first_scenario_id: str       # scenario_id of the first record
+    n: int                       # number of records in this batch
+    old_count: int               # record_count BEFORE this batch
+    new_count: int               # record_count AFTER this batch
+    hr_records: list[Any]        # records with heart_rate > 0
+    cached_pid: str | None       # participant_id from cache, or None if not yet resolved
+    created_at: str              # ISO timestamp for pulse log entries
+    local_time: str              # human-readable local time for pulse log entries
+    scores: Any                  # ScoringResult | None — latest computed scores
+    should_persist_scores: bool  # True when new_count crosses a _SCORE_PERSIST_EVERY boundary
+    psl: Any                     # PulseSessionLogger | None (module-level singleton)
+
+
+def _write_db_batch(p: _DbWritePayload) -> None:
+    """Execute all blocking I/O for one ingest batch in a thread-pool executor.
+
+    Runs entirely on a worker thread — must NOT read or write any of the
+    module-level asyncio state dicts (_windows, _record_counts, latest_scores,
+    etc.) which are owned by the event-loop thread.
+
+    Write order:
+      1. ``upsert_session``         — only on first batch for *sid*
+      2. ``_raw_writer.append_many``— JSONL file append (gameplay records only)
+      3. ``insert_records``         — SQLite telemetry_records table
+      4. ``increment_record_count`` — SQLite sessions.record_count
+      5. pulse file appends         — per-participant JSONL + PulseSessionLogger
+      6. ``update_latest_scores``   — SQLite sessions.latest_scores (periodic)
+    """
+    if p.is_new:
+        try:
+            upsert_session(DB_PATH, p.sid, p.first_unix_ms, p.first_scenario_id)
+        except Exception:
+            logger.exception(
+                "DB error: could not upsert session %s in %s — "
+                "session will still be scored and raw JSONL written, "
+                "but record counts and scores will NOT be persisted to SQLite",
+                p.sid, DB_PATH,
+            )
+
+    if _raw_writer and p.gameplay_to_write:
+        _raw_writer.append_many(p.gameplay_to_write)
+    elif not p.is_new and not _raw_writer:
+        # Only log once — caller already logged on first batch (is_new path)
+        pass
+
+    try:
+        insert_records(DB_PATH, p.records)
+    except Exception:
+        logger.exception(
+            "DB error: could not insert %d records for session %s into telemetry_records",
+            len(p.records), p.sid,
+        )
+
+    try:
+        increment_record_count(DB_PATH, p.sid, p.n)
+    except Exception:
+        logger.exception(
+            "DB error: could not increment record_count for session %s in %s",
+            p.sid, DB_PATH,
+        )
+
+    if p.cached_pid and p.hr_records:
+        for hr_rec in p.hr_records:
+            try:
+                _append_pulse_to_file(PARTICIPANTS_DIR, p.cached_pid, {
+                    "session_id": p.sid,
+                    "unix_ms": hr_rec.unix_ms,
+                    "pulse": int(hr_rec.heart_rate),
+                    "participant_id": p.cached_pid,
+                    "created_at": p.created_at,
+                    "local_time": p.local_time,
+                })
+            except Exception:
+                logger.exception(
+                    "_write_db_batch: could not write pulse to local log file "
+                    "(participant=%r, session=%s, path=%s/pulse.jsonl)",
+                    p.cached_pid, p.sid, PARTICIPANTS_DIR / p.cached_pid,
+                )
+            if p.psl is not None:
+                p.psl.write_pulse(
+                    p.cached_pid, p.sid, hr_rec.unix_ms, int(hr_rec.heart_rate)
+                )
+
+    if p.should_persist_scores and p.scores is not None:
+        try:
+            update_latest_scores(DB_PATH, p.sid, p.scores)
+        except Exception:
+            logger.exception(
+                "DB error: could not persist scores for session %s in %s",
+                p.sid, DB_PATH,
+            )
 
 
 def set_raw_writer(writer: RawWriter) -> None:
@@ -348,7 +466,15 @@ async def _process_message(ws: ServerConnection, raw: str, connection_sessions: 
         if connection_sessions is not None:
             connection_sessions.add(sid)
         try:
-            _ingest_session_batch(sid, records)
+            # Phase 1 — fast, non-blocking: update in-memory state, compute scores,
+            # schedule async tasks (participant resolution, API pulse send).
+            db_payload = _ingest_session_batch(sid, records)
+            # Phase 2 — blocking I/O: SQLite writes + JSONL file appends run in a
+            # thread-pool executor so the event loop stays free to handle dashboard
+            # HTTP requests while Unity is streaming telemetry at 20 Hz.
+            await asyncio.get_running_loop().run_in_executor(
+                None, _write_db_batch, db_payload
+            )
         except Exception:
             logger.exception(
                 "Failed to ingest batch for session %s (%d records) – batch dropped",
@@ -509,46 +635,36 @@ async def _do_resolve_and_link_participant(sid: str, scenario_id: str, started_a
             )
 
 
-def _ingest_session_batch(sid: str, records: list[TelemetryRecord]) -> None:
-    """
-    Process a batch of records for a single session.
+def _ingest_session_batch(sid: str, records: list[TelemetryRecord]) -> _DbWritePayload:
+    """Fast in-memory part of batch ingest — runs on the event-loop thread.
 
-    Storage operations are batched at the *message* level (not per record):
-    - ``upsert_session``         – only on first encounter for a given *sid*
-    - ``raw_writer.append_many`` – once per batch (one file open/close)
-    - ``increment_record_count`` – once per batch (one SQLite write)
-    - ``compute_scores``         – once per batch, after the window is updated
-    - ``update_latest_scores``   – every _SCORE_PERSIST_EVERY records
+    Updates all module-level state dicts (_windows, _record_counts,
+    latest_scores, latest_records, latest_hr, latest_gameplay_records),
+    computes scores, and schedules async tasks (participant resolution,
+    pulse API send).  Returns a :class:`_DbWritePayload` with everything
+    ``_write_db_batch`` needs to perform the blocking I/O in a thread-pool
+    executor.
 
-    Degraded mode: if any of the SQLite calls raise, they are caught and logged
-    and processing continues.  The session is still scored and the raw JSONL is
-    still written.  If ``_raw_writer`` is None (e.g. in unit tests or on a
+    **No blocking I/O here** — every SQLite write and file append has been
+    extracted to ``_write_db_batch`` so this function completes in
+    microseconds and never stalls the FastAPI HTTP server.
+
+    Degraded mode: if ``_raw_writer`` is None (e.g. in unit tests or a
     failed startup), JSONL persistence is skipped but scoring still runs.
     """
     first_rec = records[0]
+    is_new = sid not in _windows
 
-    # Initialise session on first encounter
-    if sid not in _windows:
-        db_ok = True
-        try:
-            upsert_session(DB_PATH, sid, first_rec.unix_ms, first_rec.scenario_id)
-        except Exception:
-            logger.exception(
-                "DB error: could not upsert session %s in %s – "
-                "session will still be scored and raw JSONL written, "
-                "but record counts and scores will NOT be persisted to SQLite",
-                sid, DB_PATH,
-            )
-            db_ok = False
+    # ── Initialise session on first encounter ────────────────────────
+    if is_new:
         _windows[sid] = deque(maxlen=_WINDOW_MAX)
         _record_counts[sid] = 0
         logger.info(
-            "New session started: %s (scenario=%r, db_registered=%s)",
-            sid, first_rec.scenario_id, db_ok,
+            "New session started: %s (scenario=%r)",
+            sid, first_rec.scenario_id,
         )
-        # Resolve and cache the participant for this session asynchronously.
-        # This links the questionnaire participant_id to all log entries for
-        # this session (pulse, scores, etc.) without blocking the ingest pipeline.
+        # Resolve and cache the participant asynchronously — must be done here
+        # (on the event-loop thread) because create_task requires the loop.
         try:
             loop = asyncio.get_running_loop()
             _started_at = _unix_ms_to_cph_iso(first_rec.unix_ms)
@@ -557,117 +673,51 @@ def _ingest_session_batch(sid: str, records: list[TelemetryRecord]) -> None:
             ))
         except RuntimeError:
             pass  # No running event loop (e.g. synchronous unit tests)
+    elif _record_counts.get(sid, -1) == 0:
+        # First batch after session re-init but not truly new — log raw_writer state once
+        if not _raw_writer:
+            logger.debug(
+                "raw_writer not initialised – JSONL persistence disabled for session %s "
+                "(running in degraded/test mode; scoring and DB record counts still active)",
+                sid,
+            )
 
-    # Persist raw records – one file open/close for the whole batch.
-    # hr_only records (BLE relay) are excluded: they contain no gameplay data
-    # and would crowd out real records from the fixed-size chart window.
-    gameplay_to_write = [r for r in records if r.record_type != "hr_only"]
-    if _raw_writer and gameplay_to_write:
-        _raw_writer.append_many(gameplay_to_write)
-    elif sid not in _record_counts or _record_counts[sid] == 0:
-        # Only emit this warning once per session (when record_count is still 0,
-        # i.e. this is the very first batch). On subsequent batches it would spam
-        # the log at 20 Hz with the same message.
-        logger.debug(
-            "raw_writer not initialised – JSONL persistence disabled for session %s "
-            "(running in degraded/test mode; scoring and DB record counts still active)",
-            sid,
-        )
-
-    # Persist all records to local SQLite telemetry_records table.
-    # One executemany + commit per batch keeps write amplification low.
-    try:
-        insert_records(DB_PATH, records)
-    except Exception:
-        logger.exception(
-            "DB error: could not insert %d records for session %s into telemetry_records",
-            len(records), sid,
-        )
-
-    # Update sliding window for all records
+    # ── Update sliding window (in-memory, fast) ──────────────────────
     window = _windows[sid]
     for rec in records:
         window.append(rec)
 
-    # Increment DB record count once for the batch
+    # ── Update counters and latest pointers (in-memory, fast) ────────
     n = len(records)
     old_count = _record_counts[sid]
-    _record_counts[sid] = old_count + n
-    try:
-        increment_record_count(DB_PATH, sid, n)
-    except Exception:
-        logger.exception(
-            "DB error: could not increment record_count for session %s in %s",
-            sid, DB_PATH,
-        )
+    new_count = old_count + n
+    _record_counts[sid] = new_count
 
-    # Always update the latest record pointer (used for session selection / eviction).
     latest_records[sid] = records[-1]
 
-    # Track HR from any record source (relay hr_only or Unity gameplay).
     for rec in records:
         if rec.heart_rate > 0:
             latest_hr[sid] = rec.heart_rate
 
-    # Track the latest gameplay record separately so speed/steering are never
-    # overwritten by relay hr_only records (which always have speed=0) or
-    # headpose records (which also have speed=0).
     gameplay_recs = [r for r in records if r.record_type == "gameplay"]
     if gameplay_recs:
         latest_gameplay_records[sid] = gameplay_recs[-1]
 
-    # Persist heart-rate samples – write ALL records in the batch that carry a
-    # valid (>0) HR reading to the participant's pulse.jsonl so no measurement
-    # is lost.  The previous approach only kept the last HR per batch, which
-    # silently dropped 9 out of 10 readings at the default batch_size=10.
-    _hr_records = [r for r in records if r.heart_rate > 0]
-    if _hr_records:
-        # ── 1. Write ALL HR samples to local pulse.jsonl ──────────────────
-        # Pure local file operation — uses in-memory participant cache so
-        # NEVER makes an outbound HTTP call.  Skipped if participant not yet
-        # resolved (cache returns None).
-        _cached_pid = web_api_client.get_cached_participant(sid)
-        if _cached_pid:
-            _now = datetime.now(_TZ)
-            _created_at = _now.isoformat()
-            _local_time = _now.strftime("%Y-%m-%d %H:%M:%S %Z")
-            _psl = _get_pulse_logger()
-            for _hr_rec in _hr_records:
-                try:
-                    _append_pulse_to_file(PARTICIPANTS_DIR, _cached_pid, {
-                        "session_id": sid,
-                        "unix_ms": _hr_rec.unix_ms,
-                        "pulse": int(_hr_rec.heart_rate),
-                        "participant_id": _cached_pid,
-                        "created_at": _created_at,
-                        "local_time": _local_time,
-                    })
-                except Exception:
-                    logger.exception(
-                        "_ingest_session_batch: could not write pulse to local log file "
-                        "(participant=%r, session=%s, path=%s/pulse.jsonl) — "
-                        "API submission continues regardless",
-                        _cached_pid, sid, PARTICIPANTS_DIR / _cached_pid,
-                    )
-                # Write to PulseSessionLogger dedicated file.
-                if _psl is not None:
-                    _psl.write_pulse(
-                        _cached_pid, sid, _hr_rec.unix_ms, int(_hr_rec.heart_rate)
-                    )
+    # ── HR records for pulse logging ──────────────────────────────────
+    hr_records = [r for r in records if r.heart_rate > 0]
+    cached_pid = web_api_client.get_cached_participant(sid) if hr_records else None
 
-        # ── 2. Submit latest pulse to questionnaire + external APIs ───────
-        # Only the last valid HR per batch is sent to the external APIs to
-        # avoid flooding them at full sample rate (20 Hz).  Local file
-        # persistence above captures all samples regardless.
-        _hr_rec = _hr_records[-1]
+    if hr_records:
+        # Schedule external API pulse send (non-blocking async task).
+        # Only the LAST HR value per batch is sent to external APIs to avoid
+        # flooding them at full 20 Hz sample rate.
+        last_hr_rec = hr_records[-1]
         try:
             loop = asyncio.get_running_loop()
             loop.create_task(
-                web_api_client.send_pulse(sid, _hr_rec.unix_ms, int(_hr_rec.heart_rate))
+                web_api_client.send_pulse(sid, last_hr_rec.unix_ms, int(last_hr_rec.heart_rate))
             )
         except RuntimeError:
-            # No running event loop (e.g. during unit tests called synchronously).
-            # Fire-and-forget via a new loop so the call is not silently dropped.
             logger.warning(
                 "_ingest_session_batch: no running event loop for session %s — "
                 "firing send_pulse via asyncio.run() (synchronous context; "
@@ -675,7 +725,7 @@ def _ingest_session_batch(sid: str, records: list[TelemetryRecord]) -> None:
                 sid,
             )
             asyncio.run(
-                web_api_client.send_pulse(sid, _hr_rec.unix_ms, int(_hr_rec.heart_rate))
+                web_api_client.send_pulse(sid, last_hr_rec.unix_ms, int(last_hr_rec.heart_rate))
             )
     else:
         logger.debug(
@@ -684,7 +734,8 @@ def _ingest_session_batch(sid: str, records: list[TelemetryRecord]) -> None:
             sid, len(records),
         )
 
-    # Score once on the updated window
+    # ── Score (CPU-bound but fast — uses a list snapshot of the window) ──
+    scores: Any = None
     try:
         scores = compute_scores(list(window))
     except Exception:
@@ -692,19 +743,38 @@ def _ingest_session_batch(sid: str, records: list[TelemetryRecord]) -> None:
             "Scoring failed for session %s (window size=%d) – keeping previous scores",
             sid, len(window),
         )
-        return
-    latest_scores[sid] = scores
+    if scores is not None:
+        latest_scores[sid] = scores
 
-    # Persist scores snapshot every _SCORE_PERSIST_EVERY records.
-    # Trigger when the counter crosses a multiple of _SCORE_PERSIST_EVERY.
-    if old_count // _SCORE_PERSIST_EVERY != _record_counts[sid] // _SCORE_PERSIST_EVERY:
-        try:
-            update_latest_scores(DB_PATH, sid, scores)
-        except Exception:
-            logger.exception(
-                "DB error: could not persist scores for session %s in %s",
-                sid, DB_PATH,
-            )
+    # ── Determine if scores need DB persistence this batch ────────────
+    should_persist_scores = (
+        scores is not None
+        and old_count // _SCORE_PERSIST_EVERY != new_count // _SCORE_PERSIST_EVERY
+    )
+
+    gameplay_to_write = [r for r in records if r.record_type != "hr_only"]
+
+    # Timestamps for pulse log entries — computed once per batch.
+    _now = datetime.now(_TZ)
+
+    return _DbWritePayload(
+        sid=sid,
+        records=records,
+        gameplay_to_write=gameplay_to_write,
+        is_new=is_new,
+        first_unix_ms=first_rec.unix_ms,
+        first_scenario_id=first_rec.scenario_id or "",
+        n=n,
+        old_count=old_count,
+        new_count=new_count,
+        hr_records=hr_records,
+        cached_pid=cached_pid,
+        created_at=_now.isoformat(),
+        local_time=_now.strftime("%Y-%m-%d %H:%M:%S %Z"),
+        scores=scores,
+        should_persist_scores=should_persist_scores,
+        psl=_get_pulse_logger(),
+    )
 
 
 async def _broadcast_dashboard(session_id: str | None) -> None:
