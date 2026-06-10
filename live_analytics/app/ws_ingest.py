@@ -497,8 +497,18 @@ async def _process_message(ws: ServerConnection, raw: str, connection_sessions: 
             logger.debug("Failed to send feedback to Unity for session %s: %s",
                          session_id, exc)
 
-    # ── Broadcast to dashboard subscribers ──────────────────────────
-    await _broadcast_dashboard(session_id)
+    # ── Broadcast to dashboard subscribers (fire-and-forget) ────────
+    # We do NOT await _broadcast_dashboard directly because a slow or
+    # unresponsive dashboard client could delay every Unity batch at 20 Hz.
+    # Creating a Task means the broadcast runs concurrently — if it falls
+    # behind, Unity ingest is never stalled waiting for it.
+    try:
+        asyncio.get_running_loop().create_task(
+            _broadcast_dashboard(session_id),
+            name=f"dashboard_broadcast_{session_id[-8:]}",
+        )
+    except RuntimeError:
+        pass  # loop shutting down
 
 
 async def _resolve_and_link_participant(sid: str, scenario_id: str, started_at: str) -> None:
