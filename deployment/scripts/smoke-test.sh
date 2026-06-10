@@ -23,6 +23,11 @@ FAIL=0
 # Background port-forward PIDs for cleanup
 PF_PIDS=()
 
+# ── Test-data identity ────────────────────────────────────────────────────────
+# All data written during the smoke test is tagged with this ID so it can be
+# identified and removed after the test. It must never collide with real users.
+SMOKE_PID="k8s-smoke-test"
+
 # ── Cleanup trap ──────────────────────────────────────────────────────────────
 cleanup() {
   echo ""
@@ -167,6 +172,107 @@ echo "── 7. Service-to-service connectivity ──────────�
 # show degraded status if the URL was entirely unreachable at init time).
 check_http "questionnaire reachable (implies API URL OK)" \
   "http://localhost:19090/api/healthz"
+echo ""
+
+# ── 8. Test-data injection (participant_id = k8s-smoke-test) ─────────────────
+# All data is tagged with SMOKE_PID="k8s-smoke-test" so it can be identified
+# and removed. Real participant data is never touched.
+echo "── 8. Test-data injection  (id=${SMOKE_PID}) ────────────"
+
+# 8a. Register the smoke-test participant in the questionnaire DB
+POST_RESP=$(curl -s -w "\n%{http_code}" -X POST \
+  "http://localhost:19090/api/participants" \
+  -H "Content-Type: application/json" \
+  -d "{\"participant_id\":\"${SMOKE_PID}\",\"display_name\":\"K8s Smoke Test\",\"session_id\":null,\"metadata\":{\"source\":\"k8s-smoke-test\"}}" \
+  --max-time 5 2>/dev/null || printf "\n000")
+POST_STATUS=$(printf '%s' "$POST_RESP" | tail -1)
+if [ "$POST_STATUS" = "200" ] || [ "$POST_STATUS" = "201" ]; then
+  echo "  ✓ POST questionnaire /api/participants  → HTTP $POST_STATUS"
+  PASS=$((PASS + 1))
+else
+  echo "  ✗ POST questionnaire /api/participants  → HTTP $POST_STATUS  (expected 200/201)"
+  FAIL=$((FAIL + 1))
+fi
+
+# 8b. Verify the participant is readable from questionnaire DB
+GET_QS=$(curl -s -w "\n%{http_code}" \
+  "http://localhost:19090/api/participants/${SMOKE_PID}" \
+  --max-time 5 2>/dev/null || printf "\n000")
+GET_QS_STATUS=$(printf '%s' "$GET_QS" | tail -1)
+if [ "$GET_QS_STATUS" = "200" ]; then
+  echo "  ✓ GET  questionnaire /api/participants/${SMOKE_PID}  → HTTP $GET_QS_STATUS  (readback OK)"
+  PASS=$((PASS + 1))
+else
+  echo "  ✗ GET  questionnaire /api/participants/${SMOKE_PID}  → HTTP $GET_QS_STATUS  (expected 200)"
+  FAIL=$((FAIL + 1))
+fi
+
+# 8c. Start a pulse-log session on analytics-api for the smoke participant.
+#     session_id is also tagged k8s-smoke-test so it is trivially findable.
+START_RESP=$(curl -s -w "\n%{http_code}" -X POST \
+  "http://localhost:19080/api/pulse-session/start" \
+  -H "Content-Type: application/json" \
+  -d "{\"test_person_id\":\"${SMOKE_PID}\",\"session_id\":\"${SMOKE_PID}-session\",\"extra\":{\"source\":\"k8s-smoke-test\"}}" \
+  --max-time 5 2>/dev/null || printf "\n000")
+START_STATUS=$(printf '%s' "$START_RESP" | tail -1)
+if [ "$START_STATUS" = "200" ]; then
+  echo "  ✓ POST analytics-api /api/pulse-session/start  → HTTP $START_STATUS"
+  PASS=$((PASS + 1))
+else
+  echo "  ✗ POST analytics-api /api/pulse-session/start  → HTTP $START_STATUS  (expected 200)"
+  FAIL=$((FAIL + 1))
+fi
+
+# 8d. Confirm the session is visible in the current-sessions list
+CURR_RESP=$(curl -s -w "\n%{http_code}" \
+  "http://localhost:19080/api/pulse-session/current/${SMOKE_PID}" \
+  --max-time 5 2>/dev/null || printf "\n000")
+CURR_STATUS=$(printf '%s' "$CURR_RESP" | tail -1)
+if [ "$CURR_STATUS" = "200" ]; then
+  echo "  ✓ GET  analytics-api /api/pulse-session/current/${SMOKE_PID}  → HTTP $CURR_STATUS  (session visible)"
+  PASS=$((PASS + 1))
+else
+  echo "  ✗ GET  analytics-api /api/pulse-session/current/${SMOKE_PID}  → HTTP $CURR_STATUS  (expected 200)"
+  FAIL=$((FAIL + 1))
+fi
+echo ""
+
+# ── 9. Test-data cleanup ──────────────────────────────────────────────────────
+echo "── 9. Test-data cleanup  (id=${SMOKE_PID}) ──────────────"
+
+# 9a. End the pulse-log session (200 = closed; 404 = start step failed → acceptable)
+END_RESP=$(curl -s -w "\n%{http_code}" -X POST \
+  "http://localhost:19080/api/pulse-session/end" \
+  -H "Content-Type: application/json" \
+  -d "{\"test_person_id\":\"${SMOKE_PID}\"}" \
+  --max-time 5 2>/dev/null || printf "\n000")
+END_STATUS=$(printf '%s' "$END_RESP" | tail -1)
+if [ "$END_STATUS" = "200" ] || [ "$END_STATUS" = "404" ]; then
+  echo "  ✓ POST analytics-api /api/pulse-session/end  → HTTP $END_STATUS"
+  PASS=$((PASS + 1))
+else
+  echo "  ✗ POST analytics-api /api/pulse-session/end  → HTTP $END_STATUS  (expected 200 or 404)"
+  FAIL=$((FAIL + 1))
+fi
+
+# 9b. Delete the smoke participant from questionnaire DB
+DEL_RESP=$(curl -s -w "\n%{http_code}" -X DELETE \
+  "http://localhost:19090/api/participants/${SMOKE_PID}" \
+  --max-time 5 2>/dev/null || printf "\n000")
+DEL_STATUS=$(printf '%s' "$DEL_RESP" | tail -1)
+if [ "$DEL_STATUS" = "200" ] || [ "$DEL_STATUS" = "204" ]; then
+  echo "  ✓ DELETE questionnaire /api/participants/${SMOKE_PID}  → HTTP $DEL_STATUS  (removed)"
+  PASS=$((PASS + 1))
+else
+  echo "  ✗ DELETE questionnaire /api/participants/${SMOKE_PID}  → HTTP $DEL_STATUS  (expected 200/204)"
+  FAIL=$((FAIL + 1))
+fi
+
+# 9c. The pulse JSONL file written to the analytics-api PVC is tagged with the
+#     smoke ID and can be removed manually if needed:
+echo "  ℹ  Pulse log on PVC (remove manually if needed):"
+echo "     kubectl exec -n $NAMESPACE deployment/analytics-api -- \\
+       find /data/pulse -name '*${SMOKE_PID}*' -delete"
 echo ""
 
 # ── Results ───────────────────────────────────────────────────────────────────
