@@ -1,0 +1,17 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: dashboard-config
+  namespace: carvr-local
+  labels:
+    app.kubernetes.io/name: dashboard
+    app.kubernetes.io/instance: carvr
+    app.kubernetes.io/component: dashboard
+    app.kubernetes.io/part-of: carvr
+data:
+  # LA_API_BASE is consumed by the Streamlit *server process* (Python requests).
+  # It must be the K8s-internal service URL, not a browser-facing URL.
+  # Browser access is handled via kubectl port-forward or Minikube service.
+  LA_API_BASE: "http://analytics-api:8080"
+  LA_DASH_REFRESH_SEC: "5"

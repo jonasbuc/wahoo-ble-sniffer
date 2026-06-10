@@ -1,0 +1,26 @@
+{{- if .Values.analyticsApi.enabled }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: analytics-api
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "carvr.labels" . | nindent 4 }}
+    app.kubernetes.io/name: analytics-api
+    app.kubernetes.io/component: api
+spec:
+  type: {{ .Values.analyticsApi.service.type }}
+  selector:
+    app.kubernetes.io/name: analytics-api
+    app.kubernetes.io/instance: {{ .Release.Name }}
+  ports:
+    - name: http
+      port: {{ .Values.analyticsApi.service.httpPort }}
+      targetPort: http
+      protocol: TCP
+    - name: ws-ingest
+      port: {{ .Values.analyticsApi.service.wsIngestPort }}
+      targetPort: ws-ingest
+      protocol: TCP
+{{- end }}

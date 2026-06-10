@@ -1,0 +1,22 @@
+{{- if .Values.bridge.enabled }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: bridge
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "carvr.labels" . | nindent 4 }}
+    app.kubernetes.io/name: bridge
+    app.kubernetes.io/component: bridge
+spec:
+  type: {{ .Values.bridge.service.type }}
+  selector:
+    app.kubernetes.io/name: bridge
+    app.kubernetes.io/instance: {{ .Release.Name }}
+  ports:
+    - name: websocket
+      port: {{ .Values.bridge.service.port }}
+      targetPort: websocket
+      protocol: TCP
+{{- end }}

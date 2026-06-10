@@ -1,0 +1,90 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dashboard
+  namespace: carvr-local
+  labels:
+    app.kubernetes.io/name: dashboard
+    app.kubernetes.io/instance: carvr
+    app.kubernetes.io/component: dashboard
+    app.kubernetes.io/part-of: carvr
+spec:
+  replicas: 1
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: dashboard
+      app.kubernetes.io/instance: carvr
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: dashboard
+        app.kubernetes.io/instance: carvr
+        app.kubernetes.io/component: dashboard
+        app.kubernetes.io/part-of: carvr
+    spec:
+      terminationGracePeriodSeconds: 15
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+      containers:
+        - name: dashboard
+          image: carvr/dashboard:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8501
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: dashboard-config
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          # Streamlit takes ~30-40 s to start — use startupProbe to avoid
+          # premature restarts during slow initialisation.
+          startupProbe:
+            tcpSocket:
+              port: http
+            failureThreshold: 18
+            periodSeconds: 5
+          readinessProbe:
+            tcpSocket:
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            failureThreshold: 3
+          livenessProbe:
+            tcpSocket:
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 20
+            failureThreshold: 3
+          volumeMounts:
+            - name: streamlit-cache
+              mountPath: /home/appuser/.streamlit
+            - name: dashboard-data
+              mountPath: /data/dashboard
+      volumes:
+        # Writable scratch space for Streamlit's own config/cache
+        - name: streamlit-cache
+          emptyDir: {}
+        - name: dashboard-data
+          persistentVolumeClaim:
+            claimName: dashboard-data-pvc

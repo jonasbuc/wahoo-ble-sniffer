@@ -1,0 +1,14 @@
+apiVersion: v2
+name: carvr
+description: CarVR – VR Cycling Analytics Stack (analytics-api, questionnaire, dashboard, bridge)
+type: application
+version: 0.1.0
+appVersion: "latest"
+home: https://github.com/jonasbuc/wahoo-ble-sniffer
+keywords:
+  - vr
+  - cycling
+  - analytics
+  - ble
+maintainers:
+  - name: jonasbuc

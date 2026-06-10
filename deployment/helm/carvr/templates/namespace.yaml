@@ -1,0 +1,10 @@
+{{- if .Values.global }}
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ .Values.global.namespace | default "carvr-local" }}
+  labels:
+    app.kubernetes.io/part-of: carvr
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+{{- end }}

@@ -1,0 +1,12 @@
+# values-kind.yaml – kind-specific overrides
+# Only contains differences from values.yaml.
+# Use with: helm upgrade --install carvr ./deployment/helm/carvr \
+#             --values deployment/helm/carvr/values-kind.yaml
+
+global:
+  imagePullPolicy: IfNotPresent   # Images loaded with 'kind load docker-image'
+  storageClass: "standard"        # kind default storage class
+
+analyticsApi:
+  env:
+    LA_LOG_LEVEL: "DEBUG"

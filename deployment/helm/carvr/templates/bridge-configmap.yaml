@@ -1,0 +1,16 @@
+{{- if .Values.bridge.enabled }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: bridge-config
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "carvr.labels" . | nindent 4 }}
+    app.kubernetes.io/name: bridge
+    app.kubernetes.io/component: bridge
+data:
+  {{- range $k, $v := .Values.bridge.env }}
+  {{ $k }}: {{ $v | quote }}
+  {{- end }}
+{{- end }}

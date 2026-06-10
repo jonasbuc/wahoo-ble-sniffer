@@ -1,0 +1,16 @@
+{{- if .Values.questionnaire.enabled }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: questionnaire-config
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "carvr.labels" . | nindent 4 }}
+    app.kubernetes.io/name: questionnaire
+    app.kubernetes.io/component: questionnaire
+data:
+  {{- range $k, $v := .Values.questionnaire.env }}
+  {{ $k }}: {{ $v | quote }}
+  {{- end }}
+{{- end }}

@@ -1,0 +1,21 @@
+{{- if and .Values.questionnaire.enabled .Values.questionnaire.persistence.enabled }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: questionnaire-data-pvc
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "carvr.labels" . | nindent 4 }}
+    app.kubernetes.io/name: questionnaire
+    app.kubernetes.io/component: questionnaire
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: {{ .Values.questionnaire.persistence.size }}
+  {{- if .Values.global.storageClass }}
+  storageClassName: {{ .Values.global.storageClass }}
+  {{- end }}
+{{- end }}

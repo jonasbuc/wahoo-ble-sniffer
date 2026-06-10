@@ -1,0 +1,82 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bridge
+  namespace: carvr-local
+  labels:
+    app.kubernetes.io/name: bridge
+    app.kubernetes.io/instance: carvr
+    app.kubernetes.io/component: bridge
+    app.kubernetes.io/part-of: carvr
+spec:
+  replicas: 1
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: bridge
+      app.kubernetes.io/instance: carvr
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: bridge
+        app.kubernetes.io/instance: carvr
+        app.kubernetes.io/component: bridge
+        app.kubernetes.io/part-of: carvr
+    spec:
+      terminationGracePeriodSeconds: 10
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+      containers:
+        - name: bridge
+          image: carvr/bridge:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: websocket
+              containerPort: 8765
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: bridge-config
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "64Mi"
+            limits:
+              cpu: "200m"
+              memory: "128Mi"
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          startupProbe:
+            tcpSocket:
+              port: websocket
+            failureThreshold: 10
+            periodSeconds: 3
+          readinessProbe:
+            tcpSocket:
+              port: websocket
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            failureThreshold: 3
+          livenessProbe:
+            tcpSocket:
+              port: websocket
+            initialDelaySeconds: 10
+            periodSeconds: 20
+            failureThreshold: 3
+          volumeMounts:
+            - name: bridge-data
+              mountPath: /data/bridge
+      volumes:
+        - name: bridge-data
+          persistentVolumeClaim:
+            claimName: bridge-data-pvc

@@ -1,0 +1,16 @@
+{{- if .Values.analyticsApi.enabled }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: analytics-api-config
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "carvr.labels" . | nindent 4 }}
+    app.kubernetes.io/name: analytics-api
+    app.kubernetes.io/component: api
+data:
+  {{- range $k, $v := .Values.analyticsApi.env }}
+  {{ $k }}: {{ $v | quote }}
+  {{- end }}
+{{- end }}

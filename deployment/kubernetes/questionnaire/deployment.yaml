@@ -1,0 +1,91 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: questionnaire
+  namespace: carvr-local
+  labels:
+    app.kubernetes.io/name: questionnaire
+    app.kubernetes.io/instance: carvr
+    app.kubernetes.io/component: questionnaire
+    app.kubernetes.io/part-of: carvr
+spec:
+  replicas: 1
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: questionnaire
+      app.kubernetes.io/instance: carvr
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: questionnaire
+        app.kubernetes.io/instance: carvr
+        app.kubernetes.io/component: questionnaire
+        app.kubernetes.io/part-of: carvr
+    spec:
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+      containers:
+        - name: questionnaire
+          image: carvr/questionnaire:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8090
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: questionnaire-config
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "300m"
+              memory: "256Mi"
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          startupProbe:
+            httpGet:
+              path: /api/healthz
+              port: http
+            failureThreshold: 12
+            periodSeconds: 5
+          readinessProbe:
+            httpGet:
+              path: /api/healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /api/healthz
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 20
+            failureThreshold: 3
+          volumeMounts:
+            - name: questionnaire-data
+              mountPath: /data/questionnaire
+            - name: participants
+              mountPath: /data/participants
+      volumes:
+        - name: questionnaire-data
+          persistentVolumeClaim:
+            claimName: questionnaire-data-pvc
+        - name: participants
+          persistentVolumeClaim:
+            claimName: carvr-participants-pvc

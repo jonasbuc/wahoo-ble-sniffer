@@ -1,0 +1,20 @@
+---
+# Shared PVC — participants log directory written by both analytics-api and questionnaire.
+# ReadWriteOnce is sufficient for single-node clusters (minikube / kind).
+# For multi-node production use: storageClassName with ReadWriteMany (e.g. NFS).
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: carvr-participants-pvc
+  namespace: carvr-local
+  labels:
+    app.kubernetes.io/part-of: carvr
+    app.kubernetes.io/component: shared-storage
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+  # Leave storageClassName unset to use the cluster default.
+  # For minikube: "standard"  |  For kind: "standard"

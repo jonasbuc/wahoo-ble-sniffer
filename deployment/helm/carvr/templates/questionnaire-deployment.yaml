@@ -1,0 +1,71 @@
+{{- if .Values.questionnaire.enabled }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: questionnaire
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "carvr.labels" . | nindent 4 }}
+    app.kubernetes.io/name: questionnaire
+    app.kubernetes.io/component: questionnaire
+spec:
+  replicas: {{ .Values.questionnaire.replicaCount }}
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: questionnaire
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: questionnaire
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/component: questionnaire
+        app.kubernetes.io/part-of: carvr
+    spec:
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        {{- toYaml .Values.questionnaire.podSecurityContext | nindent 8 }}
+      containers:
+        - name: questionnaire
+          image: {{ include "carvr.image" (dict "registry" .Values.global.imageRegistry "repo" .Values.questionnaire.image.repository "tag" .Values.questionnaire.image.tag) }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.questionnaire.service.port }}
+          envFrom:
+            - configMapRef:
+                name: questionnaire-config
+          resources:
+            {{- toYaml .Values.questionnaire.resources | nindent 12 }}
+          securityContext:
+            {{- toYaml .Values.questionnaire.securityContext | nindent 12 }}
+          startupProbe:
+            {{- toYaml .Values.questionnaire.startupProbe | nindent 12 }}
+          readinessProbe:
+            {{- toYaml .Values.questionnaire.readinessProbe | nindent 12 }}
+          livenessProbe:
+            {{- toYaml .Values.questionnaire.livenessProbe | nindent 12 }}
+          volumeMounts:
+            {{- if .Values.questionnaire.persistence.enabled }}
+            - name: questionnaire-data
+              mountPath: {{ .Values.questionnaire.persistence.mountPath }}
+            {{- end }}
+            - name: participants
+              mountPath: /data/participants
+      volumes:
+        {{- if .Values.questionnaire.persistence.enabled }}
+        - name: questionnaire-data
+          persistentVolumeClaim:
+            claimName: questionnaire-data-pvc
+        {{- end }}
+        - name: participants
+          persistentVolumeClaim:
+            claimName: carvr-participants-pvc
+{{- end }}

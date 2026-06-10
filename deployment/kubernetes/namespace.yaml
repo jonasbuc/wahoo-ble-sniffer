@@ -1,0 +1,11 @@
+---
+# Kubernetes namespace for the CarVR analytics stack.
+# All project resources live in this namespace so cleanup is safe and simple:
+#   kubectl delete namespace carvr-local
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: carvr-local
+  labels:
+    app.kubernetes.io/part-of: carvr
+    app.kubernetes.io/managed-by: kubectl

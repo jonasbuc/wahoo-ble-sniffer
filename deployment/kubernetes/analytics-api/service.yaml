@@ -1,0 +1,27 @@
+---
+# ClusterIP service for analytics-api.
+# In-cluster: http://analytics-api:8080  /  ws://analytics-api:8766
+apiVersion: v1
+kind: Service
+metadata:
+  name: analytics-api
+  namespace: carvr-local
+  labels:
+    app.kubernetes.io/name: analytics-api
+    app.kubernetes.io/instance: carvr
+    app.kubernetes.io/component: api
+    app.kubernetes.io/part-of: carvr
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: analytics-api
+    app.kubernetes.io/instance: carvr
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+      protocol: TCP
+    - name: ws-ingest
+      port: 8766
+      targetPort: ws-ingest
+      protocol: TCP

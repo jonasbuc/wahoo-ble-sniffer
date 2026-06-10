@@ -1,0 +1,13 @@
+# values-minikube.yaml – Minikube-specific overrides
+# Only contains differences from values.yaml.
+# Use with: helm upgrade --install carvr ./deployment/helm/carvr \
+#             --values deployment/helm/carvr/values-minikube.yaml
+
+global:
+  imagePullPolicy: IfNotPresent   # Images built inside Minikube daemon — no pull needed
+  storageClass: "standard"        # Minikube default storage class
+
+# Analytics API: slightly more headroom on a dev laptop
+analyticsApi:
+  env:
+    LA_LOG_LEVEL: "DEBUG"

@@ -1,0 +1,277 @@
+# ── values.yaml – CarVR Helm chart defaults ──────────────────────────────────
+# All settings can be overridden per-environment via values-minikube.yaml
+# or values-kind.yaml, or with --set on the command line.
+
+# ── Global ────────────────────────────────────────────────────────────────────
+global:
+  namespace: carvr-local
+  imageRegistry: ""   # prefix for all images, e.g. "registry.example.com/"
+  imagePullPolicy: IfNotPresent
+  # Shared participants directory mounted by analytics-api AND questionnaire.
+  participantsPvcSize: 1Gi
+  storageClass: ""    # "" = use cluster default (standard on minikube/kind)
+
+# ── Analytics API ─────────────────────────────────────────────────────────────
+analyticsApi:
+  enabled: true
+  image:
+    repository: carvr/analytics-api
+    tag: latest
+  replicaCount: 1
+
+  service:
+    type: ClusterIP
+    httpPort: 8080
+    wsIngestPort: 8766
+
+  env:
+    LA_HTTP_HOST: "0.0.0.0"
+    LA_HTTP_PORT: "8080"
+    LA_WS_INGEST_HOST: "0.0.0.0"
+    LA_WS_INGEST_PORT: "8766"
+    LA_DATA_DIR: "/data"
+    LA_DB_PATH: "/data/analytics.db"
+    LA_SESSIONS_DIR: "/data/sessions"
+    LA_PARTICIPANTS_DIR: "/data/participants"
+    LA_PULSE_LOG_DIR: "/data/pulse"
+    LA_LOG_LEVEL: "INFO"
+
+  persistence:
+    enabled: true
+    size: 5Gi
+    mountPath: /data
+
+  resources:
+    requests:
+      cpu: "100m"
+      memory: "256Mi"
+    limits:
+      cpu: "500m"
+      memory: "512Mi"
+
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    runAsGroup: 1000
+    fsGroup: 1000
+
+  securityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop: ["ALL"]
+
+  startupProbe:
+    httpGet:
+      path: /healthz
+      port: 8080
+    failureThreshold: 12
+    periodSeconds: 5
+
+  readinessProbe:
+    httpGet:
+      path: /healthz
+      port: 8080
+    initialDelaySeconds: 5
+    periodSeconds: 10
+    failureThreshold: 3
+
+  livenessProbe:
+    httpGet:
+      path: /healthz
+      port: 8080
+    initialDelaySeconds: 15
+    periodSeconds: 20
+    failureThreshold: 3
+
+# ── Questionnaire ─────────────────────────────────────────────────────────────
+questionnaire:
+  enabled: true
+  image:
+    repository: carvr/questionnaire
+    tag: latest
+  replicaCount: 1
+
+  service:
+    type: ClusterIP
+    port: 8090
+
+  env:
+    QS_HOST: "0.0.0.0"
+    QS_PORT: "8090"
+    QS_DATA_DIR: "/data/questionnaire"
+    QS_DB_PATH: "/data/questionnaire/questionnaire.db"
+    LA_PARTICIPANTS_DIR: "/data/participants"
+    QS_LOG_LEVEL: "INFO"
+    # Internal K8s DNS name — not browser-facing.
+    QS_ANALYTICS_API_URL: "http://analytics-api:8080"
+
+  persistence:
+    enabled: true
+    size: 1Gi
+    mountPath: /data/questionnaire
+
+  resources:
+    requests:
+      cpu: "100m"
+      memory: "128Mi"
+    limits:
+      cpu: "300m"
+      memory: "256Mi"
+
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    runAsGroup: 1000
+    fsGroup: 1000
+
+  securityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop: ["ALL"]
+
+  startupProbe:
+    httpGet:
+      path: /api/healthz
+      port: 8090
+    failureThreshold: 12
+    periodSeconds: 5
+
+  readinessProbe:
+    httpGet:
+      path: /api/healthz
+      port: 8090
+    initialDelaySeconds: 5
+    periodSeconds: 10
+    failureThreshold: 3
+
+  livenessProbe:
+    httpGet:
+      path: /api/healthz
+      port: 8090
+    initialDelaySeconds: 15
+    periodSeconds: 20
+    failureThreshold: 3
+
+# ── Dashboard ─────────────────────────────────────────────────────────────────
+dashboard:
+  enabled: true
+  image:
+    repository: carvr/dashboard
+    tag: latest
+  replicaCount: 1
+
+  service:
+    type: ClusterIP
+    port: 8501
+
+  env:
+    # Must point to analytics-api internal DNS.
+    # Streamlit calls this server-side — not from the user's browser.
+    LA_API_BASE: "http://analytics-api:8080"
+    LA_DASH_REFRESH_SEC: "5"
+
+  persistence:
+    enabled: true
+    size: 1Gi
+    mountPath: /data/dashboard
+
+  resources:
+    requests:
+      cpu: "100m"
+      memory: "256Mi"
+    limits:
+      cpu: "500m"
+      memory: "512Mi"
+
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    runAsGroup: 1000
+    fsGroup: 1000
+
+  securityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop: ["ALL"]
+
+  startupProbe:
+    tcpSocket:
+      port: 8501
+    failureThreshold: 18
+    periodSeconds: 5
+
+  readinessProbe:
+    tcpSocket:
+      port: 8501
+    initialDelaySeconds: 10
+    periodSeconds: 10
+    failureThreshold: 3
+
+  livenessProbe:
+    tcpSocket:
+      port: 8501
+    initialDelaySeconds: 30
+    periodSeconds: 20
+    failureThreshold: 3
+
+# ── Bridge ────────────────────────────────────────────────────────────────────
+bridge:
+  enabled: true
+  image:
+    repository: carvr/bridge
+    tag: latest
+  replicaCount: 1
+
+  service:
+    type: ClusterIP
+    port: 8765
+
+  env:
+    BRIDGE_HOST: "0.0.0.0"
+    BRIDGE_PORT: "8765"
+    # BRIDGE_MOCK=1 = simulated HR (default for K8s).
+    # Set to "0" only when running with host Bluetooth (not supported in containers).
+    BRIDGE_MOCK: "1"
+
+  persistence:
+    enabled: true
+    size: 1Gi
+    mountPath: /data/bridge
+
+  resources:
+    requests:
+      cpu: "50m"
+      memory: "64Mi"
+    limits:
+      cpu: "200m"
+      memory: "128Mi"
+
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    runAsGroup: 1000
+
+  securityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop: ["ALL"]
+
+  startupProbe:
+    tcpSocket:
+      port: 8765
+    failureThreshold: 10
+    periodSeconds: 3
+
+  readinessProbe:
+    tcpSocket:
+      port: 8765
+    initialDelaySeconds: 5
+    periodSeconds: 10
+    failureThreshold: 3
+
+  livenessProbe:
+    tcpSocket:
+      port: 8765
+    initialDelaySeconds: 10
+    periodSeconds: 20
+    failureThreshold: 3

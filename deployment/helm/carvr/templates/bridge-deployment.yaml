@@ -1,0 +1,64 @@
+{{- if .Values.bridge.enabled }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bridge
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "carvr.labels" . | nindent 4 }}
+    app.kubernetes.io/name: bridge
+    app.kubernetes.io/component: bridge
+spec:
+  replicas: {{ .Values.bridge.replicaCount }}
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: bridge
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: bridge
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/component: bridge
+        app.kubernetes.io/part-of: carvr
+    spec:
+      terminationGracePeriodSeconds: 10
+      securityContext:
+        {{- toYaml .Values.bridge.podSecurityContext | nindent 8 }}
+      containers:
+        - name: bridge
+          image: {{ include "carvr.image" (dict "registry" .Values.global.imageRegistry "repo" .Values.bridge.image.repository "tag" .Values.bridge.image.tag) }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          ports:
+            - name: websocket
+              containerPort: {{ .Values.bridge.service.port }}
+          envFrom:
+            - configMapRef:
+                name: bridge-config
+          resources:
+            {{- toYaml .Values.bridge.resources | nindent 12 }}
+          securityContext:
+            {{- toYaml .Values.bridge.securityContext | nindent 12 }}
+          startupProbe:
+            {{- toYaml .Values.bridge.startupProbe | nindent 12 }}
+          readinessProbe:
+            {{- toYaml .Values.bridge.readinessProbe | nindent 12 }}
+          livenessProbe:
+            {{- toYaml .Values.bridge.livenessProbe | nindent 12 }}
+          {{- if .Values.bridge.persistence.enabled }}
+          volumeMounts:
+            - name: bridge-data
+              mountPath: {{ .Values.bridge.persistence.mountPath }}
+      volumes:
+        - name: bridge-data
+          persistentVolumeClaim:
+            claimName: bridge-data-pvc
+          {{- end }}
+{{- end }}

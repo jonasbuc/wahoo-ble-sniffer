@@ -1,0 +1,41 @@
+---
+# Kustomize entrypoint — applies all resources in the correct order.
+# Usage:
+#   kubectl kustomize deployment/kubernetes/ | kubectl apply -f -
+# or:
+#   kubectl apply -k deployment/kubernetes/
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: carvr-local
+
+resources:
+  # Namespace first
+  - namespace.yaml
+
+  # Shared storage
+  - shared/participants-pvc.yaml
+
+  # Analytics API
+  - analytics-api/configmap.yaml
+  - analytics-api/pvc.yaml
+  - analytics-api/deployment.yaml
+  - analytics-api/service.yaml
+
+  # Questionnaire
+  - questionnaire/configmap.yaml
+  - questionnaire/pvc.yaml
+  - questionnaire/deployment.yaml
+  - questionnaire/service.yaml
+
+  # Dashboard
+  - dashboard/configmap.yaml
+  - dashboard/pvc.yaml
+  - dashboard/deployment.yaml
+  - dashboard/service.yaml
+
+  # Bridge
+  - bridge/configmap.yaml
+  - bridge/pvc.yaml
+  - bridge/deployment.yaml
+  - bridge/service.yaml

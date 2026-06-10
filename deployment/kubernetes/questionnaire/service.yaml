@@ -1,0 +1,21 @@
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: questionnaire
+  namespace: carvr-local
+  labels:
+    app.kubernetes.io/name: questionnaire
+    app.kubernetes.io/instance: carvr
+    app.kubernetes.io/component: questionnaire
+    app.kubernetes.io/part-of: carvr
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: questionnaire
+    app.kubernetes.io/instance: carvr
+  ports:
+    - name: http
+      port: 8090
+      targetPort: http
+      protocol: TCP

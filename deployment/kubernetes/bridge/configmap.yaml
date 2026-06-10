@@ -1,0 +1,17 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: bridge-config
+  namespace: carvr-local
+  labels:
+    app.kubernetes.io/name: bridge
+    app.kubernetes.io/instance: carvr
+    app.kubernetes.io/component: bridge
+    app.kubernetes.io/part-of: carvr
+data:
+  BRIDGE_HOST: "0.0.0.0"
+  BRIDGE_PORT: "8765"
+  # BRIDGE_MOCK=1 = simulated HR data (default for K8s — no Bluetooth hardware).
+  # BRIDGE_MOCK=0 = requires host Bluetooth (not supported in containers).
+  BRIDGE_MOCK: "1"

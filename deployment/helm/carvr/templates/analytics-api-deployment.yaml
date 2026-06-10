@@ -1,0 +1,73 @@
+{{- if .Values.analyticsApi.enabled }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: analytics-api
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "carvr.labels" . | nindent 4 }}
+    app.kubernetes.io/name: analytics-api
+    app.kubernetes.io/component: api
+spec:
+  replicas: {{ .Values.analyticsApi.replicaCount }}
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: analytics-api
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: analytics-api
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/component: api
+        app.kubernetes.io/part-of: carvr
+    spec:
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        {{- toYaml .Values.analyticsApi.podSecurityContext | nindent 8 }}
+      containers:
+        - name: analytics-api
+          image: {{ include "carvr.image" (dict "registry" .Values.global.imageRegistry "repo" .Values.analyticsApi.image.repository "tag" .Values.analyticsApi.image.tag) }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.analyticsApi.service.httpPort }}
+            - name: ws-ingest
+              containerPort: {{ .Values.analyticsApi.service.wsIngestPort }}
+          envFrom:
+            - configMapRef:
+                name: analytics-api-config
+          resources:
+            {{- toYaml .Values.analyticsApi.resources | nindent 12 }}
+          securityContext:
+            {{- toYaml .Values.analyticsApi.securityContext | nindent 12 }}
+          startupProbe:
+            {{- toYaml .Values.analyticsApi.startupProbe | nindent 12 }}
+          readinessProbe:
+            {{- toYaml .Values.analyticsApi.readinessProbe | nindent 12 }}
+          livenessProbe:
+            {{- toYaml .Values.analyticsApi.livenessProbe | nindent 12 }}
+          volumeMounts:
+            {{- if .Values.analyticsApi.persistence.enabled }}
+            - name: analytics-data
+              mountPath: {{ .Values.analyticsApi.persistence.mountPath }}
+            {{- end }}
+            - name: participants
+              mountPath: /data/participants
+      volumes:
+        {{- if .Values.analyticsApi.persistence.enabled }}
+        - name: analytics-data
+          persistentVolumeClaim:
+            claimName: analytics-api-data-pvc
+        {{- end }}
+        - name: participants
+          persistentVolumeClaim:
+            claimName: carvr-participants-pvc
+{{- end }}

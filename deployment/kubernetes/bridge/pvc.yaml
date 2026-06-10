@@ -1,0 +1,17 @@
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: bridge-data-pvc
+  namespace: carvr-local
+  labels:
+    app.kubernetes.io/name: bridge
+    app.kubernetes.io/instance: carvr
+    app.kubernetes.io/component: bridge
+    app.kubernetes.io/part-of: carvr
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi

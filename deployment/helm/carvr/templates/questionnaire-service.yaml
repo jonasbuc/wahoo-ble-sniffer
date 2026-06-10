@@ -1,0 +1,22 @@
+{{- if .Values.questionnaire.enabled }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: questionnaire
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "carvr.labels" . | nindent 4 }}
+    app.kubernetes.io/name: questionnaire
+    app.kubernetes.io/component: questionnaire
+spec:
+  type: {{ .Values.questionnaire.service.type }}
+  selector:
+    app.kubernetes.io/name: questionnaire
+    app.kubernetes.io/instance: {{ .Release.Name }}
+  ports:
+    - name: http
+      port: {{ .Values.questionnaire.service.port }}
+      targetPort: http
+      protocol: TCP
+{{- end }}

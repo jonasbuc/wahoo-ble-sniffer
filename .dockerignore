@@ -1,0 +1,80 @@
+# ── .dockerignore – root-level (gælder for alle Docker builds fra repo-roden) ─
+#
+# Placér denne fil i repository-roden og referer til den ved build:
+#   docker build -f deployment/analytics-api/Dockerfile .
+
+# Version control
+.git/
+.gitignore
+.gitattributes
+
+# Python caches and compiled files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.so
+*.egg-info/
+*.egg
+dist/
+build/
+.eggs/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# IDE & editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*.swn
+*.orig
+.DS_Store
+Thumbs.db
+
+# Test & coverage artefacts
+.pytest_cache/
+.coverage
+coverage.xml
+coverage.json
+htmlcov/
+*.log
+
+# Local runtime data — NEVER include databases or session data in images
+live_analytics/data/
+live_analytics/logs/
+live_analytics/questionnaire/data/
+live_analytics/system_check/data/
+bridge/db/sqlite/*.db
+bridge/db/mssql/
+
+# Unity build output & VRSF logs
+unity/**/*.vrsf
+unity/**/Logs/
+unity/**/Library/
+unity/**/Temp/
+unity/**/*.csproj
+unity/**/*.sln
+unity/**/*.user
+*.sln
+
+# Deployment artefacts (not needed inside images)
+deployment/
+
+# Documentation that isn't needed at runtime
+docs/
+CHANGELOG.md
+CONTRIBUTING.md
+README.md
+
+# Jupyter / notebook artefacts
+.ipynb_checkpoints/
+*.ipynb
+
+# OS-generated files
+.DS_Store
+._*

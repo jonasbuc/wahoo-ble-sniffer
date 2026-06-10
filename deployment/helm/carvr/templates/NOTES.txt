@@ -1,0 +1,53 @@
+Thank you for installing CarVR!
+
+Release:   {{ .Release.Name }}
+Namespace: {{ .Release.Namespace }}
+Chart:     {{ .Chart.Name }}-{{ .Chart.Version }}
+
+═══════════════════════════════════════════════════════
+  Services deployed:
+  {{- if .Values.analyticsApi.enabled }}
+  • analytics-api   (HTTP :{{ .Values.analyticsApi.service.httpPort }} | WS-ingest :{{ .Values.analyticsApi.service.wsIngestPort }})
+  {{- end }}
+  {{- if .Values.questionnaire.enabled }}
+  • questionnaire   (HTTP :{{ .Values.questionnaire.service.port }})
+  {{- end }}
+  {{- if .Values.dashboard.enabled }}
+  • dashboard       (HTTP :{{ .Values.dashboard.service.port }})
+  {{- end }}
+  {{- if .Values.bridge.enabled }}
+  • bridge          (WS   :{{ .Values.bridge.service.port }} — mock mode)
+  {{- end }}
+═══════════════════════════════════════════════════════
+
+Access the services via port-forward:
+
+  # Analytics API
+  kubectl port-forward svc/analytics-api {{ .Values.analyticsApi.service.httpPort }}:{{ .Values.analyticsApi.service.httpPort }} -n {{ .Release.Namespace }}
+
+  # Dashboard  →  http://localhost:{{ .Values.dashboard.service.port }}
+  kubectl port-forward svc/dashboard {{ .Values.dashboard.service.port }}:{{ .Values.dashboard.service.port }} -n {{ .Release.Namespace }}
+
+  # Questionnaire  →  http://localhost:{{ .Values.questionnaire.service.port }}
+  kubectl port-forward svc/questionnaire {{ .Values.questionnaire.service.port }}:{{ .Values.questionnaire.service.port }} -n {{ .Release.Namespace }}
+
+Check rollout status:
+
+  kubectl get pods -n {{ .Release.Namespace }}
+  kubectl rollout status deployment/analytics-api -n {{ .Release.Namespace }}
+
+View logs:
+
+  kubectl logs deployment/analytics-api  -n {{ .Release.Namespace }} -f
+  kubectl logs deployment/questionnaire  -n {{ .Release.Namespace }} -f
+  kubectl logs deployment/dashboard      -n {{ .Release.Namespace }} -f
+  kubectl logs deployment/bridge         -n {{ .Release.Namespace }} -f
+
+Run smoke tests:
+
+  ./deployment/scripts/smoke-test.sh
+
+Uninstall:
+
+  helm uninstall {{ .Release.Name }} --namespace {{ .Release.Namespace }}
+  kubectl delete namespace {{ .Release.Namespace }}

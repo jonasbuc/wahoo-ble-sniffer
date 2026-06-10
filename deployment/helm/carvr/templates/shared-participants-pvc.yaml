@@ -1,0 +1,19 @@
+---
+# Shared PVC — participants directory accessed by analytics-api AND questionnaire.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: carvr-participants-pvc
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "carvr.labels" . | nindent 4 }}
+    app.kubernetes.io/component: shared-storage
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: {{ .Values.global.participantsPvcSize | default "1Gi" }}
+  {{- if .Values.global.storageClass }}
+  storageClassName: {{ .Values.global.storageClass }}
+  {{- end }}
