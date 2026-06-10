@@ -94,8 +94,8 @@ async def lifespan(app: FastAPI):  # noqa: ARG001
 
     logger.info("  Storage initialised")
 
-    # Start the ingest WS server as a background task
-    task = asyncio.create_task(start_ingest_server())
+    # Start the ingest WS server as a background task (auto-restarts on crash)
+    task = asyncio.create_task(_run_ingest_with_restart(), name="ingest_server")
     task.add_done_callback(_ingest_task_done)
 
     # Periodically evict in-memory state for sessions idle > 4 h
@@ -120,20 +120,73 @@ def _evict_task_done(task: asyncio.Task) -> None:
 
 
 def _ingest_task_done(task: asyncio.Task) -> None:
-    """Log if the ingest server exits or crashes unexpectedly."""
+    """Log the final outcome of the ingest-server wrapper task on clean exit or cancellation."""
     if task.cancelled():
         logger.warning(
             "Ingest WS server task was cancelled – Unity clients will no longer be able to connect."
         )
     elif (exc := task.exception()) is not None:
+        # _run_ingest_with_restart only propagates an exception if it gave up
+        # after _MAX_RESTARTS consecutive crashes — which is already logged there.
         logger.critical(
-            "Ingest WS server crashed and will NOT restart: %s: %s  "
-            "(Unity telemetry ingest is now offline – restart the service to recover)",
+            "Ingest WS server stopped after too many consecutive crashes: %s: %s",
             type(exc).__name__, exc,
             exc_info=exc,
         )
     else:
         logger.info("Ingest WS server exited cleanly.")
+
+
+async def _run_ingest_with_restart() -> None:
+    """Run the ingest WebSocket server, restarting it automatically after crashes.
+
+    On a clean exit or cancellation, the task ends normally.  Cancellation is
+    never silently swallowed — a ``CancelledError`` always propagates so the
+    FastAPI lifespan can shut down cleanly.
+
+    A crash counter limits consecutive restarts to ``_MAX_RESTARTS``; if the
+    server keeps crashing, the task exits so the operator is alerted rather
+    than spinning in a tight error loop.  The counter resets to zero after a
+    successful run that lasted at least ``_HEALTHY_RUN_SEC`` seconds.
+    """
+    _MAX_RESTARTS = 5
+    _RESTART_DELAY_SEC = 2.0
+    _HEALTHY_RUN_SEC = 30.0
+
+    consecutive_crashes = 0
+    while True:
+        start = asyncio.get_event_loop().time()
+        try:
+            await start_ingest_server()
+            logger.info("Ingest WS server exited cleanly — not restarting.")
+            return
+        except asyncio.CancelledError:
+            logger.info("Ingest WS server task cancelled — shutting down.")
+            raise
+        except Exception as exc:
+            run_duration = asyncio.get_event_loop().time() - start
+            if run_duration >= _HEALTHY_RUN_SEC:
+                # Server ran for a while before crashing — treat as new sequence.
+                consecutive_crashes = 0
+            consecutive_crashes += 1
+            if consecutive_crashes > _MAX_RESTARTS:
+                logger.critical(
+                    "Ingest WS server has crashed %d times in a row — giving up.  "
+                    "Unity telemetry ingest is now OFFLINE.  "
+                    "Restart the analytics service to recover.  Last error: %s: %s",
+                    consecutive_crashes, type(exc).__name__, exc,
+                    exc_info=exc,
+                )
+                return
+            logger.critical(
+                "Ingest WS server crashed (consecutive crash #%d/%d): %s: %s  "
+                "— restarting in %.0f s …",
+                consecutive_crashes, _MAX_RESTARTS,
+                type(exc).__name__, exc,
+                _RESTART_DELAY_SEC,
+                exc_info=exc,
+            )
+            await asyncio.sleep(_RESTART_DELAY_SEC)
 
 
 # ── FastAPI app ───────────────────────────────────────────────────────

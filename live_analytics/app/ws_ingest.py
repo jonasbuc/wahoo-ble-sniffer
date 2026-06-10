@@ -104,6 +104,16 @@ _raw_writer: RawWriter | None = None
 # Lower values increase DB write frequency; 20 matches the default Unity batch size.
 _SCORE_PERSIST_EVERY = 20
 
+# ── Broadcast backpressure guard ──────────────────────────────────────
+# Tracks sessions that already have a pending dashboard broadcast task.
+# At 20 Hz Unity sends one batch every 50 ms.  Without this guard, 20
+# create_task(_broadcast_dashboard) calls per second would accumulate if
+# the dashboard subscriber receives slower than 20 Hz (e.g. browser on a
+# slow connection, Streamlit poll lag).  With the guard, new tasks are
+# skipped while one is already in flight — the dashboard still receives
+# updates as fast as the subscriber can accept them.
+_pending_dashboard_sessions: set[str] = set()
+
 # ── Per-session participant-resolution lock ───────────────────────────
 # Prevents trigger_relink from launching a duplicate _resolve_and_link_participant
 # task while the original retry loop is still running.  Without this guard,
@@ -233,6 +243,102 @@ def set_raw_writer(writer: RawWriter) -> None:
     _raw_writer = writer
 
 
+# ── Thread-safe sync helpers for session boundary I/O ────────────────────────
+# These are plain (non-async) functions designed to be passed to
+# loop.run_in_executor() so that all SQLite writes and JSONL appends at
+# session start/end happen on worker threads — not the asyncio event loop.
+# Keeping the event loop free at session boundaries prevents FastAPI HTTP
+# requests and the 20 Hz Unity ingest from stalling during the brief SQLite
+# or file flush that would otherwise happen inline.
+
+
+def _write_session_end_batch(
+    participants_dir: Any,
+    sid: str,
+    pid: str,
+    end_unix_ms: int,
+    ended_at: str,
+    local_time: str,
+    record_count: int,
+) -> None:
+    """Write all blocking I/O for a session disconnect to worker thread.
+
+    Calls (in order):
+      1. ``end_session`` — sets ``end_unix_ms`` in the analytics SQLite DB.
+      2. ``_append_session_event`` — appends a ``session_end`` JSON line to the
+         participant's ``session_events.jsonl`` file.
+      3. ``_append_pulse_marker`` — appends a ``SESSION_END`` marker to the
+         participant's ``pulse.jsonl`` file.
+
+    All three are synchronous blocking calls; run this via ``run_in_executor``
+    so the event loop stays free.
+    """
+    end_session(DB_PATH, sid, end_unix_ms)
+    _append_session_event(participants_dir, pid, {
+        "event": "session_end",
+        "session_id": sid,
+        "participant_id": pid,
+        "ended_at": ended_at,
+        "local_time": local_time,
+        "record_count": record_count,
+    })
+    _append_pulse_marker(
+        participants_dir,
+        pid,
+        marker="SESSION_END",
+        session_id=sid,
+        timestamp=ended_at,
+        local_time=local_time,
+        extra={"record_count": record_count},
+    )
+
+
+def _write_session_end_db_only(sid: str, end_unix_ms: int) -> None:
+    """Update ``end_unix_ms`` in the analytics SQLite DB without writing JSONL.
+
+    Used when no participant is linked — there is no JSONL file to update.
+    Run via ``run_in_executor`` so the event loop is not blocked.
+    """
+    end_session(DB_PATH, sid, end_unix_ms)
+
+
+def _write_session_start_batch(
+    participants_dir: Any,
+    sid: str,
+    pid: str,
+    scenario_id: str,
+    started_at: str,
+    started_at_local: str,
+) -> None:
+    """Write all blocking I/O for a newly resolved participant to a worker thread.
+
+    Calls (in order):
+      1. ``set_session_participant`` — links *pid* to *sid* in the analytics DB.
+      2. ``_append_session_event`` — appends a ``session_start`` JSON line.
+      3. ``_append_pulse_marker`` — appends a ``SESSION_START`` marker.
+
+    All three are synchronous blocking calls; run this via ``run_in_executor``
+    so the event loop stays free during the HTTP resolve + write sequence.
+    """
+    set_session_participant(DB_PATH, sid, pid)
+    _append_session_event(participants_dir, pid, {
+        "event": "session_start",
+        "session_id": sid,
+        "scenario_id": scenario_id,
+        "participant_id": pid,
+        "started_at": started_at,
+        "local_time": started_at_local,
+    })
+    _append_pulse_marker(
+        participants_dir,
+        pid,
+        marker="SESSION_START",
+        session_id=sid,
+        timestamp=started_at,
+        local_time=started_at_local,
+        extra={"scenario_id": scenario_id},
+    )
+
 async def _handle_connection(ws: ServerConnection) -> None:
     peer = ws.remote_address
     logger.info("Unity client connected from %s", peer)
@@ -334,8 +440,12 @@ async def _process_one_disconnect(sid: str, ended_at: str, local_time: str, end_
             sid,
         )
         # Still update SQLite end_unix_ms so the session isn't left open.
+        # Run on a worker thread — SQLite writes must not block the event loop.
+        _loop = asyncio.get_running_loop()
         try:
-            end_session(DB_PATH, sid, end_unix_ms)
+            await _loop.run_in_executor(
+                None, _write_session_end_db_only, sid, end_unix_ms
+            )
         except Exception:
             logger.exception(
                 "_on_disconnect: could not set end_unix_ms for session %r in SQLite",
@@ -343,46 +453,39 @@ async def _process_one_disconnect(sid: str, ended_at: str, local_time: str, end_
             )
         return
 
-    # ── Update SQLite end_unix_ms ─────────────────────────────────
+    # ── Write all session-end I/O on a worker thread ─────────────
+    # end_session (SQLite write), _append_session_event (JSONL append), and
+    # _append_pulse_marker (JSONL append) are all blocking calls.  Running
+    # them together in a single executor task keeps the event loop free for
+    # the next incoming Unity batch while the flush completes.
+    record_count = _record_counts.get(sid, 0)
+    _loop = asyncio.get_running_loop()
     try:
-        end_session(DB_PATH, sid, end_unix_ms)
+        await _loop.run_in_executor(
+            None,
+            _write_session_end_batch,
+            PARTICIPANTS_DIR,
+            sid,
+            pid,
+            end_unix_ms,
+            ended_at,
+            local_time,
+            record_count,
+        )
     except Exception:
         logger.exception(
-            "_on_disconnect: could not set end_unix_ms for session %r in SQLite",
-            sid,
+            "_on_disconnect: error writing session-end batch "
+            "for session %r (participant=%r)",
+            sid, pid,
         )
-
-    # ── Write session_end to participant JSONL ────────────────────
-    _append_session_event(PARTICIPANTS_DIR, pid, {
-        "event": "session_end",
-        "session_id": sid,
-        "participant_id": pid,
-        "ended_at": ended_at,
-        "local_time": local_time,
-        "record_count": _record_counts.get(sid, 0),
-    })
-    # ── Write SESSION_END marker to pulse log ─────────────────────
-    # After this marker, no more pulse data will be written for this session.
-    # The next participant's session will start with its own SESSION_START marker.
-    _append_pulse_marker(
-        PARTICIPANTS_DIR,
-        pid,
-        marker="SESSION_END",
-        session_id=sid,
-        timestamp=ended_at,
-        local_time=local_time,
-        extra={"record_count": _record_counts.get(sid, 0)},
-    )
     # Close the dedicated PulseSessionLogger file for this participant.
     _psl = _get_pulse_logger()
     if _psl is not None:
-        _psl.close_session(
-            pid, extra={"record_count": _record_counts.get(sid, 0)}
-        )
+        _psl.close_session(pid, extra={"record_count": record_count})
     logger.info(
         "session_end written — session=%r participant=%r records=%d "
         "ended_at=%s SQLite.end_unix_ms updated",
-        sid, pid, _record_counts.get(sid, 0), local_time,
+        sid, pid, record_count, local_time,
     )
     # ── Mark participant as done ───────────────────────────────────
     # Sets session_id = '__done__' in the questionnaire DB so this
@@ -497,18 +600,32 @@ async def _process_message(ws: ServerConnection, raw: str, connection_sessions: 
             logger.debug("Failed to send feedback to Unity for session %s: %s",
                          session_id, exc)
 
-    # ── Broadcast to dashboard subscribers (fire-and-forget) ────────
+    # ── Broadcast to dashboard subscribers (fire-and-forget, deduped) ─
     # We do NOT await _broadcast_dashboard directly because a slow or
     # unresponsive dashboard client could delay every Unity batch at 20 Hz.
-    # Creating a Task means the broadcast runs concurrently — if it falls
-    # behind, Unity ingest is never stalled waiting for it.
-    try:
-        asyncio.get_running_loop().create_task(
-            _broadcast_dashboard(session_id),
-            name=f"dashboard_broadcast_{session_id[-8:]}",
-        )
-    except RuntimeError:
-        pass  # loop shutting down
+    # Creating a Task means the broadcast runs concurrently.
+    #
+    # Backpressure guard: at 20 Hz Unity may create 20 broadcast tasks per
+    # second.  If the dashboard is slow, tasks pile up and consume memory.
+    # We track in-flight sessions in _pending_dashboard_sessions; while a
+    # task is in flight for a session, new batches skip creating another task.
+    # The dashboard still receives updates as fast as it can accept them.
+    if session_id not in _pending_dashboard_sessions:
+        _pending_dashboard_sessions.add(session_id)
+
+        async def _broadcast_and_clear(sid: str = session_id) -> None:
+            try:
+                await _broadcast_dashboard(sid)
+            finally:
+                _pending_dashboard_sessions.discard(sid)
+
+        try:
+            asyncio.get_running_loop().create_task(
+                _broadcast_and_clear(),
+                name=f"dash_{session_id[-8:]}",
+            )
+        except RuntimeError:
+            _pending_dashboard_sessions.discard(session_id)  # loop shutting down
 
 
 async def _resolve_and_link_participant(sid: str, scenario_id: str, started_at: str) -> None:
@@ -581,43 +698,34 @@ async def _do_resolve_and_link_participant(sid: str, scenario_id: str, started_a
 
         pid = await web_api_client.resolve_participant(sid)
         if pid:
+            # ── Write all session-start I/O on a worker thread ───────
+            # set_session_participant (SQLite), _append_session_event (JSONL),
+            # and _append_pulse_marker (JSONL) are all blocking calls.
+            # Running them in an executor prevents the resolve retry loop from
+            # stalling the event loop while the file flush completes.
+            _started_at_local = _fmt_iso(started_at)
+            _loop = asyncio.get_running_loop()
             try:
-                set_session_participant(DB_PATH, sid, pid)
+                await _loop.run_in_executor(
+                    None,
+                    _write_session_start_batch,
+                    PARTICIPANTS_DIR,
+                    sid,
+                    pid,
+                    scenario_id,
+                    started_at,
+                    _started_at_local,
+                )
             except Exception:
                 logger.exception(
-                    "_resolve_and_link_participant: could not store participant %r "
-                    "for session %r in analytics DB",
-                    pid, sid,
+                    "_resolve_and_link_participant: error writing session-start batch "
+                    "for session %r (participant=%r)",
+                    sid, pid,
                 )
-            # Write session-start event to participant's local log file.
-            # Derive local_time from the same instant as started_at (the first
-            # telemetry record's timestamp) so both fields always describe the
-            # same point in time regardless of how long the HTTP lookup took.
-            _append_session_event(PARTICIPANTS_DIR, pid, {
-                "event": "session_start",
-                "session_id": sid,
-                "scenario_id": scenario_id,
-                "participant_id": pid,
-                "started_at": started_at,
-                "local_time": _fmt_iso(started_at),
-            })
-            # Write SESSION_START marker to the participant's pulse log so it is
-            # immediately clear which person's pulse data follows and from when.
-            _append_pulse_marker(
-                PARTICIPANTS_DIR,
-                pid,
-                marker="SESSION_START",
-                session_id=sid,
-                timestamp=started_at,
-                local_time=_fmt_iso(started_at),
-                extra={"scenario_id": scenario_id},
-            )
             # Start a dedicated PulseSessionLogger file for this participant/session.
             _psl = _get_pulse_logger()
             if _psl is not None:
-                _psl.start_session(
-                    pid, sid, extra={"scenario_id": scenario_id}
-                )
+                _psl.start_session(pid, sid, extra={"scenario_id": scenario_id})
             logger.info(
                 "_resolve_and_link_participant: session_start written for session %r "
                 "(participant=%r, scenario=%r, attempt=%d)",
