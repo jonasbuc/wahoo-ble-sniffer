@@ -7,9 +7,8 @@
 #   8765  WebSocket server (binary HR frames)
 #
 # IMPORTANT: In Kubernetes this service runs in MOCK MODE by default.
-# Mock mode generates simulated HR data — no Bluetooth hardware is required.
-# To enable mock mode explicitly, set: BRIDGE_MOCK=1 (handled in CMD below).
-#
+# Mock mode is bike_bridge.py's default — no extra flag required.
+# To enable live BLE mode, set BRIDGE_MOCK=0 (requires host Bluetooth).
 # Real BLE mode requires host Bluetooth and is NOT supported in containers.
 # ---------------------------------------------------------------------------
 
@@ -64,10 +63,12 @@ HEALTHCHECK --interval=15s --timeout=5s --start-period=20s --retries=3 \
     CMD python -c "import socket; s=socket.create_connection(('localhost',8765),timeout=3); s.close()" \
     || exit 1
 
-# Entrypoint script resolves BRIDGE_MOCK env var to --mock / --live flag.
-# We use sh -c so the env var is evaluated at runtime, not at image build time.
+# bike_bridge.py default mode is MOCK — no flag needed.
+# Passing --live opts in to real BLE (requires host Bluetooth).
+# BRIDGE_MOCK=1 (default) → no extra flag  → mock mode
+# BRIDGE_MOCK=0           → --live flag    → live BLE mode
 CMD ["sh", "-c", \
      "exec python bridge/bike_bridge.py \
       --host \"${BRIDGE_HOST}\" \
       --port \"${BRIDGE_PORT}\" \
-      $([ \"${BRIDGE_MOCK}\" = '0' ] && echo '--live' || echo '--mock')"]
+      $([ \"${BRIDGE_MOCK}\" = '0' ] && echo '--live' || echo '')"]

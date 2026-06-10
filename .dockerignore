@@ -69,7 +69,8 @@ deployment/
 docs/
 CHANGELOG.md
 CONTRIBUTING.md
-README.md
+# README.md is intentionally NOT excluded — pyproject.toml references it as
+# the package readme, so pip install . requires it in the build context.
 
 # Jupyter / notebook artefacts
 .ipynb_checkpoints/
