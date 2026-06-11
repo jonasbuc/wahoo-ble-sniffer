@@ -59,6 +59,8 @@ build_image() {
 }
 
 build_image analytics-api
+build_image analytics-ingest
+build_image analytics-ws
 build_image questionnaire
 build_image dashboard
 # Bridge is NOT built for K8s — it runs locally on the host with Unity.
@@ -74,7 +76,7 @@ echo ""
 # ── Load into Minikube ────────────────────────────────────────────────────────
 if [ "$LOAD_MINIKUBE" -eq 1 ]; then
     echo "► Loading images into Minikube profile: $MINIKUBE_PROFILE"
-    for img in analytics-api questionnaire dashboard; do
+    for img in analytics-api analytics-ingest analytics-ws questionnaire dashboard; do
         echo "  ✓ carvr/${img}:${TAG} loaded"
     done
     echo ""
@@ -83,7 +85,7 @@ fi
 # ── Load into kind ────────────────────────────────────────────────────────────
 if [ "$LOAD_KIND" -eq 1 ]; then
     echo "► Loading images into kind cluster: $KIND_CLUSTER"
-    for img in analytics-api questionnaire dashboard; do
+    for img in analytics-api analytics-ingest analytics-ws questionnaire dashboard; do
       kind load docker-image "carvr/${img}:${TAG}" --name "$KIND_CLUSTER"
         echo "  ✓ carvr/${img}:${TAG} loaded"
     done

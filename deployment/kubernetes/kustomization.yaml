@@ -16,11 +16,23 @@ resources:
   # Shared storage
   - shared/participants-pvc.yaml
 
-  # Analytics API
+  # Analytics API (HTTP REST — port 8080)
   - analytics-api/configmap.yaml
   - analytics-api/pvc.yaml
   - analytics-api/deployment.yaml
   - analytics-api/service.yaml
+
+  # Analytics Ingest (Unity → WebSocket — port 8766, healthz 8767)
+  # Shares analytics-api-data-pvc at /data (writer)
+  - analytics-ingest/configmap.yaml
+  - analytics-ingest/deployment.yaml
+  - analytics-ingest/service.yaml
+
+  # Analytics WebSocket Dashboard (Streamlit → WS — port 8768)
+  # Shares analytics-api-data-pvc at /data (read-only)
+  - analytics-ws/configmap.yaml
+  - analytics-ws/deployment.yaml
+  - analytics-ws/service.yaml
 
   # Questionnaire
   - questionnaire/configmap.yaml

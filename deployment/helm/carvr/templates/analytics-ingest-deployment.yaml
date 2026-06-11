@@ -1,0 +1,62 @@
+{{- if .Values.analyticsIngest.enabled }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: analytics-ingest
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "carvr.labels" . | nindent 4 }}
+    app.kubernetes.io/name: analytics-ingest
+    app.kubernetes.io/component: ingest
+spec:
+  replicas: {{ .Values.analyticsIngest.replicaCount }}
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: analytics-ingest
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  strategy:
+    # Only one ingest writer at a time — Recreate avoids split-brain on SQLite.
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: analytics-ingest
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/component: ingest
+        app.kubernetes.io/part-of: carvr
+    spec:
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        {{- toYaml .Values.analyticsIngest.podSecurityContext | nindent 8 }}
+      containers:
+        - name: analytics-ingest
+          image: {{ include "carvr.image" (dict "registry" .Values.global.imageRegistry "repo" .Values.analyticsIngest.image.repository "tag" .Values.analyticsIngest.image.tag) }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          ports:
+            - name: ws-ingest
+              containerPort: {{ .Values.analyticsIngest.service.wsPort }}
+            - name: healthz
+              containerPort: {{ .Values.analyticsIngest.service.healthzPort }}
+          envFrom:
+            - configMapRef:
+                name: analytics-ingest-config
+          resources:
+            {{- toYaml .Values.analyticsIngest.resources | nindent 12 }}
+          securityContext:
+            {{- toYaml .Values.analyticsIngest.securityContext | nindent 12 }}
+          startupProbe:
+            {{- toYaml .Values.analyticsIngest.startupProbe | nindent 12 }}
+          readinessProbe:
+            {{- toYaml .Values.analyticsIngest.readinessProbe | nindent 12 }}
+          livenessProbe:
+            {{- toYaml .Values.analyticsIngest.livenessProbe | nindent 12 }}
+          volumeMounts:
+            - name: analytics-data
+              mountPath: /data
+      volumes:
+        - name: analytics-data
+          persistentVolumeClaim:
+            claimName: analytics-api-data-pvc
+{{- end }}

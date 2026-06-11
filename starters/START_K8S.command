@@ -88,7 +88,7 @@ fi
 
 # ── 4. Build images only if they don't exist yet ──────────────
 NEED_BUILD=0
-for img in analytics-api questionnaire dashboard; do
+for img in analytics-api analytics-ingest analytics-ws questionnaire dashboard; do
   docker image inspect "carvr/${img}:latest" &>/dev/null || { NEED_BUILD=1; break; }
 done
 
@@ -102,7 +102,7 @@ fi
 
 # ── 5. Load images into kind (skip if already loaded) ─────────────
 info "Loading images into kind cluster …"
-for img in analytics-api questionnaire dashboard; do
+for img in analytics-api analytics-ingest analytics-ws questionnaire dashboard; do
   kind load docker-image "carvr/${img}:latest" --name "$CLUSTER" 2>&1 | grep -v "^$" | sed 's/^/    /'
 done
 ok "Images loaded"
@@ -125,14 +125,16 @@ info "Starting port-forwards …"
 pkill -f "kubectl port-forward.*carvr-local" 2>/dev/null || true
 sleep 1
 
-kubectl port-forward svc/analytics-api 8080:8080 -n "$NAMESPACE" --context "$CONTEXT" &>/dev/null &
-kubectl port-forward svc/questionnaire 8090:8090 -n "$NAMESPACE" --context "$CONTEXT" &>/dev/null &
-kubectl port-forward svc/dashboard     8501:8501 -n "$NAMESPACE" --context "$CONTEXT" &>/dev/null &
+kubectl port-forward svc/analytics-api    8080:8080 -n "$NAMESPACE" --context "$CONTEXT" &>/dev/null &
+kubectl port-forward svc/analytics-ingest 8766:8766 -n "$NAMESPACE" --context "$CONTEXT" &>/dev/null &
+kubectl port-forward svc/analytics-ws     8768:8768 -n "$NAMESPACE" --context "$CONTEXT" &>/dev/null &
+kubectl port-forward svc/questionnaire    8090:8090 -n "$NAMESPACE" --context "$CONTEXT" &>/dev/null &
+kubectl port-forward svc/dashboard        8501:8501 -n "$NAMESPACE" --context "$CONTEXT" &>/dev/null &
 # Bridge runs locally on the host machine — not deployed in K8s.
 # Start it separately with starters/START_BRIDGE.command
 
 # Wait for all ports to be ready
-for port in 8080 8090 8501; do
+for port in 8080 8766 8768 8090 8501; do
   for i in $(seq 1 20); do
     nc -z localhost "$port" 2>/dev/null && break || sleep 0.5
   done
@@ -152,9 +154,11 @@ echo ""
 echo "  ╔══════════════════════════════════════════════════════╗"
 echo "  ║   ✓  All services are running!                      ║"
 echo "  ║                                                      ║"
-echo "  ║   Dashboard      →  http://localhost:8501           ║"
-echo "  ║   Questionnaire  →  http://localhost:8090           ║"
-echo "  ║   Analytics API  →  http://localhost:8080/docs      ║"
+echo "  ║   Dashboard        →  http://localhost:8501         ║"
+echo "  ║   Questionnaire    →  http://localhost:8090         ║"
+echo "  ║   Analytics API    →  http://localhost:8080/docs    ║"
+echo "  ║   Analytics Ingest →  ws://localhost:8766           ║"
+echo "  ║   Analytics WS     →  ws://localhost:8768           ║"
 echo "  ║                                                      ║"
 echo "  ║   Bridge runs locally — use START_BRIDGE.command    ║"
 echo "  ║                                                      ║"

@@ -214,6 +214,139 @@ dashboard:
     periodSeconds: 20
     failureThreshold: 3
 
+# ── Analytics Ingest ──────────────────────────────────────────────────────────
+# Standalone WebSocket ingest pod (ws_ingest.py).
+# Writes scored telemetry and live_state rows to the shared SQLite PVC.
+# Uses Recreate strategy — only one writer at a time avoids SQLite locking.
+analyticsIngest:
+  enabled: true
+  image:
+    repository: carvr/analytics-ingest
+    tag: latest
+  replicaCount: 1
+
+  service:
+    type: ClusterIP
+    wsPort: 8766
+    healthzPort: 8767
+
+  env:
+    LA_WS_INGEST_HOST: "0.0.0.0"
+    LA_WS_INGEST_PORT: "8766"
+    INGEST_HEALTHZ_PORT: "8767"
+    LA_DATA_DIR: "/data"
+    LA_DB_PATH: "/data/analytics.db"
+    LA_SESSIONS_DIR: "/data/sessions"
+    LA_PARTICIPANTS_DIR: "/data/participants"
+    LA_PULSE_LOG_DIR: "/data/pulse"
+    LA_LOG_LEVEL: "INFO"
+
+  resources:
+    requests:
+      cpu: "100m"
+      memory: "256Mi"
+    limits:
+      cpu: "500m"
+      memory: "512Mi"
+
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    runAsGroup: 1000
+    fsGroup: 1000
+
+  securityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop: ["ALL"]
+
+  startupProbe:
+    httpGet:
+      path: /healthz
+      port: 8767
+    failureThreshold: 12
+    periodSeconds: 5
+
+  readinessProbe:
+    httpGet:
+      path: /healthz
+      port: 8767
+    initialDelaySeconds: 5
+    periodSeconds: 10
+    failureThreshold: 3
+
+  livenessProbe:
+    httpGet:
+      path: /healthz
+      port: 8767
+    initialDelaySeconds: 15
+    periodSeconds: 20
+    failureThreshold: 3
+
+# ── Analytics WS ──────────────────────────────────────────────────────────────
+# Standalone WebSocket dashboard pod (ws_dashboard_server.py).
+# Reads live_state rows from the shared SQLite PVC (read-only mount) and
+# streams them to connected Streamlit dashboard clients.
+analyticsWs:
+  enabled: true
+  image:
+    repository: carvr/analytics-ws
+    tag: latest
+  replicaCount: 1
+
+  service:
+    type: ClusterIP
+    port: 8768
+
+  env:
+    WS_DASHBOARD_HOST: "0.0.0.0"
+    WS_DASHBOARD_PORT: "8768"
+    POLL_INTERVAL: "0.5"
+    LA_DB_PATH: "/data/analytics.db"
+    LA_LOG_LEVEL: "INFO"
+
+  resources:
+    requests:
+      cpu: "50m"
+      memory: "128Mi"
+    limits:
+      cpu: "200m"
+      memory: "256Mi"
+
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    runAsGroup: 1000
+    fsGroup: 1000
+
+  securityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop: ["ALL"]
+
+  startupProbe:
+    httpGet:
+      path: /healthz
+      port: 8768
+    failureThreshold: 12
+    periodSeconds: 5
+
+  readinessProbe:
+    httpGet:
+      path: /healthz
+      port: 8768
+    initialDelaySeconds: 5
+    periodSeconds: 10
+    failureThreshold: 3
+
+  livenessProbe:
+    httpGet:
+      path: /healthz
+      port: 8768
+    initialDelaySeconds: 15
+    periodSeconds: 20
+    failureThreshold: 3
+
 # ── Bridge ────────────────────────────────────────────────────────────────────
 # Bridge is DISABLED in Kubernetes by default.
 #

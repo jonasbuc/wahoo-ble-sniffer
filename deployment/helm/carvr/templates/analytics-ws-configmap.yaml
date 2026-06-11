@@ -1,0 +1,16 @@
+{{- if .Values.analyticsWs.enabled }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: analytics-ws-config
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "carvr.labels" . | nindent 4 }}
+    app.kubernetes.io/name: analytics-ws
+    app.kubernetes.io/component: ws-dashboard
+data:
+  {{- range $k, $v := .Values.analyticsWs.env }}
+  {{ $k }}: {{ $v | quote }}
+  {{- end }}
+{{- end }}

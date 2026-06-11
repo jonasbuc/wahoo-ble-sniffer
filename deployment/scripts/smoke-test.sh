@@ -118,16 +118,18 @@ echo ""
 
 # ── 1. Deployment readiness ───────────────────────────────────────────────────
 echo "── 1. Deployment readiness ──────────────────────────────"
-for dep in analytics-api questionnaire dashboard; do
+for dep in analytics-api analytics-ingest analytics-ws questionnaire dashboard; do
   check_deployment_ready "$dep"
 done
 echo ""
 
 # ── 2. Start port-forwards ────────────────────────────────────────────────────
 echo "── 2. Starting port-forwards ────────────────────────────"
-port_forward analytics-api  19080 8080 && echo "  ✓ analytics-api  → localhost:19080"
-port_forward questionnaire  19090 8090 && echo "  ✓ questionnaire  → localhost:19090"
-port_forward dashboard      19501 8501 && echo "  ✓ dashboard      → localhost:19501"
+port_forward analytics-api     19080 8080 && echo "  ✓ analytics-api     → localhost:19080"
+port_forward analytics-ingest  19767 8767 && echo "  ✓ analytics-ingest  → localhost:19767 (healthz)"
+port_forward analytics-ws      19768 8768 && echo "  ✓ analytics-ws      → localhost:19768"
+port_forward questionnaire     19090 8090 && echo "  ✓ questionnaire     → localhost:19090"
+port_forward dashboard         19501 8501 && echo "  ✓ dashboard         → localhost:19501"
 # Bridge runs locally on the host (not in K8s) — not port-forwarded here.
 # Give services a moment to stabilise before hitting endpoints
 sleep 2
@@ -135,10 +137,14 @@ echo ""
 
 # ── 3. Health endpoints ───────────────────────────────────────────────────────
 echo "── 3. Health endpoints ──────────────────────────────────"
-check_http       "analytics-api /healthz"       "http://localhost:19080/healthz"
-check_body_contains "analytics-api /healthz json" "http://localhost:19080/healthz" "status"
-check_http       "questionnaire /api/healthz"   "http://localhost:19090/api/healthz"
-check_body_contains "questionnaire healthz json" "http://localhost:19090/api/healthz" "status"
+check_http       "analytics-api /healthz"           "http://localhost:19080/healthz"
+check_body_contains "analytics-api /healthz json"   "http://localhost:19080/healthz" "status"
+check_http       "analytics-ingest /healthz"        "http://localhost:19767/healthz"
+check_body_contains "analytics-ingest healthz json" "http://localhost:19767/healthz" "analytics-ingest"
+check_http       "analytics-ws /healthz"            "http://localhost:19768/healthz"
+check_body_contains "analytics-ws healthz json"     "http://localhost:19768/healthz" "analytics-ws"
+check_http       "questionnaire /api/healthz"       "http://localhost:19090/api/healthz"
+check_body_contains "questionnaire healthz json"    "http://localhost:19090/api/healthz" "status"
 echo ""
 
 # ── 4. API functionality ──────────────────────────────────────────────────────

@@ -1,0 +1,63 @@
+{{- if .Values.analyticsWs.enabled }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: analytics-ws
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "carvr.labels" . | nindent 4 }}
+    app.kubernetes.io/name: analytics-ws
+    app.kubernetes.io/component: ws-dashboard
+spec:
+  replicas: {{ .Values.analyticsWs.replicaCount }}
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: analytics-ws
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: analytics-ws
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/component: ws-dashboard
+        app.kubernetes.io/part-of: carvr
+    spec:
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        {{- toYaml .Values.analyticsWs.podSecurityContext | nindent 8 }}
+      containers:
+        - name: analytics-ws
+          image: {{ include "carvr.image" (dict "registry" .Values.global.imageRegistry "repo" .Values.analyticsWs.image.repository "tag" .Values.analyticsWs.image.tag) }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          ports:
+            - name: ws-dashboard
+              containerPort: {{ .Values.analyticsWs.service.port }}
+          envFrom:
+            - configMapRef:
+                name: analytics-ws-config
+          resources:
+            {{- toYaml .Values.analyticsWs.resources | nindent 12 }}
+          securityContext:
+            {{- toYaml .Values.analyticsWs.securityContext | nindent 12 }}
+          startupProbe:
+            {{- toYaml .Values.analyticsWs.startupProbe | nindent 12 }}
+          readinessProbe:
+            {{- toYaml .Values.analyticsWs.readinessProbe | nindent 12 }}
+          livenessProbe:
+            {{- toYaml .Values.analyticsWs.livenessProbe | nindent 12 }}
+          volumeMounts:
+            - name: analytics-data
+              mountPath: /data
+              readOnly: true
+      volumes:
+        - name: analytics-data
+          persistentVolumeClaim:
+            claimName: analytics-api-data-pvc
+{{- end }}

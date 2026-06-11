@@ -1,0 +1,28 @@
+---
+# ClusterIP service for analytics-ingest.
+# In-cluster:  ws://analytics-ingest:8766  (Unity → WebSocket ingest)
+#              http://analytics-ingest:8767/healthz  (K8s probes)
+apiVersion: v1
+kind: Service
+metadata:
+  name: analytics-ingest
+  namespace: carvr-local
+  labels:
+    app.kubernetes.io/name: analytics-ingest
+    app.kubernetes.io/instance: carvr
+    app.kubernetes.io/component: ingest
+    app.kubernetes.io/part-of: carvr
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: analytics-ingest
+    app.kubernetes.io/instance: carvr
+  ports:
+    - name: ws-ingest
+      port: 8766
+      targetPort: ws-ingest
+      protocol: TCP
+    - name: healthz
+      port: 8767
+      targetPort: healthz
+      protocol: TCP

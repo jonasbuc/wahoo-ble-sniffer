@@ -1,0 +1,24 @@
+---
+# ClusterIP service for analytics-ws.
+# In-cluster:  ws://analytics-ws:8768/ws/dashboard  (Streamlit dashboard)
+#              http://analytics-ws:8768/healthz  (K8s probes)
+apiVersion: v1
+kind: Service
+metadata:
+  name: analytics-ws
+  namespace: carvr-local
+  labels:
+    app.kubernetes.io/name: analytics-ws
+    app.kubernetes.io/instance: carvr
+    app.kubernetes.io/component: ws-dashboard
+    app.kubernetes.io/part-of: carvr
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: analytics-ws
+    app.kubernetes.io/instance: carvr
+  ports:
+    - name: ws-dashboard
+      port: 8768
+      targetPort: ws-dashboard
+      protocol: TCP

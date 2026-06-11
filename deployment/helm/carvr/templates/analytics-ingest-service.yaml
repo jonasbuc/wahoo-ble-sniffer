@@ -1,0 +1,28 @@
+{{- if .Values.analyticsIngest.enabled }}
+---
+# In-cluster:  ws://analytics-ingest:8766   (Unity → WebSocket ingest)
+#              http://analytics-ingest:8767/healthz  (K8s probes)
+apiVersion: v1
+kind: Service
+metadata:
+  name: analytics-ingest
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "carvr.labels" . | nindent 4 }}
+    app.kubernetes.io/name: analytics-ingest
+    app.kubernetes.io/component: ingest
+spec:
+  type: {{ .Values.analyticsIngest.service.type }}
+  selector:
+    app.kubernetes.io/name: analytics-ingest
+    app.kubernetes.io/instance: {{ .Release.Name }}
+  ports:
+    - name: ws-ingest
+      port: {{ .Values.analyticsIngest.service.wsPort }}
+      targetPort: ws-ingest
+      protocol: TCP
+    - name: healthz
+      port: {{ .Values.analyticsIngest.service.healthzPort }}
+      targetPort: healthz
+      protocol: TCP
+{{- end }}

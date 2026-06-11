@@ -1,0 +1,16 @@
+{{- if .Values.analyticsIngest.enabled }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: analytics-ingest-config
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "carvr.labels" . | nindent 4 }}
+    app.kubernetes.io/name: analytics-ingest
+    app.kubernetes.io/component: ingest
+data:
+  {{- range $k, $v := .Values.analyticsIngest.env }}
+  {{ $k }}: {{ $v | quote }}
+  {{- end }}
+{{- end }}

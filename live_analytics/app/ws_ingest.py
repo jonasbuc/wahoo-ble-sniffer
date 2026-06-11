@@ -62,6 +62,8 @@ from live_analytics.app.storage.sqlite_store import (
     set_session_participant,
     update_latest_scores,
     upsert_session,
+    upsert_live_state,
+    delete_live_state,
 )
 from live_analytics.app.utils.time_utils import fmt_iso as _fmt_iso, TZ as _TZ, unix_ms_to_cph_iso as _unix_ms_to_cph_iso
 
@@ -156,6 +158,12 @@ class _DbWritePayload:
     scores: Any                  # ScoringResult | None — latest computed scores
     should_persist_scores: bool  # True when new_count crosses a _SCORE_PERSIST_EVERY boundary
     psl: Any                     # PulseSessionLogger | None (module-level singleton)
+    # live_state fields — written to SQLite on every batch so analytics-api can
+    # read current scores/HR without importing in-memory module dicts.
+    live_unix_ms: int                # unix_ms of the last record in the batch
+    live_heart_rate: float           # latest HR value for this session (0 if none)
+    live_speed: float | None         # latest gameplay speed (None if hr_only batch)
+    live_updated_at_ms: int          # time.time_ns() // 1_000_000 at batch creation
 
 
 def _write_db_batch(p: _DbWritePayload) -> None:
@@ -237,6 +245,26 @@ def _write_db_batch(p: _DbWritePayload) -> None:
                 p.sid, DB_PATH,
             )
 
+    # ── Write live state (every batch) ────────────────────────────────
+    # This is the cross-pod shared state read by analytics-api's
+    # /api/live/latest endpoint and /ws/dashboard polling loop.
+    try:
+        scores_json = p.scores.model_dump_json() if p.scores is not None else "{}"
+        upsert_live_state(
+            DB_PATH,
+            p.sid,
+            p.live_unix_ms,
+            p.live_heart_rate,
+            p.live_speed,
+            scores_json,
+            p.live_updated_at_ms,
+        )
+    except Exception:
+        logger.exception(
+            "DB error: could not upsert live_state for session %s in %s",
+            p.sid, DB_PATH,
+        )
+
 
 def set_raw_writer(writer: RawWriter) -> None:
     global _raw_writer
@@ -274,6 +302,12 @@ def _write_session_end_batch(
     so the event loop stays free.
     """
     end_session(DB_PATH, sid, end_unix_ms)
+    # Remove live state row so /api/live/latest does not return stale data
+    # for a session that has ended.
+    try:
+        delete_live_state(DB_PATH, sid)
+    except Exception:
+        logger.debug("Could not delete live_state for ended session %s (non-fatal)", sid)
     _append_session_event(participants_dir, pid, {
         "event": "session_end",
         "session_id": sid,
@@ -300,6 +334,10 @@ def _write_session_end_db_only(sid: str, end_unix_ms: int) -> None:
     Run via ``run_in_executor`` so the event loop is not blocked.
     """
     end_session(DB_PATH, sid, end_unix_ms)
+    try:
+        delete_live_state(DB_PATH, sid)
+    except Exception:
+        logger.debug("Could not delete live_state for ended session %s (non-fatal)", sid)
 
 
 def _write_session_start_batch(
@@ -875,6 +913,12 @@ def _ingest_session_batch(sid: str, records: list[TelemetryRecord]) -> _DbWriteP
     # Timestamps for pulse log entries — computed once per batch.
     _now = datetime.now(_TZ)
 
+    # ── Live state values for cross-pod DB share ──────────────────────
+    _live_hr = latest_hr.get(sid, 0.0)
+    _gameplay_rec = latest_gameplay_records.get(sid)
+    _live_speed = _gameplay_rec.speed if _gameplay_rec is not None else None
+    _live_updated_at_ms = time.time_ns() // 1_000_000
+
     return _DbWritePayload(
         sid=sid,
         records=records,
@@ -892,6 +936,10 @@ def _ingest_session_batch(sid: str, records: list[TelemetryRecord]) -> _DbWriteP
         scores=scores,
         should_persist_scores=should_persist_scores,
         psl=_get_pulse_logger(),
+        live_unix_ms=records[-1].unix_ms,
+        live_heart_rate=_live_hr,
+        live_speed=_live_speed,
+        live_updated_at_ms=_live_updated_at_ms,
     )
 
 
@@ -1091,3 +1139,82 @@ async def start_ingest_server() -> None:
             WS_INGEST_HOST, WS_INGEST_PORT,
         )
         raise
+
+
+# ── Standalone pod entrypoint ─────────────────────────────────────────────────
+
+async def _healthz_server(host: str, port: int) -> None:
+    """Tiny HTTP /healthz endpoint for Kubernetes liveness / readiness probes.
+
+    The ingest pod has no FastAPI — it is a pure WebSocket server.
+    This uses only the stdlib ``asyncio`` HTTP server so no extra dependency
+    is needed.  Returns HTTP 200 with ``{"status":"ok"}`` for any path.
+    """
+    import http
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+    import threading
+
+    class _Handler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:  # noqa: N802
+            body = b'{"status":"ok","service":"analytics-ingest"}'
+            self.send_response(http.HTTPStatus.OK)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *_args: object) -> None:  # suppress access logs
+            pass
+
+    server = HTTPServer((host, port), _Handler)
+    t = threading.Thread(target=server.serve_forever, daemon=True)
+    t.start()
+    logger.info("Healthz HTTP server listening on http://%s:%d/healthz", host, port)
+
+
+async def _run_standalone() -> None:
+    """Run analytics-ingest as a standalone Kubernetes pod.
+
+    Starts both the WebSocket ingest server and the tiny healthz HTTP server
+    concurrently.  The healthz endpoint runs on INGEST_HEALTHZ_PORT (default
+    8766) on the same host as the WebSocket server so a single Kubernetes
+    Service can expose both.
+
+    Environment variables honoured (in addition to the standard LA_* ones):
+      INGEST_HEALTHZ_PORT   Port for the HTTP healthz endpoint (default: 8767)
+    """
+    import os
+    from live_analytics.app.config import LOG_LEVEL
+    from live_analytics.app.storage.sqlite_store import init_db
+
+    logging.basicConfig(
+        level=getattr(logging, LOG_LEVEL, logging.INFO),
+        format="%(asctime)s %(levelname)-8s %(name)s  %(message)s",
+    )
+
+    healthz_port = int(os.environ.get("INGEST_HEALTHZ_PORT", "8767"))
+
+    logger.info("── analytics-ingest standalone startup ─────────────────")
+    logger.info("  WS ingest  = ws://%s:%d", WS_INGEST_HOST, WS_INGEST_PORT)
+    logger.info("  healthz    = http://%s:%d/healthz", WS_INGEST_HOST, healthz_port)
+    logger.info("  DB_PATH    = %s", DB_PATH)
+
+    # Initialise storage — creates tables if they don't exist yet.
+    from live_analytics.app.config import (
+        SESSIONS_DIR, PARTICIPANTS_DIR as _PDIR, PULSE_LOG_DIR, ensure_dirs,
+    )
+    from live_analytics.app.storage.raw_writer import RawWriter
+
+    ensure_dirs()
+    init_db(DB_PATH)
+    set_raw_writer(RawWriter(SESSIONS_DIR))
+
+    # Start healthz endpoint (runs in a daemon thread — doesn't block the loop).
+    await _healthz_server(WS_INGEST_HOST, healthz_port)
+
+    # Start WebSocket ingest server (runs until process is killed).
+    await start_ingest_server()
+
+
+if __name__ == "__main__":
+    asyncio.run(_run_standalone())
