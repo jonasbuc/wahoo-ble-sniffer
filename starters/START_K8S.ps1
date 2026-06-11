@@ -114,7 +114,7 @@ nodes:
 
 # ── 4. Build images only if they don't exist yet ─────────────────
 $needBuild = $false
-foreach ($img in @("analytics-api","questionnaire","dashboard","bridge")) {
+foreach ($img in @("analytics-api","questionnaire","dashboard")) {
     $check = & docker image inspect "carvr/${img}:latest" 2>&1
     if ($LASTEXITCODE -ne 0) { $needBuild = $true; break }
 }
@@ -134,7 +134,7 @@ if ($needBuild) {
 
 # ── 5. Load images into kind cluster ─────────────────────────────
 Info "Loading images into kind cluster ..."
-foreach ($img in @("analytics-api","questionnaire","dashboard","bridge")) {
+foreach ($img in @("analytics-api","questionnaire","dashboard")) {
     Write-Host "    Loading carvr/${img}:latest ..." -ForegroundColor Gray
     & kind load docker-image "carvr/${img}:latest" --name $Cluster
 }
@@ -170,8 +170,9 @@ Start-Sleep -Seconds 1
 $pfArgs = @(
     @("svc/analytics-api", "8080:8080"),
     @("svc/questionnaire", "8090:8090"),
-    @("svc/dashboard",     "8501:8501"),
-    @("svc/bridge",        "8765:8765")
+    @("svc/dashboard",     "8501:8501")
+    # Bridge runs locally on the host machine — not deployed in K8s.
+    # Start it separately with starters\START_BRIDGE.bat
 )
 foreach ($pf in $pfArgs) {
     Start-Process -FilePath "kubectl" `
@@ -180,7 +181,7 @@ foreach ($pf in $pfArgs) {
 }
 
 # Wait for all ports to be ready (up to 15 s each)
-$ports = @(8080, 8090, 8501, 8765)
+$ports = @(8080, 8090, 8501)
 foreach ($port in $ports) {
     $ready = $false
     for ($i = 1; $i -le 30; $i++) {
@@ -212,7 +213,8 @@ Write-Host "  |                                                      |" -Foregro
 Write-Host "  |   Dashboard      ->  http://localhost:8501          |" -ForegroundColor Green
 Write-Host "  |   Questionnaire  ->  http://localhost:8090          |" -ForegroundColor Green
 Write-Host "  |   Analytics API  ->  http://localhost:8080/docs     |" -ForegroundColor Green
-Write-Host "  |   Bridge WS      ->  ws://localhost:8765            |" -ForegroundColor Green
+Write-Host "  |                                                      |" -ForegroundColor Green
+Write-Host "  |   Bridge runs locally — use START_BRIDGE.bat        |" -ForegroundColor Green
 Write-Host "  |                                                      |" -ForegroundColor Green
 Write-Host "  |   To STOP:  run START_K8S.bat and choose Stop,      |" -ForegroundColor Green
 Write-Host "  |   or run:   kind delete cluster --name carvr        |" -ForegroundColor Green

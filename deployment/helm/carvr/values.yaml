@@ -215,8 +215,23 @@ dashboard:
     failureThreshold: 3
 
 # ── Bridge ────────────────────────────────────────────────────────────────────
+# Bridge is DISABLED in Kubernetes by default.
+#
+# Reason: the bridge communicates with physical Bluetooth hardware (Wahoo TICKR)
+# and must run as a local process on the same machine as Unity.  Running it in a
+# pod isolates it from host Bluetooth and from Unity's loopback network interface,
+# making real BLE impossible and mock mode redundant (Unity already has its own
+# mock data path).
+#
+# To run the bridge locally use:
+#   macOS:   starters/START_BRIDGE.command  or  starters/START_MOCK_BRIDGE.command
+#   Windows: starters/START_BRIDGE.bat      or  starters/START_MOCK_BRIDGE.bat
+#
+# The manifests and Dockerfile are kept here for reference only.
+# Set enabled: true only if you have a specific reason to run the bridge in a pod
+# (e.g. testing with a host-network pod on a Linux node with Bluetooth).
 bridge:
-  enabled: true
+  enabled: false
   image:
     repository: carvr/bridge
     tag: latest
@@ -229,8 +244,6 @@ bridge:
   env:
     BRIDGE_HOST: "0.0.0.0"
     BRIDGE_PORT: "8765"
-    # BRIDGE_MOCK=1 = simulated HR (default for K8s).
-    # Set to "0" only when running with host Bluetooth (not supported in containers).
     BRIDGE_MOCK: "1"
 
   persistence:

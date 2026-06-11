@@ -118,7 +118,7 @@ echo ""
 
 # ── 1. Deployment readiness ───────────────────────────────────────────────────
 echo "── 1. Deployment readiness ──────────────────────────────"
-for dep in analytics-api questionnaire dashboard bridge; do
+for dep in analytics-api questionnaire dashboard; do
   check_deployment_ready "$dep"
 done
 echo ""
@@ -128,7 +128,7 @@ echo "── 2. Starting port-forwards ─────────────�
 port_forward analytics-api  19080 8080 && echo "  ✓ analytics-api  → localhost:19080"
 port_forward questionnaire  19090 8090 && echo "  ✓ questionnaire  → localhost:19090"
 port_forward dashboard      19501 8501 && echo "  ✓ dashboard      → localhost:19501"
-port_forward bridge         19765 8765 && echo "  ✓ bridge         → localhost:19765"
+# Bridge runs locally on the host (not in K8s) — not port-forwarded here.
 # Give services a moment to stabilise before hitting endpoints
 sleep 2
 echo ""
@@ -155,18 +155,7 @@ echo "── 5. Dashboard reachable ──────────────�
 check_http "dashboard HTTP 200" "http://localhost:19501" "200"
 echo ""
 
-# ── 6. Bridge WebSocket port open ────────────────────────────────────────────
-echo "── 6. Bridge WebSocket port ─────────────────────────────"
-if nc -z localhost 19765 2>/dev/null; then
-  echo "  ✓ bridge WebSocket port 19765 is open"
-  PASS=$((PASS + 1))
-else
-  echo "  ✗ bridge WebSocket port 19765 is NOT reachable"
-  FAIL=$((FAIL + 1))
-fi
-echo ""
-
-# ── 7. Service-to-service: questionnaire → analytics-api ─────────────────────
+# ── 6. Service-to-service: questionnaire → analytics-api ─────────────────────
 echo "── 7. Service-to-service connectivity ───────────────────"
 # The questionnaire ConfigMap sets QS_ANALYTICS_API_URL=http://analytics-api:8080.
 # We verify the questionnaire can reach analytics-api by checking that

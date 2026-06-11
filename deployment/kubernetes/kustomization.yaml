@@ -34,8 +34,10 @@ resources:
   - dashboard/deployment.yaml
   - dashboard/service.yaml
 
-  # Bridge
-  - bridge/configmap.yaml
-  - bridge/pvc.yaml
-  - bridge/deployment.yaml
-  - bridge/service.yaml
+  # Bridge is intentionally NOT included here.
+  # The bridge communicates with physical Bluetooth hardware (Wahoo TICKR) and
+  # must run as a local process on the host machine where Unity is running.
+  # Running it in a pod would isolate it from host Bluetooth and from Unity's
+  # network interface.  Use starters/START_BRIDGE.command (macOS) or
+  # starters/START_BRIDGE.bat (Windows) to run the bridge locally.
+  # Bridge manifests are kept in bridge/ for reference only.

@@ -25,23 +25,47 @@ the CarVR analytics stack running in a local Kubernetes cluster.
 
 ## 1. What this stack is
 
-Four services run as containers inside a local Kubernetes cluster:
+Four services run as containers inside a local Kubernetes cluster.
+The **bridge is intentionally excluded** — it communicates with physical
+Bluetooth hardware and must run on the same host machine as Unity.
 
-| Service | Port | Purpose |
+| Service | Pod | Port | Purpose |
+|---|---|---|---|
+| **analytics-api** | `analytics-api` | 8080 (HTTP) / 8766 (WS ingest) | FastAPI — sessions, HR scoring, participant linking |
+| **questionnaire** | `questionnaire` | 8090 | FastAPI — participant registration, pre/post questionnaires |
+| **dashboard** | `dashboard` | 8501 | Streamlit — live analytics visualisation |
+| **bridge** | **runs locally** | 8765 (WS) | BLE ↔ Unity HR relay — NOT in K8s |
+
+> **Bridge runs on the host, not in Kubernetes.**  
+> The bridge must have direct access to Bluetooth hardware and Unity's
+> loopback network — both are unavailable inside a pod.  
+> Start it separately with `starters/START_BRIDGE.command` (macOS) or
+> `starters/START_BRIDGE.bat` (Windows).
+
+---
+
+### Why analytics-api and ws-ingest are one pod
+
+The HTTP REST API (`/api/*`) and the WebSocket ingest server (`:8766`) run
+in the **same process** and share in-memory state that cannot be separated
+without refactoring the application code:
+
+| Shared object | Owner | Consumer |
 |---|---|---|
-| **analytics-api** | 8080 (HTTP) / 8766 (WS) | FastAPI server — stores sessions, HR data, scoring |
-| **questionnaire** | 8090 | FastAPI server — participant registration, pre/post questionnaires |
-| **dashboard** | 8501 | Streamlit — live analytics visualisation |
-| **bridge** | 8765 (WS) | Simulated HR data source (mock mode, no hardware needed) |
+| `latest_scores` | `ws_ingest` (updated each batch) | `api_sessions` `/api/live/latest` |
+| `latest_records` / `latest_hr` | `ws_ingest` | `api_sessions` `/api/live/latest` |
+| `_windows` (scoring deque) | `ws_ingest` | `api_sessions` active-session list |
+| `dashboard_subscribers` (WS set) | `ws_ingest` | `ws_dashboard` live broadcast |
 
-All data is written to **persistent volumes** inside the cluster — it
-survives pod restarts and Helm upgrades. Only deleting the cluster itself
-removes all data.
+Splitting them into separate pods would require:
+1. Moving `latest_scores` / `latest_records` / `latest_hr` from in-memory
+   dicts to a shared SQLite table (ws-ingest writes, HTTP API reads).
+2. Moving the `/ws/dashboard` WebSocket route to the ws-ingest pod.
+3. A new standalone entry point for the WS ingest server.
 
-> **Development mode still works.**  
-> The Kubernetes stack is completely separate from the normal
-> `START_ALL.command` / `START_ALL.bat` development setup.
-> Both can coexist; they use different data directories.
+This is planned as a future refactoring task on a dedicated branch.
+Until then, adjust the `analyticsApi.resources` block in `values.yaml`
+to give this pod the CPU/memory it needs for both responsibilities.
 
 ---
 
@@ -188,11 +212,10 @@ helm upgrade --install carvr deployment/helm/carvr \
   --values deployment/helm/carvr/values-kind.yaml \
   --kube-context kind-carvr --wait --timeout 5m
 
-# 4. Start port-forwards
+# 4. Start port-forwards (3 services — bridge runs locally, not in K8s)
 kubectl port-forward svc/analytics-api 8080:8080 -n carvr-local --context kind-carvr &
 kubectl port-forward svc/questionnaire 8090:8090 -n carvr-local --context kind-carvr &
 kubectl port-forward svc/dashboard     8501:8501 -n carvr-local --context kind-carvr &
-kubectl port-forward svc/bridge        8765:8765 -n carvr-local --context kind-carvr &
 ```
 
 ---
@@ -208,11 +231,10 @@ After starting, all services are available on `localhost`:
 | **Analytics API docs** | http://localhost:8080/docs | Swagger UI — explore and test all endpoints |
 | **Analytics healthcheck** | http://localhost:8080/healthz | Returns `{"status":"ok"}` when running |
 | **Questionnaire healthcheck** | http://localhost:8090/api/healthz | Returns `{"status":"ok"}` when running |
-| **Bridge WebSocket** | ws://localhost:8765 | HR data stream (Unity connects here) |
 
-> **Unity connection:** point the Unity BLE bridge client at
-> `ws://localhost:8765` — the bridge sends simulated HR data in the
-> same binary format as the real Wahoo TICKR.
+> **Bridge / Unity connection:** the bridge is **not** deployed in Kubernetes.
+> Start it locally with `starters/START_BRIDGE.command` (macOS) or
+> `starters/START_BRIDGE.bat` (Windows) and point Unity at `ws://localhost:8765`.
 
 ---
 
@@ -224,14 +246,13 @@ After starting, all services are available on `localhost`:
 kubectl get pods -n carvr-local --context kind-carvr
 ```
 
-Expected output — all pods `1/1 Running`:
+Expected output — all **3** pods `1/1 Running`:
 
 ```
 NAME                             READY   STATUS    RESTARTS   AGE
-analytics-api-6c58f694ff-xxxxx   1/1     Running   0          5m
-bridge-c5f78ff95-xxxxx           1/1     Running   0          5m
-dashboard-8646669d44-xxxxx       1/1     Running   0          5m
-questionnaire-7bcc5d68f-xxxxx    1/1     Running   0          5m
+analytics-api-xxxxxxxxxx-xxxxx   1/1     Running   0          5m
+dashboard-xxxxxxxxxx-xxxxx       1/1     Running   0          5m
+questionnaire-xxxxxxxxxx-xxxxx   1/1     Running   0          5m
 ```
 
 ### View logs
@@ -492,17 +513,28 @@ docker builder prune -f                    # removes build cache (~1.6 GB)
 ```
 Your machine (localhost)
 │
+│  ── Kubernetes (kind-carvr) ─────────────────────────────────────
 │  port-forward tunnels (kubectl)
 ├─ :8501 ──────────────────────────► dashboard pod
 ├─ :8090 ──────────────────────────► questionnaire pod
-├─ :8080 / :8766 ──────────────────► analytics-api pod
-└─ :8765 ──────────────────────────► bridge pod (mock HR data)
-                                         │
+└─ :8080 / :8766 ──────────────────► analytics-api pod
+                                         (HTTP REST + WS ingest
+                                          share in-memory state —
+                                          run in the same process)
+│
+│  ── Host machine (outside K8s) ──────────────────────────────────
+│  Runs directly as a local process
+└─ :8765 (WS)  bridge process ──────► Unity client
+               (BLE ↔ HR relay)       (ws://localhost:8765)
+               START_BRIDGE.command
+
                               Kubernetes internal DNS
                               (http://analytics-api:8080)
                                          │
                               ┌──────────▼──────────┐
                               │  analytics-api pod  │
+                              │  HTTP :8080         │
+                              │  WS ingest :8766    │
                               │  /data/analytics.db │◄─── analytics-api-data-pvc (2Gi)
                               │  /data/sessions/    │
                               │  /data/pulse/       │
@@ -515,12 +547,16 @@ Your machine (localhost)
                               │  /data/questionnaire│◄─── questionnaire-data-pvc (1Gi)
                               └─────────────────────┘
 
+                              ┌─────────────────────┐
+                              │  dashboard pod      │◄─── HTTP polls analytics-api
+                              └─────────────────────┘
+
 Namespace: carvr-local   Cluster: kind-carvr   Context: kind-carvr
 ```
 
 **Data flow:**
-1. Bridge generates simulated HR frames → WebSocket `:8765`
-2. Unity / test client sends frames to analytics-api WebSocket `:8766`
+1. Bridge runs locally, sends real/mock HR frames to Unity via WebSocket `:8765`
+2. Unity sends telemetry frames to analytics-api WebSocket ingest `:8766`
 3. analytics-api writes raw frames to `pulse.jsonl` on PVC **first**
 4. analytics-api upserts scores into SQLite DB (`analytics.db`)
 5. Dashboard polls analytics-api HTTP `:8080` and renders live charts

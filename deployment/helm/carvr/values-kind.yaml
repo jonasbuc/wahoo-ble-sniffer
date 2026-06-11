@@ -10,3 +10,7 @@ global:
 analyticsApi:
   env:
     LA_LOG_LEVEL: "DEBUG"
+
+# Bridge is disabled — runs locally on the host machine, not in K8s.
+bridge:
+  enabled: false
