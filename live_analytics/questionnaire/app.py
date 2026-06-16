@@ -368,13 +368,21 @@ async def save_bulk_answers(participant_id: str, phase: str, body: AnswersBulkSa
     # the car-data system so external tooling can correlate by participant.
     # Fire-and-forget — a failure here must never block the API response.
     if phase == "pre":
-        age_group: str = body.answers.get("pre_age_group", "")
+        age_group: str = str(body.answers.get("pre_age_group", ""))
+        gender: str = str(body.answers.get("pre_gender", ""))
         display_name: str = p.get("display_name", "")
 
         async def _register_cardata_user() -> None:
+            # testPersonNumber must be an integer — cast participant_id if it's numeric,
+            # otherwise fall back to a hash-based int so the UNIQUE constraint is satisfied.
+            try:
+                test_person_number = int(participant_id)
+            except (ValueError, TypeError):
+                test_person_number = abs(hash(participant_id)) % 1_000_000
             payload = {
-                "participant_id": participant_id,
-                "age_group": age_group,
+                "testPersonNumber": test_person_number,
+                "Age": age_group,
+                "Gender": gender,
                 "display_name": display_name,
             }
             _max_retries = 5
@@ -383,33 +391,46 @@ async def save_bulk_answers(participant_id: str, phase: str, body: AnswersBulkSa
                 try:
                     async with httpx.AsyncClient(
                         timeout=httpx.Timeout(5.0),
-                        verify=False,  # self-signed cert on local network
                     ) as client:
                         resp = await client.post(
-                            "https://10.200.130.98:5001/api/cardata/newuser",
+                            "http://10.200.130.36:5001/api/cardata/newuser",
                             json=payload,
                         )
-                    logger.info(
-                        "cardata newuser: participant=%r age_group=%r → HTTP %d (attempt %d/%d)",
-                        participant_id, age_group, resp.status_code, attempt, _max_retries,
+                    if resp.status_code < 500:
+                        # 2xx = success, 4xx = bad request (won't be fixed by retrying)
+                        logger.info(
+                            "cardata newuser: participant=%r age_group=%r → HTTP %d (attempt %d/%d)",
+                            participant_id, age_group, resp.status_code, attempt, _max_retries,
+                        )
+                        return
+                    # 5xx = server-side error — log and retry
+                    logger.warning(
+                        "cardata newuser: attempt %d/%d got HTTP %d for participant %r — %s",
+                        attempt, _max_retries, resp.status_code, participant_id, resp.text[:200],
                     )
-                    return  # success – stop retrying
+                except (httpx.ConnectError, httpx.TimeoutException) as exc:
+                    # Network-level failure — server may be temporarily down, retry
+                    logger.warning(
+                        "cardata newuser: attempt %d/%d network error for participant %r "
+                        "(%s: %s) — retrying in %.0fs",
+                        attempt, _max_retries, participant_id,
+                        type(exc).__name__, exc, _delay,
+                    )
                 except Exception as exc:  # noqa: BLE001
-                    if attempt < _max_retries:
-                        logger.warning(
-                            "cardata newuser: attempt %d/%d failed for participant %r "
-                            "(%s: %s) — retrying in %.0fs",
-                            attempt, _max_retries, participant_id,
-                            type(exc).__name__, exc, _delay,
-                        )
-                        await asyncio.sleep(_delay)
-                        _delay = min(_delay * 2, 120.0)
-                    else:
-                        logger.warning(
-                            "cardata newuser: all %d attempts failed for participant %r "
-                            "(%s: %s) — giving up",
-                            _max_retries, participant_id, type(exc).__name__, exc,
-                        )
+                    # Unexpected error — log and give up immediately
+                    logger.warning(
+                        "cardata newuser: unexpected error for participant %r (%s: %s) — giving up",
+                        participant_id, type(exc).__name__, exc,
+                    )
+                    return
+                if attempt < _max_retries:
+                    await asyncio.sleep(_delay)
+                    _delay = min(_delay * 2, 120.0)
+                else:
+                    logger.warning(
+                        "cardata newuser: all %d attempts failed for participant %r — giving up",
+                        _max_retries, participant_id,
+                    )
 
         asyncio.create_task(_register_cardata_user())
 
