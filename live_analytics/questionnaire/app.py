@@ -363,6 +363,41 @@ async def save_bulk_answers(participant_id: str, phase: str, body: AnswersBulkSa
             len(body.answers), participant_id, phase, exc,
         )
         raise HTTPException(500, "Failed to save answers – see server log")
+
+    # When the pre-questionnaire is bulk-submitted, register the participant in
+    # the car-data system so external tooling can correlate by participant.
+    # Fire-and-forget — a failure here must never block the API response.
+    if phase == "pre":
+        age_group: str = body.answers.get("pre_age_group", "")
+        display_name: str = p.get("display_name", "")
+
+        async def _register_cardata_user() -> None:
+            payload = {
+                "participant_id": participant_id,
+                "age_group": age_group,
+                "display_name": display_name,
+            }
+            try:
+                async with httpx.AsyncClient(
+                    timeout=httpx.Timeout(5.0),
+                    verify=False,  # self-signed cert on local network
+                ) as client:
+                    resp = await client.post(
+                        "https://10.200.130.98:5001/api/cardata/newuser",
+                        json=payload,
+                    )
+                    logger.info(
+                        "cardata newuser: participant=%r age_group=%r → HTTP %d",
+                        participant_id, age_group, resp.status_code,
+                    )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "Could not register participant %r in cardata system (%s: %s) — continuing",
+                    participant_id, type(exc).__name__, exc,
+                )
+
+        asyncio.create_task(_register_cardata_user())
+
     return {"ok": True}
 
 
