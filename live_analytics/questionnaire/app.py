@@ -391,9 +391,10 @@ async def save_bulk_answers(participant_id: str, phase: str, body: AnswersBulkSa
                 try:
                     async with httpx.AsyncClient(
                         timeout=httpx.Timeout(5.0),
+                        verify=False,
                     ) as client:
                         resp = await client.post(
-                            "http://10.200.130.36:5001/api/cardata/newuser",
+                            "https://10.200.130.36:5001/api/cardata/newuser",
                             json=payload,
                         )
                     if resp.status_code < 500:
