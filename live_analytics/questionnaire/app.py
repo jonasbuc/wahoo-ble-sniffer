@@ -377,24 +377,39 @@ async def save_bulk_answers(participant_id: str, phase: str, body: AnswersBulkSa
                 "age_group": age_group,
                 "display_name": display_name,
             }
-            try:
-                async with httpx.AsyncClient(
-                    timeout=httpx.Timeout(5.0),
-                    verify=False,  # self-signed cert on local network
-                ) as client:
-                    resp = await client.post(
-                        "https://10.200.130.98:5001/api/cardata/newuser",
-                        json=payload,
-                    )
+            _max_retries = 5
+            _delay = 5.0  # seconds; doubles after each failed attempt, capped at 120 s
+            for attempt in range(1, _max_retries + 1):
+                try:
+                    async with httpx.AsyncClient(
+                        timeout=httpx.Timeout(5.0),
+                        verify=False,  # self-signed cert on local network
+                    ) as client:
+                        resp = await client.post(
+                            "https://10.200.130.98:5001/api/cardata/newuser",
+                            json=payload,
+                        )
                     logger.info(
-                        "cardata newuser: participant=%r age_group=%r → HTTP %d",
-                        participant_id, age_group, resp.status_code,
+                        "cardata newuser: participant=%r age_group=%r → HTTP %d (attempt %d/%d)",
+                        participant_id, age_group, resp.status_code, attempt, _max_retries,
                     )
-            except Exception as exc:  # noqa: BLE001
-                logger.warning(
-                    "Could not register participant %r in cardata system (%s: %s) — continuing",
-                    participant_id, type(exc).__name__, exc,
-                )
+                    return  # success – stop retrying
+                except Exception as exc:  # noqa: BLE001
+                    if attempt < _max_retries:
+                        logger.warning(
+                            "cardata newuser: attempt %d/%d failed for participant %r "
+                            "(%s: %s) — retrying in %.0fs",
+                            attempt, _max_retries, participant_id,
+                            type(exc).__name__, exc, _delay,
+                        )
+                        await asyncio.sleep(_delay)
+                        _delay = min(_delay * 2, 120.0)
+                    else:
+                        logger.warning(
+                            "cardata newuser: all %d attempts failed for participant %r "
+                            "(%s: %s) — giving up",
+                            _max_retries, participant_id, type(exc).__name__, exc,
+                        )
 
         asyncio.create_task(_register_cardata_user())
 
